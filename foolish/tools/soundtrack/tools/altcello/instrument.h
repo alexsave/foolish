@@ -44,6 +44,8 @@ typedef struct {
     double a_tau, b_tau, c_tau; /* heat constants: absorption m/K (1e-6), velocity dependent conduction (0.22), conduction (1e-4) */
     int nsub;               /* substeps of the friction state per audio sample */
     double v_slip;          /* m/s: the bow noise acts on slips above this relative speed (full above twice it) */
+    int ncont;              /* contact points across the hair width, each with its own bristle state and temperature (sim.c multi_contact); 1 = the lumped contact */
+    double tilt;            /* linear pressure profile across the hair ribbon, 0 = uniform, 0.5 = the heavy side carries 3x the light side (tilted ribbon); only with ncont > 1 */
 } ThermalSpec;
 
 typedef enum { BOW_CURVE = 0, BOW_THERMAL = 1 } BowModel;
@@ -57,6 +59,8 @@ typedef struct {
     ThermalSpec thermal;
     double noise_fc;    /* corner of the one-pole low-pass of the bow noise, Hz (bow.h) */
     long noise_rate;    /* bow noise draws per second of logical clock, see bow.h; the level is a density at 4000 per second */
+    double noise_hp[INSTR_MAXSTR];    /* per string corner (Hz) of a 2 pole high-pass on the bow noise, 0 = off: the noise acts only above it (roughness iteration 1) */
+    double noise_scale[INSTR_MAXSTR]; /* per string factor on the bow noise level (1 = the same relative density on every string; roughness iteration 1) */
 } BowSpec;
 
 typedef struct {

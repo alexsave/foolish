@@ -23,8 +23,13 @@
 #define REF_C2 0x8460db965389ecd7ULL
 /* RECORDED deliberately in thermal iteration 1, when the default bow model became BOW_THERMAL (friction_thermal.h): the physics of the
    default instrument changed, so every sample changes. Same probes as above, the default instrument. */
-#define REF_D3_THERMAL 0x645e19137198416dULL
-#define REF_C2_THERMAL 0x4e01f691d1a3dd7cULL
+/* RE-RECORDED in roughness iteration 1 (deliberate): the default bow contact is now 4 points across the hair (ThermalSpec.ncont 4, sim.c multi_contact: a different
+   contact solve with 4 bristle states and temperatures, so every sample changes). The lumped contact (ncont 1) of thermal iteration 1 is untouched by it and still
+   gives the earlier hashes below (645e19137198416d, 4e01f691d1a3dd7c), proven by the ncont 1 probes. */
+#define REF_D3_THERMAL 0xfb67a3de359deff2ULL
+#define REF_C2_THERMAL 0x9adaaca7136143faULL
+#define REF_D3_LUMPED 0x645e19137198416dULL
+#define REF_C2_LUMPED 0x4e01f691d1a3dd7cULL
 static uint64_t hash_trace(const Trace *tr)
 {
     uint64_t h = 1469598103934665603ULL;
@@ -35,12 +40,13 @@ static uint64_t hash_trace(const Trace *tr)
     return h;
 }
 
-static uint64_t probe(const char *name, double F, BowModel model)
+static uint64_t probe(const char *name, double F, BowModel model, int ncont)
 {
     Sim S;
     SimOpts so = {1, 1, 0, NULL};
     Instrument ic = *instrument_cello();
     ic.bow.model = model;
+    if (ncont > 0) ic.bow.thermal.ncont = ncont;
     sim_init_instrument(&S, &ic, 96000.0, &so, name);
     sim_set_bow(&S, 0.1, 0.1, F, 0.03);
     sim_start(&S);
@@ -54,10 +60,13 @@ static uint64_t probe(const char *name, double F, BowModel model)
 int main(void)
 {
     CHECK(instrument_cello()->bow.model == BOW_THERMAL, "the default bow model is not THERMAL");
-    uint64_t hd = probe("D3", 0.67082, BOW_CURVE), hc = probe("C2", 1.22127, BOW_CURVE);
-    uint64_t td = probe("D3", 0.67082, BOW_THERMAL), tc = probe("C2", 1.22127, BOW_THERMAL);
+    uint64_t hd = probe("D3", 0.67082, BOW_CURVE, 0), hc = probe("C2", 1.22127, BOW_CURVE, 0);
+    uint64_t td = probe("D3", 0.67082, BOW_THERMAL, 0), tc = probe("C2", 1.22127, BOW_THERMAL, 0);
+    uint64_t ld = probe("D3", 0.67082, BOW_THERMAL, 1), lc = probe("C2", 1.22127, BOW_THERMAL, 1);
     printf("T23 curve D3 probe hash %016llx, C2 probe hash %016llx; thermal D3 %016llx, C2 %016llx\n", (unsigned long long)hd, (unsigned long long)hc, (unsigned long long)td,
            (unsigned long long)tc);
+    CHECK(ld == REF_D3_LUMPED, "lumped thermal D3 probe changed: %016llx, want %016llx", (unsigned long long)ld, (unsigned long long)REF_D3_LUMPED);
+    CHECK(lc == REF_C2_LUMPED, "lumped thermal C2 probe changed: %016llx, want %016llx", (unsigned long long)lc, (unsigned long long)REF_C2_LUMPED);
     CHECK(td == REF_D3_THERMAL, "thermal D3 probe changed: %016llx, want %016llx", (unsigned long long)td, (unsigned long long)REF_D3_THERMAL);
     CHECK(tc == REF_C2_THERMAL, "thermal C2 probe changed: %016llx, want %016llx", (unsigned long long)tc, (unsigned long long)REF_C2_THERMAL);
     CHECK(hd == REF_D3, "D3 probe changed: %016llx, want %016llx", (unsigned long long)hd, (unsigned long long)REF_D3);

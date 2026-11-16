@@ -24,6 +24,7 @@ double cents(double f, double ref);
 extern double analysis_slip_thr;
 void analysis_slip_thr_for(int thermal); /* the one owner of the threshold: called by sim_start and oracle_new */
 #define SLIP_MIN_DUR_S 0.00015 /* shorter runs of |v_rel| > thr are ripple micro-slips */
+#define SLIP_MIN_DISP_FRAC 0.05 /* so are runs with less than this share of the displacement of the window's largest run */
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac);
 /* max normalised correlation of x[i0,i1) with itself shifted by lag in [lo,hi]; best lag out */
 double autocorr_max(const double *x, long i0, long i1, long lo, long hi, long *best);

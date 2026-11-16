@@ -590,10 +590,11 @@ static double lev_re_sustain(const float *y, long n, double t0, double t_after)
 }
 
 /* G2 (stopped on the C string, vibrato on, forte, 1.5 s) with the wedge start: audio periodic within 0.1 s of the start and the level 50 ms after the start within 4 dB
-   of the value measured when the wedge was set (charts/wedge_final.py, seeds 0 and 1: -9.1 and -10.7 dB) and of Philharmonia's G2 (-6.9 dB) */
+   of the value measured when the wedge was set (charts/wedge_final.py, seeds 0 and 1: -9.1 and -10.7 dB; RE-RECORDED in roughness iteration 1 for the 4 point bow contact and the C2 wedge slope
+   0.69: -9.3 and -8.8 dB) and of Philharmonia's G2 (-6.9 dB) */
 static void h_wedge(void)
 {
-    const double measured[2] = {-9.1, -10.7};
+    const double measured[2] = {-9.3, -8.8};
     for (int seed = 0; seed < 2; seed++) {
         Note one = mk(0.5, 1.5, 43, 0.85, 1);
         long n48;

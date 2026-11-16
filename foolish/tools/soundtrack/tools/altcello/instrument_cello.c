@@ -127,8 +127,11 @@
  * Per string (C2 G2 D3 A3): the bow acceleration (m/s^2) and the wedge slope (N per m/s^2); the attack force is slope * acceleration:
  * force 1, 0.9, 1.3, 1.3 N at 1.5, 1.5, 1.5, 1.5 m/s^2. */
 #define WEDGE_ACC {1.5, 1.5, 1.5, 1.5}
-#define WEDGE_K {0.66667, 0.6, 0.86667, 0.86667}
+#define WEDGE_K {0.69, 0.6, 0.86667, 0.86667}
 /*WEDGE_END*/
+/* HAND-SET in roughness iteration 1 (the generated C2 slope was 0.66667): with the 4 point bow contact (ThermalSpec.ncont 4) the level of G2 on C 50 ms after the start fell to -11.2 dB re
+ * sustain on seed 0 (-9.1 before; Philharmonia -6.9, the T27h limit 4 dB); a scan of the slope on 6 seeds (charts/rough_wedge.py) gave levels -9.4 -8.8 on seeds 0 and 1 at 0.69 with time to periodic
+ * 0.05 and 0.04 s (0.667: -11.2 -9.5; 0.70: -9.9 -8.5 but 0.13 s on seed 1; 0.76: -8.2 -7.9 but 0.15 s). charts/wedge_table.py has not been re-run for the 4 point contact. */
 
 static Instrument cello = {
     "cello", 4,
@@ -144,8 +147,8 @@ static Instrument cello = {
     /* bow: width, noise, hair length, friction {a1 v1 a2 v2 c mu_static} */
     {0.010, 0.02, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2},
      BOW_THERMAL, /* the bow model: BOW_CURVE (knob bow=0) or BOW_THERMAL; the thermal constants: friction_thermal.h, Table 1 of vW26 */
-     {1.05, 0.3, 1.0e6, 25.0, 0.4, 2.0, 0.5, 1.0e-6, 0.22, 1.0e-4, 4, 0.02},
-     16000.0, 64000}, /* bow noise: level 0.02 (a density at 4000 draws/s), low-pass corner 16 kHz, 64000 draws/s: richness F1 (a 3 kHz corner left nothing above 5 kHz) */
+     {1.05, 0.3, 1.0e6, 25.0, 0.4, 2.0, 0.5, 1.0e-6, 0.22, 1.0e-4, 4, 0.02, 4, 0.0},
+     16000.0, 64000, {0.0, 0.0, 0.0, 0.0}, {1.0, 1.0, 1.0, 1.0}}, /* bow noise: level 0.02 (a density at 4000 draws/s), low-pass corner 16 kHz, 64000 draws/s: richness F1 (a 3 kHz corner left nothing above 5 kHz) */
     /* finger: width, K, R */
     {0.010, 2e7, 200.0},
     /* body */

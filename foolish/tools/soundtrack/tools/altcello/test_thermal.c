@@ -27,6 +27,7 @@ static Instrument thermal_instrument(void)
 {
     Instrument ic = *instrument_cello();
     ic.bow.model = BOW_THERMAL;
+    ic.bow.thermal.ncont = 1; /* T30 tests the lumped contact (friction_thermal.h); the distributed contact of the default instrument is T33 */
     return ic;
 }
 

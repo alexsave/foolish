@@ -42,6 +42,7 @@ typedef struct {
     Env xFo[SIM_MAXSTR], aFo[SIM_MAXSTR]; /* fingers of the other strings (by str[] index) */
     double bow_width;
     int bow_on;             /* 0: no bow at all */
+    Thermal thg[TH_MAXN];   /* the contact points of a distributed contact (ThermalSpec.ncont > 1, multi_contact in sim.c); th then holds their weighted mean (tau, z) for the diagnostics */
     Thermal th;             /* thermal elasto-plastic contact (friction_thermal.h), used when inst->bow.model == BOW_THERMAL; sim_start inits it */
     Hair hair;              /* compliant bow-hair contact (bow.h), off by default; set with hair_init before sim_start */
     int torsion_on;         /* 1 (default): the bow contact includes the string's torsion (torsion.h); 0: transverse only */
@@ -54,6 +55,10 @@ typedef struct {
     double walk_sd, walk_bw;              /* relative sd and bandwidth (Hz) of the F_B and v_B walks; sd 0 = off */
     double *walk_F, *walk_v;              /* tables at SIM_WALK_RATE per second */
     long walk_n;
+    double nz_hp[2];        /* states of the noise high-pass (instrument bow.noise_hp) */
+    int check_contact;      /* diagnosis: 1 = multi_contact checks its contact velocities after the update (test_contact) */
+    double check_err;       /* the largest |recomputed contact velocity - (vB + v_rel)| of any point so far, m/s */
+    double pwr;             /* last step: power the bow friction gives the string contact, W (sum over the contact points, F p_k W_k Phi_k v_k) */
     double vrel_prev;
     int stuck;
     double *fwbuf;          /* w load density, N+1, zero between steps */

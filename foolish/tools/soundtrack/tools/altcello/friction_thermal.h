@@ -56,6 +56,7 @@
 #define ALTCELLO_FRICTION_THERMAL_H
 #include "instrument.h"
 
+#define TH_MAXN 4  /* most contact points across the hair (ThermalSpec.ncont) */
 #define TH_NTAB 256
 #define TH_FB_MIN 2.0       /* N/m floor of Fb in the heat constants */
 #define TH_F_CONTACT 1.0e-3 /* N: below this bow force there is no contact */

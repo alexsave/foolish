@@ -128,11 +128,15 @@ static void chk_cb(const Sim *S, long i, void *u)
     c->checked++;
 }
 
+/* T14d and T14e test the scalar contact (one velocity, one admittance) of the lumped contact: the distributed contact of the shipped instrument has one
+   velocity per point (its torsion share is rescaled to the transverse share of the point), checked in test_contact.c T33e */
 static void bow_solve_consistency(void)
 {
-    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
+    Instrument ic = *instrument_cello();
+    ic.bow.thermal.ncont = 1;
+    const StringSpec *sp = instrument_string(&ic, "D3");
     Sim S;
-    sim_init(&S, instrument_cello(), sp, 96000.0);
+    sim_init(&S, &ic, sp, 96000.0);
     sim_set_bow(&S, 0.1, 0.1, 0.6, 0.03);
     sim_start(&S);
     Chk c = {0.1, 0.0, 0.1, 0, NULL};
@@ -146,11 +150,13 @@ static void bow_solve_consistency(void)
 
 static void torsion_matters(void)
 {
-    const StringSpec *sp = instrument_string(instrument_cello(), "D3");
+    Instrument ic = *instrument_cello();
+    ic.bow.thermal.ncont = 1;
+    const StringSpec *sp = instrument_string(&ic, "D3");
     double d[2];
     for (int on = 0; on < 2; on++) {
         Sim S;
-        sim_init(&S, instrument_cello(), sp, 96000.0);
+        sim_init(&S, &ic, sp, 96000.0);
         S.torsion_on = on;
         sim_set_bow(&S, 0.1, 0.1, 0.6, 0.03);
         sim_start(&S);

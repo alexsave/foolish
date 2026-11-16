@@ -63,4 +63,6 @@ void bow_noise_init_ex(BowNoise *b, double level, double fs, double fc, long rat
 /* noise value n(t) for sample n of rate fs (t = n/fs, integer arithmetic for
  * the draw schedule so it is identical at every sample rate) */
 double bow_noise_next(BowNoise *b, Rng *r, long n, double fs);
+/* two one-pole high-passes in cascade (12 dB per octave below the corner hp_hz) applied to one noise sample; st[2] the filter states (roughness iteration 1) */
+double bow_noise_highpass(double st[2], double hp_hz, double fs, double x);
 #endif

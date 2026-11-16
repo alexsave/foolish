@@ -143,9 +143,11 @@ void sim_start(Sim *S)
     bow_noise_init_ex(&S->noise, S->bow_noise_level, S->fs, S->bow_noise_fc, S->bow_noise_rate);
     S->n = 0;
     S->vrel_prev = 0.0;
+    S->nz_hp[0] = S->nz_hp[1] = 0.0;
     S->stuck = 0;
     hair_reset(&S->hair);
     thermal_init(&S->th, &S->inst->bow.thermal, S->bow_width, S->k);
+    for (int g = 0; g < TH_MAXN; g++) thermal_init(&S->thg[g], &S->inst->bow.thermal, S->bow_width, S->k);
     analysis_slip_thr_for(S->inst->bow.model == BOW_THERMAL);
 }
 
@@ -212,10 +214,114 @@ static void play_apply(Sim *S, double t, double *vB, double *F, double *beta)
         S->vrel_prev = 0.0;
         S->stuck = 0;
         thermal_reset(&S->th);
+        for (int g = 0; g < TH_MAXN; g++) thermal_reset(&S->thg[g]);
     }
     *vB = trk_eval(P->vB, P->n, P->rate, t);
     *F = trk_eval(P->FB, P->n, P->rate, t);
     *beta = trk_eval(P->beta, P->n, P->rate, t);
+}
+
+
+/* DISTRIBUTED THERMAL CONTACT (roughness iteration 1, F3). The bow hair is a ribbon across `width`: the contact weights J (bow.c) are split into
+ * n = ThermalSpec.ncont groups of equal weight along the string (the torsion points go to the group of the nearest transverse point), and every group is a
+ * contact of its own with its own bristle state z_k and temperature tau_k (van Walstijn et al. 2026 use N = 4 points under the bow). The one-step string
+ * admittance is diagonal in the grid points, so groups of disjoint points do not couple within a step and every group solves the SCALAR equation
+ *   v_k = q_k - G_k Phi_k(v_k),   q_k = (qu_k + c_k qt_k) / (2 k W_k) - vB,   G_k = F p_k (Gu_k + c_k^2 Gt_k) / (2 k W_k),
+ * W_k = sum of J h over the group (the share of the ribbon), c_k = W_k / Wt_k (the torsion weights of the group rescaled to the same share, so the load of the
+ * group is the same on both polarisations), p_k = (1 + tilt x_k) / norm the pressure profile across the ribbon (x_k in [-1, 1] the group's position,
+ * sum W_k p_k = 1), so the normal force of group k is F W_k p_k and its force density on the string F p_k Phi_k J_l. The power given to the string by group k is
+ * F p_k W_k Phi_k v_k + the torsion share, the same product as the lumped contact's, so every group dissipates what its bristle model dissipates (>= 0).
+ * Returns the weighted mean relative velocity and the total friction force; th.tau and th.z hold the weighted means. */
+static void multi_contact(Sim *S, int lo, int hi, const double *J, int tlo, int thi, const double *Jt, double vB, double F, double nz, double *vrel_out, double *fric_out)
+{
+    String *s = S->s;
+    Torsion *tor = s->tor;
+    double k = S->k;
+    int n = S->inst->bow.thermal.ncont;
+    double tilt = S->inst->bow.thermal.tilt;
+    int grp[BOW_MAXPTS], tgrp[BOW_MAXPTS];
+    double W[TH_MAXN] = {0}, Wt[TH_MAXN] = {0}, tot = 0.0, cum = 0.0;
+    for (int l = lo; l <= hi; l++) tot += J[l - lo] * s->h;
+    for (int l = lo; l <= hi; l++) {
+        double w = J[l - lo] * s->h;
+        int g = (int)((cum + 0.5 * w) / tot * n);
+        grp[l - lo] = g >= n ? n - 1 : g;
+        W[grp[l - lo]] += w;
+        cum += w;
+    }
+    double xc[TH_MAXN] = {0};
+    cum = 0.0;
+    for (int g = 0; g < n; g++) { xc[g] = 2.0 * (cum + 0.5 * W[g]) / tot - 1.0; cum += W[g]; }
+    for (int m = tlo; m <= thi; m++) {
+        int best = lo;
+        double xm = m * tor->h, bd = 1e300;
+        for (int l = lo; l <= hi; l++) {
+            double d = fabs(l * s->h - xm);
+            if (d < bd) { bd = d; best = l; }
+        }
+        tgrp[m - tlo] = grp[best - lo];
+        Wt[tgrp[m - tlo]] += Jt[m - tlo] * tor->h;
+    }
+    double pw = 0.0, p[TH_MAXN], pn = 0.0, vm = 0.0, fr = 0.0, tm = 0.0, zm = 0.0;
+    for (int g = 0; g < n; g++) { p[g] = 1.0 + tilt * xc[g]; if (p[g] < 0.05) p[g] = 0.05; pn += W[g] * p[g]; }
+    const double *u0 = s->y0[0];
+    double *u2 = s->y2[0];
+    double qu[TH_MAXN] = {0}, Gu[TH_MAXN] = {0}, qt[TH_MAXN] = {0}, Gt[TH_MAXN] = {0}, c[TH_MAXN];
+    for (int l = lo; l <= hi; l++) {
+        int g = grp[l - lo];
+        qu[g] += J[l - lo] * s->h * (u2[l] - u0[l]);
+        Gu[g] += s->h * (s->kk * s->invD[l]) * J[l - lo] * J[l - lo];
+    }
+    for (int g = 0; g < n; g++) c[g] = Wt[g] > 0.0 ? W[g] / Wt[g] : 0.0;
+    if (S->torsion_on)
+        for (int m = tlo; m <= thi; m++) {
+            int g = tgrp[m - tlo];
+            qt[g] += Jt[m - tlo] * tor->h * (tor->th2[m] - tor->th0[m]);
+            Gt[g] += tor->h * (tor->kk * tor->invD[m]) * Jt[m - tlo] * Jt[m - tlo];
+        }
+    double Phi[TH_MAXN] = {0}, vg[TH_MAXN] = {0};
+    for (int g = 0; g < n; g++) {
+        if (W[g] <= 0.0) continue;
+        double pg = p[g] / pn, Fg = F * pg; /* normalised: sum W p = 1 */
+        double cg = c[g], rs = tor->rs;
+        double q = (qu[g] + rs * cg * qt[g]) / (2.0 * k * W[g]) - vB;
+        double G = Fg * (Gu[g] + rs * rs * cg * cg * Gt[g]) / (2.0 * k * W[g]);
+        double v = thermal_solve(&S->thg[g], Fg, q, G, nz, &Phi[g]);
+        vg[g] = v;
+        vm += W[g] * v;
+        pw += F * pg * W[g] * Phi[g] * v;
+        fr += W[g] * Fg * Phi[g];
+        tm += W[g] * S->thg[g].tau;
+        zm += W[g] * S->thg[g].z;
+        p[g] = pg;
+    }
+    for (int l = lo; l <= hi; l++) {
+        int g = grp[l - lo];
+        u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * p[g] * Phi[g];
+    }
+    if (S->torsion_on)
+        for (int m = tlo; m <= thi; m++) {
+            int g = tgrp[m - tlo];
+            tor->th2[m] -= tor->kk * tor->invD[m] * tor->rs * c[g] * Jt[m - tlo] * F * p[g] * Phi[g];
+        }
+    if (S->check_contact) { /* diagnosis (test_contact): the contact velocity of every point recomputed from the updated states equals vB + its v_rel */
+        double vu[TH_MAXN] = {0}, vt[TH_MAXN] = {0};
+        for (int l = lo; l <= hi; l++) vu[grp[l - lo]] += J[l - lo] * s->h * (u2[l] - u0[l]);
+        if (S->torsion_on)
+            for (int m = tlo; m <= thi; m++) vt[tgrp[m - tlo]] += Jt[m - tlo] * tor->h * (tor->th2[m] - tor->th0[m]);
+        for (int g = 0; g < n; g++) {
+            if (W[g] <= 0.0) continue;
+            double vc = (vu[g] / W[g] + (Wt[g] > 0.0 ? tor->rs * vt[g] / Wt[g] : 0.0)) / (2.0 * k), e = fabs(vc - vB - vg[g]);
+            if (e > S->check_err) S->check_err = e;
+        }
+    }
+    S->th.tau = tm / tot;
+    S->th.z = zm / tot;
+    S->th.qdiss = S->th.Hz = 0.0;
+    for (int g = 0; g < n; g++) { S->th.qdiss += W[g] * S->thg[g].qdiss; S->th.Hz += W[g] * S->thg[g].Hz; }
+    *vrel_out = vm / tot;
+    *fric_out = fr;
+    S->pwr = pw;
 }
 
 void sim_step(Sim *S)
@@ -285,6 +391,12 @@ void sim_step(Sim *S)
     }
 
     double nz = bow_noise_next(&S->noise, &S->rng, S->n, S->fs); /* always drawn on schedule */
+    {
+        int bi = S->sidx[S->bowed];
+        double hpc = S->inst->bow.noise_hp[bi];
+        if (hpc > 0.0) nz = bow_noise_highpass(S->nz_hp, hpc, S->fs, nz);
+        nz *= S->inst->bow.noise_scale[bi];
+    }
     double vB = 0, F = 0, fric = 0, vrel = 0, vbow = 0;
     int lo = 1, hi = 0;
     double J[BOW_MAXPTS], Jt[BOW_MAXPTS];
@@ -314,49 +426,57 @@ void sim_step(Sim *S)
         string_step_free(s, 1, buf);
         for (int l = lo; l <= hi; l++) buf[l] = 0.0;
 
-        double q = 0.0, G = 0.0;
-        const double *u0 = s->y0[0];
-        double *u2 = s->y2[0];
-        for (int l = lo; l <= hi; l++) {
-            q += J[l - lo] * s->h * (u2[l] - u0[l]);
-            G += s->h * (s->kk * s->invD[l]) * J[l - lo] * J[l - lo];
-        }
-        /* the string surface also moves with r_s theta_t: add the torsional contact velocity and
-           admittance (derivation in bow.c); the scalar equation stays scalar */
-        double qt = 0.0, Gt = 0.0;
-        if (S->torsion_on) {
-            const double *t0 = tor->th0;
-            double *t2 = tor->th2;
-            for (int l = tlo; l <= thi; l++) {
-                qt += Jt[l - tlo] * tor->h * (t2[l] - t0[l]);
-                Gt += tor->h * (tor->kk * tor->invD[l]) * Jt[l - tlo] * Jt[l - tlo];
+        if (S->inst->bow.model == BOW_THERMAL && S->inst->bow.thermal.ncont > 1 && !S->hair.on) {
+            multi_contact(S, lo, hi, J, tlo, thi, Jt, vB, F, nz, &vrel, &fric);
+            vbow = vrel + vB;
+            S->vrel_prev = vrel;
+            S->stuck = 0;
+        } else {
+            double q = 0.0, G = 0.0;
+            const double *u0 = s->y0[0];
+            double *u2 = s->y2[0];
+            for (int l = lo; l <= hi; l++) {
+                q += J[l - lo] * s->h * (u2[l] - u0[l]);
+                G += s->h * (s->kk * s->invD[l]) * J[l - lo] * J[l - lo];
             }
-            qt *= tor->rs;
-            Gt *= tor->rs * tor->rs;
+            /* the string surface also moves with r_s theta_t: add the torsional contact velocity and
+               admittance (derivation in bow.c); the scalar equation stays scalar */
+            double qt = 0.0, Gt = 0.0;
+            if (S->torsion_on) {
+                const double *t0 = tor->th0;
+                double *t2 = tor->th2;
+                for (int l = tlo; l <= thi; l++) {
+                    qt += Jt[l - tlo] * tor->h * (t2[l] - t0[l]);
+                    Gt += tor->h * (tor->kk * tor->invD[l]) * Jt[l - tlo] * Jt[l - tlo];
+                }
+                qt *= tor->rs;
+                Gt *= tor->rs * tor->rs;
+            }
+            q = (q + qt) / (2.0 * k) - vB;
+            G = F * (G + Gt) / (2.0 * k);
+            if (S->hair.on) {
+                Hair *h = &S->hair;
+                h->dfree = h->A * h->d1 + h->B * h->d0;
+                q -= (h->dfree - h->d0) / (2.0 * k);
+                G += F * h->g / (2.0 * k);
+            }
+            double Phi;
+            int stuck;
+            if (S->inst->bow.model == BOW_THERMAL) {
+                vrel = thermal_solve(&S->th, F, q, G, nz, &Phi);
+                stuck = 0;
+            } else
+                vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, nz, &Phi, &stuck);
+            for (int l = lo; l <= hi; l++) u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * Phi;
+            if (S->torsion_on)
+                for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;
+            fric = F * Phi;
+            S->pwr = fric * vrel;
+            if (S->hair.on) S->hair.d2 = S->hair.dfree + S->hair.g * fric;
+            vbow = vrel + vB;
+            S->vrel_prev = vrel;
+            S->stuck = stuck;
         }
-        q = (q + qt) / (2.0 * k) - vB;
-        G = F * (G + Gt) / (2.0 * k);
-        if (S->hair.on) {
-            Hair *h = &S->hair;
-            h->dfree = h->A * h->d1 + h->B * h->d0;
-            q -= (h->dfree - h->d0) / (2.0 * k);
-            G += F * h->g / (2.0 * k);
-        }
-        double Phi;
-        int stuck;
-        if (S->inst->bow.model == BOW_THERMAL) {
-            vrel = thermal_solve(&S->th, F, q, G, nz, &Phi);
-            stuck = 0;
-        } else
-            vrel = bow_solve(&S->inst->bow.friction, q, G, S->vrel_prev, S->stuck, nz, &Phi, &stuck);
-        for (int l = lo; l <= hi; l++) u2[l] -= s->kk * s->invD[l] * J[l - lo] * F * Phi;
-        if (S->torsion_on)
-            for (int l = tlo; l <= thi; l++) tor->th2[l] -= tor->kk * tor->invD[l] * tor->rs * Jt[l - tlo] * F * Phi;
-        fric = F * Phi;
-        if (S->hair.on) S->hair.d2 = S->hair.dfree + S->hair.g * fric;
-        vbow = vrel + vB;
-        S->vrel_prev = vrel;
-        S->stuck = stuck;
     } else {
         string_step_free(s, 1, NULL);
     }

@@ -1,4 +1,5 @@
 #include "knobs.h"
+#include "friction_thermal.h"
 #include <math.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -51,6 +52,11 @@ int knobs_apply(Instrument *I, const char *spec)
             I->bow.thermal.sigma0 = v;
         } else if (!strcmp(tok, "th_ns") && !names) {
             I->bow.thermal.nsub = (int)v;
+        } else if (!strcmp(tok, "th_n") && !names) {
+            if (v < 1.0 || v > TH_MAXN) { fprintf(stderr, "knob th_n: 1..%d\n", TH_MAXN); rc = 1; break; }
+            I->bow.thermal.ncont = (int)v;
+        } else if (!strcmp(tok, "th_tilt") && !names) {
+            I->bow.thermal.tilt = v;
         } else if (!strcmp(tok, "bn_fc") && !names) {
             I->bow.noise_fc = v;
         } else if (!strcmp(tok, "bn_rate") && !names) {
@@ -85,12 +91,16 @@ int knobs_apply(Instrument *I, const char *spec)
             I->body.fe_gain_b = v;
         } else if (!strcmp(tok, "stat_mass") && !names) {
             I->body.stat_m500 *= v;
-        } else if (names && (!strcmp(tok, "q2k") || !strcmp(tok, "zeta") || !strcmp(tok, "zt"))) {
+        } else if (names && (!strcmp(tok, "q2k") || !strcmp(tok, "zeta") || !strcmp(tok, "zt") || !strcmp(tok, "bn_scale") || !strcmp(tok, "bn_hp") || !strcmp(tok, "detune") || !strcmp(tok, "sig0"))) {
             int hit = 0;
             for (int i = 0; i < I->nstr; i++) {
                 if (!strchr(names, I->str[i].name[0])) continue;
                 hit = 1;
                 if (!strcmp(tok, "q2k")) set_q2k(&I->str[i], v);
+                else if (!strcmp(tok, "bn_scale")) I->bow.noise_scale[i] = v;
+                else if (!strcmp(tok, "bn_hp")) I->bow.noise_hp[i] = v;
+                else if (!strcmp(tok, "detune")) I->str[i].f0 *= pow(2.0, v / 1200.0); /* cents; the tension stays, so the mass per length follows */
+                else if (!strcmp(tok, "sig0")) I->str[i].sigma0 = v;
                 else if (!strcmp(tok, "zeta")) I->str[i].zeta_t = v;
                 else I->str[i].zt_ratio = v;
             }

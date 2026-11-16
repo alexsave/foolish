@@ -64,7 +64,7 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     if (o->sw[1] > 0.0) { pl.sw_lo = o->sw[0]; pl.sw_hi = o->sw[1]; }
     if (player_play(&pl, notes, n, played)) return 1;
     Sim S;
-    SimOpts so = {1, 1, 0, NULL};
+    SimOpts so = {1, o->solo ? 0 : 1, 0, NULL};
     sim_init_instrument(&S, I, o->fs, &so, "D3");
     S.play = &played->trk;
     sim_start(&S);
@@ -74,6 +74,7 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     for (long i = 0; i < total; i++) {
         sim_step(&S);
         pr[i] = S.out[7];
+        if (o->step_cb) o->step_cb(&S, i, o->step_user);
     }
     double c1 = cpu_seconds();
     if (rtf) *rtf = c1 > c0 ? played->dur / (c1 - c0) : 0.0;
@@ -114,6 +115,7 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--acc") && i + 2 < argc) { o.acc[0] = atof(argv[i + 1]); o.acc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--beta0") && i + 1 < argc) o.beta0 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--vb") && i + 2 < argc) { o.vb[0] = atof(argv[i + 1]); o.vb[1] = atof(argv[i + 2]); i += 2; }
+        else if (!strcmp(argv[i], "--solo")) o.solo = 1;
         else if (!strcmp(argv[i], "--att") && i + 1 < argc) o.att = !strcmp(argv[++i], "on");
         else if (!strcmp(argv[i], "--atta") && i + 1 < argc) o.att_acc = atof(argv[++i]);
         else if (!strcmp(argv[i], "--attk") && i + 1 < argc) o.att_k = atof(argv[++i]);

@@ -7,6 +7,7 @@
 #ifndef ALTCELLO_RENDER_H
 #define ALTCELLO_RENDER_H
 #include "player.h"
+#include "sim.h"
 
 typedef struct {
     PlayStyle style;
@@ -32,6 +33,9 @@ typedef struct {
     double att_acc, att_v, att_frac, sw[2]; /* 0: the defaults */
     double att_k, att_hold, rel[2]; /* the wedge slope (N per m/s^2) and the force relaxation time range, 0: the defaults */
     const char *trace;
+    int solo;       /* diagnosis: 1 = only the bowed string on the bridge (no sympathetic strings); 0 (default) all four */
+    void (*step_cb)(const Sim *S, long i, void *user); /* diagnosis hook: called after every simulation step (rough_tool.c); NULL = none */
+    void *step_user;
 } RenderOpts;
 void render_opts_default(RenderOpts *o);
 /* renders the notes; *pcm48 is the radiated pressure at 48 kHz (malloc'ed, before the room and the peak normalisation), *played gets the

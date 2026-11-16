@@ -55,21 +55,31 @@ void analysis_slip_thr_for(int thermal)
 
 int slip_onsets(const double *v, long i0, long i1, double thr, double fs, double *frac)
 {
-    /* an interval is a maximal run of |v| > thr; runs shorter than
-       SLIP_MIN_DUR_S are the stick-phase ripple micro-slips and are not
-       counted (neither as an interval nor in the fraction) */
+    /* an interval is a maximal run of |v| > thr; runs shorter than SLIP_MIN_DUR_S are the stick-phase ripple micro-slips and are not counted (neither as an
+       interval nor in the fraction). So are runs that carry less than SLIP_MIN_DISP_FRAC of the displacement (sum of |v| dt) of the largest run of the window:
+       the distributed contact (ThermalSpec.ncont > 1, sim.c) releases its points one after the other and the mean v_rel shows precursors of 0.1-0.5 percent of the
+       main slip, which are not slips of the string */
     long minlen = (long)ceil(SLIP_MIN_DUR_S * fs);
+    double dmax = 0.0;
+    for (long i = i0; i < i1;) {
+        if (fabs(v[i]) > thr) {
+            long j = i;
+            double d = 0.0;
+            while (j < i1 && fabs(v[j]) > thr) d += fabs(v[j++]);
+            if (j - i >= minlen && d > dmax) dmax = d;
+            i = j;
+        } else i++;
+    }
     int cnt = 0;
     long above = 0, i = i0;
     while (i < i1) {
         if (fabs(v[i]) > thr) {
             long j = i;
-            while (j < i1 && fabs(v[j]) > thr) j++;
-            if (j - i >= minlen && (i == i0 ? 0 : 1)) {
-                cnt++;
+            double d = 0.0;
+            while (j < i1 && fabs(v[j]) > thr) d += fabs(v[j++]);
+            if (j - i >= minlen && d >= SLIP_MIN_DISP_FRAC * dmax) {
+                if (i != i0) cnt++; /* a run cut by the window start counts in the fraction only */
                 above += j - i;
-            } else if (j - i >= minlen) {
-                above += j - i; /* run cut by the window start: fraction only */
             }
             i = j;
         } else i++;

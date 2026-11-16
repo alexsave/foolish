@@ -179,6 +179,15 @@ double bow_noise_next(BowNoise *b, Rng *r, long n, double fs)
     return b->lp_y;
 }
 
+double bow_noise_highpass(double st[2], double hp_hz, double fs, double x)
+{
+    double a = exp(-2.0 * M_PI * hp_hz / fs);
+    st[0] = a * st[0] + (1.0 - a) * x;
+    x -= st[0];
+    st[1] = a * st[1] + (1.0 - a) * x;
+    return x - st[1];
+}
+
 void hair_init(Hair *h, double kh, double dt)
 {
     h->on = 1;
