@@ -213,3 +213,13 @@ Physics moved: the bow noise multiplies the SLIDING friction coefficient (phi_sl
 - test_room T-noise (extended): the microphone self-noise is 2 dB(A) (was 12; spec in room.c) and shaped: flat to the 4 kHz knee, falling 3 dB per octave above. The assertion on the A-weighted level now reads the spec (1.99 dB(A) measured, spec 2.0); the new assertion compares the power per Hz in 8-16 kHz against 1-4 kHz with the same model (measured -4.55 dB, model -4.59 dB, tolerance 0.7) and requires it to be under -3 dB.
   - Mutation: the shaping gain forced to 1 -> `FAIL test_room.c:188: fabs(meas - want) < 0.7 -- noise tilt 0.04 dB, model -4.59 dB` and `:189 meas < -3.0`.
 - Not tested: onset_tool, legato's experiment CLI, charts/onset*.py, finger_study.py, gates2.py, candidate2.py, tail.py, transitions.py (measurement and chart scripts; their numbers are in ITERATION_LOG.md and the report).
+
+## Lowstrings iteration 1 (sympathetic ringing and the low strings: measurement tools only, no change of the default physics)
+
+Nothing in the instrument changed (no factor passed its decision rule), so the T23 hashes and all expectations are unchanged.
+Added: knobs.c (diagnostic one-factor knobs through ALTCELLO_KNOBS), the shadow bodies of sim.c (per-string radiated pressure), ring_tool, sweep_tool --semis.
+- test_shadow (T29): the per-string shadow pressures add up to the radiated pressure to 1e-9 of its peak, the open D string's share is not zero, and the knobs behave (s0 keeps every string's Q at 2 kHz, q2k/zeta/zt reach only the named strings, fifths, bad knobs refused, the shipped instrument untouched).
+  Mutation 1: `sim.c` shadow body driven with `1.01 * fu` -> `FAIL test_shadow.c:72: md < 1e-9 * mx -- string pressures do not add up: 8.27e-05 of 0.00758`.
+  Mutation 2: `knobs.c` s0 knob without the Q recompute -> `FAIL test_shadow.c:32: fabs(q2k(&K.str[i]) - q0[i]) < 1e-6 * q0[i] -- string 0 Q2k moved to 283.7427 from 300.0000`.
+  Both restored (1 s wait before make; object files touched), test back to PASS.
+- Not added, because the change they guard was not accepted: the ring-ratio bound test and the C2/G2-on-C audio periodicity bound test.

@@ -16,6 +16,7 @@
  *   onset_tool fing ...   (the finger-change experiments, legato.h)
  */
 #include "analysis.h"
+#include "knobs.h"
 #include "oracle_msw.h"
 #include "player.h"
 #include "sim.h"
@@ -182,6 +183,7 @@ static int pitch_main(int argc, char **argv);
 
 int main(int argc, char **argv)
 {
+    knobs_install();
     if (argc < 2) { fprintf(stderr, "usage: onset_tool wav|grid|fing ...\n"); return 2; }
     if (!strcmp(argv[1], "wav")) return wav_main(argc, argv);
     if (!strcmp(argv[1], "grid")) return grid_main(argc, argv);

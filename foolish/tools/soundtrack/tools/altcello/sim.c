@@ -63,6 +63,20 @@ void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *
     common_init(S, I, fs);
 }
 
+int sim_enable_shadow(Sim *S, const BodyOpts *opts)
+{
+    if (!S->body) return 1;
+    BodyOpts def = body_opts_default(S->inst);
+    const BodyOpts *bo = opts ? opts : &def;
+    for (int i = 0; i < S->nstr; i++) {
+        BodyModes *bm = body_modes_build_opts(S->inst, bo);
+        S->shadow[i] = body_new(S->inst, bm, S->fs, 0, bo);
+        body_modes_free(bm);
+        if (!S->shadow[i]) return 1;
+    }
+    return 0;
+}
+
 void sim_free(Sim *S)
 {
     for (int i = 0; i < S->nstr; i++) string_free(S->str[i]);
@@ -70,6 +84,7 @@ void sim_free(Sim *S)
     S->s = NULL;
     body_free(S->body);
     S->body = NULL;
+    for (int i = 0; i < SIM_MAXSTR; i++) { body_free(S->shadow[i]); S->shadow[i] = NULL; }
     free(S->fwbuf);
     S->fwbuf = NULL;
     free(S->walk_F);
@@ -207,8 +222,14 @@ void sim_step(Sim *S)
     if (S->body) {
         double Fu = 0.0, Fw = 0.0;
         for (int i = 0; i < S->nstr; i++) {
-            Fu -= string_bridge_force(S->str[i], S->str[i]->y1[0]);
-            Fw -= string_bridge_force(S->str[i], S->str[i]->y1[1]);
+            double fu = -string_bridge_force(S->str[i], S->str[i]->y1[0]), fw = -string_bridge_force(S->str[i], S->str[i]->y1[1]);
+            Fu += fu;
+            Fw += fw;
+            if (S->shadow[i]) {
+                body_step(S->shadow[i], fu, fw);
+                S->out_pstr[i] = S->shadow[i]->p;
+                S->out_fstr[i] = fu;
+            }
         }
         body_step(S->body, Fu, Fw);
         zu = S->body->zu;

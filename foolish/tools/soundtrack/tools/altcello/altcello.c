@@ -11,6 +11,7 @@
  * Writes OUTPREFIX.f32 (interleaved float32 LE, channels in OUTPREFIX.txt) and
  * OUTPREFIX_snap.f32 (u displacement field every 4th sample for the last 2
  * periods, header OUTPREFIX_snap.txt). Prints the real-time factor. */
+#include "knobs.h"
 #include "render.h"
 #include "room_cli.h"
 #include "sim.h"
@@ -247,6 +248,7 @@ static int admittance(int argc, char **argv)
 
 int main(int argc, char **argv)
 {
+    knobs_install();
     if (argc >= 2 && !strcmp(argv[1], "admittance")) return admittance(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "probe")) return probe(argc, argv);
     if (argc >= 2 && !strcmp(argv[1], "room")) return room_cli(argc, argv);

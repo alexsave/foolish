@@ -154,4 +154,6 @@ static const Instrument cello = {
     12.0, 5.4,
 };
 
-const Instrument *instrument_cello(void) { return &cello; }
+static const Instrument *override_inst;
+const Instrument *instrument_cello(void) { return override_inst ? override_inst : &cello; }
+void instrument_cello_override(const Instrument *I) { override_inst = I; }

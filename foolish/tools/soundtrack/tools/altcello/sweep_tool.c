@@ -2,7 +2,7 @@
  * tool, not part of the shipped instrument.
  *
  *   sweep_tool oracle STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--q2k-free]
- *   sweep_tool ours   STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--body] [--tail SECS (classified window, default 1.5)] [--noise-level X] [--ct X] [--zt X] [--zeta X] [--no-noise] [--no-torsion] [--pt-bow] [--stiff X]
+ *   sweep_tool ours   STRING BETA FMIN FMAX NF SECS OUT [--vb X] [--body] [--tail SECS (classified window, default 1.5)] [--noise-level X] [--ct X] [--zt X] [--zeta X] [--no-noise] [--no-torsion] [--pt-bow] [--stiff X] [--semis N (finger N semitones above the open string; BETA then relative to the sounding length)]
  *   sweep_tool onset  STRING BETA F SECS [--model oracle|ours] [--vb X]          (B4: time to steady Helmholtz, force-first start)
  *   sweep_tool wave   STRING BETA F SECS OUT [--model oracle|ours] [--vb X] [--body] ...   (the last 3 periods: t, v at the bow, v_rel, bridge force)
  *
@@ -13,6 +13,8 @@
  * The summary line gives, per classifier, F_min, F_max (first and last Helmholtz force), the Helmholtz count and the longest
  * contiguous run (its F_min, F_max). */
 #include "analysis.h"
+#include "knobs.h"
+#include "legato.h"
 #include "oracle_msw.h"
 #include "sim.h"
 #include <math.h>
@@ -72,6 +74,7 @@ static void oracle_run(Oracle *o, double vB, double F, double ramp, double fs, l
 
 int main(int argc, char **argv)
 {
+    knobs_install();
     if (argc < 5) { fprintf(stderr, "usage: see sweep_tool.c\n"); return 2; }
     const char *mode = argv[1];
     const Instrument *I = instrument_cello();
@@ -79,12 +82,14 @@ int main(int argc, char **argv)
     if (!sp) { fprintf(stderr, "unknown string\n"); return 2; }
     int si = instrument_string_index(I, argv[2]);
     double beta = atof(argv[3]), fs = 96000.0, vB = 0.1;
+    int semis = 0;
     int body = 0, noise = 1, torsion = 1, ptbow = 0, use_ours_model = 0;
     double tail = 1.5, stiff = 1.0, nlevel = -1.0, ct = -1.0, zt = -1.0, zeta = -1.0;
     int a0 = !strcmp(mode, "onset") ? 6 : !strcmp(mode, "wave") ? 7 : 9;
     for (int i = a0; i < argc; i++) {
         if (!strcmp(argv[i], "--vb") && i + 1 < argc) vB = atof(argv[++i]);
         else if (!strcmp(argv[i], "--body")) body = 1;
+        else if (!strcmp(argv[i], "--semis") && i + 1 < argc) semis = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--no-noise")) noise = 0;
         else if (!strcmp(argv[i], "--no-torsion")) torsion = 0;
         else if (!strcmp(argv[i], "--pt-bow")) ptbow = 1;
@@ -184,6 +189,8 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    double f_sound = sp->f0 * (semis > 0 ? pow(2.0, semis / 12.0) : 1.0);
+    if (semis > 0) beta /= pow(2.0, semis / 12.0); /* BETA is relative to the sounding length */
     double fmin = atof(argv[4]), fmax = atof(argv[5]);
     int nf = atoi(argv[6]);
     double secs = atof(argv[7]);
@@ -217,6 +224,10 @@ int main(int argc, char **argv)
             S.bow_noise_level = noise ? ic.bow.noise_level : 0.0;
             if (ptbow) S.bow_width = 1e-7; /* narrower than the grid: one grid point */
             sim_set_bow(&S, beta, vB, F, ramp);
+            if (semis > 0) {
+                env_const(&S.xF, finger_for(&ic, si, semis));
+                env_const(&S.aF, 1.0);
+            }
             sim_start(&S);
             Trace *tr = sim_run(&S, secs, NULL, NULL);
             bridge = tr->ch[0];
@@ -225,7 +236,7 @@ int main(int argc, char **argv)
             trace_free(tr);
             sim_free(&S);
         }
-        classify_and_write(out, F, bridge, vrel, n, fs, sp->f0, settle, &sw.ours[i], &sw.simple[i]);
+        classify_and_write(out, F, bridge, vrel, n, fs, f_sound, settle, &sw.ours[i], &sw.simple[i]);
         sw.F[i] = F;
         free(bridge);
         free(vrel);

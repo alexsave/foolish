@@ -52,6 +52,11 @@ typedef struct {
     double vrel_prev;
     int stuck;
     double *fwbuf;          /* w load density, N+1, zero between steps */
+    /* diagnostic decomposition (sim_enable_shadow): one extra body per string driven by that string's bridge force alone. The body is
+       linear, so the shadow pressures add up to the radiated pressure out[7] (test_shadow): the share of each string. */
+    Body *shadow[SIM_MAXSTR];
+    double out_pstr[SIM_MAXSTR]; /* radiated pressure due to string i alone, at the step's time */
+    double out_fstr[SIM_MAXSTR]; /* bridge force (u polarisation) of string i, N, at time n */
     double out[SIM_NCH];
 } Sim;
 
@@ -66,6 +71,8 @@ void sim_init(Sim *S, const Instrument *I, const StringSpec *sp, double fs);
 /* the instrument; bowed_name is the name of one of its strings (cello: "C2" "G2" "D3" "A3") */
 void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *o, const char *bowed_name);
 void sim_free(Sim *S);
+/* build the per-string shadow bodies (needs a body); opts NULL: the instrument's default body knobs; 0 on success */
+int sim_enable_shadow(Sim *S, const BodyOpts *opts);
 /* slow random walks of F_B and v_B: relative sd, bandwidth Hz (one-pole), table covering `seconds`; draws from ALTCELLO_WALK_SEED
    at SIM_WALK_RATE per second of logical seconds, independent of fs. Call before sim_start. */
 #define SIM_WALK_RATE 100

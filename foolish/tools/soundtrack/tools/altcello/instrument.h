@@ -103,6 +103,9 @@ typedef struct {
 } Instrument;
 
 const Instrument *instrument_cello(void);
+/* DIAGNOSTIC HOOK (knobs.h): the tools install a modified copy of the cello (one factor changed) and every later instrument_cello()
+   returns it; NULL restores the shipped values. The shipped renders never call it. */
+void instrument_cello_override(const Instrument *I);
 /* NULL if unknown */
 const StringSpec *instrument_string(const Instrument *I, const char *name);
 int instrument_string_index(const Instrument *I, const char *name); /* -1 if unknown */
