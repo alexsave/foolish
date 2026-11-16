@@ -306,3 +306,8 @@ Default changed on purpose: ThermalSpec.ncont 4 (4 contact points across the hai
 - T33 (test_contact): a) per string noise scale, b) noise high-pass, c) 4-point passivity and energy balance (bow work = string energy + heat + bristle, 0.03-0.14 percent), Helmholtz on D3, d) C2 Helmholtz point exists, e) per-point contact velocity consistency.
 - MUTATION CHECKS NOT COMPLETED (stopped by the dispatcher): the run in a scratch copy was killed before any result was recorded. The planned mutations are listed in charts/rough_batch*.sh history and the T33 header; none is claimed.
 - Full `make test` was NOT run in one pass after the last edits; individually run and passing after them: test_instrument, test_contact, test_thermal, test_helmholtz, test_torsion, test_player, test_onset (earlier full-run passes up to test_wolf).
+
+## Contact pickup output (T35, test_pickup)
+
+- T35: pickup_accel_hp on a synthetic sine velocity at 40, 159, 500, 1000, 2000 Hz with f_c 15.9 and 159 Hz (1 nF into 10 and 1 MOhm): amplitude within 1.2 percent of 2 pi f (f/fc)/sqrt(1+(f/fc)^2), phase within 0.03 rad of -atan(fc/f), f^2 slope below the corner, corner formula. PASS.
+- Mutations (each restored, 1 s wait before make, PASS again): sign flip -> 21 failures (phase and slope); corner x0.9 -> 20 failures (amplitude and phase); derivative scale removed -> 10 failures (amplitude). A first corner mutation did not match the source line and showed a false PASS; redone with a matching edit, it failed correctly.
