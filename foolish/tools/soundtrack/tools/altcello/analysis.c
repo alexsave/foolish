@@ -264,3 +264,125 @@ void partial_decays(const double *x, long n, double fs, double f0, int K, double
     }
     spec_free(sp);
 }
+
+/* ---------------------------------------------------------------- audio onset measures (analysis.h) */
+double audio_onset_from(const double *x, long n, double fs, double t_from)
+{
+    long w = (long)(0.005 * fs);
+    if (w < 1 || n < w) return -1.0;
+    long m = n / w;
+    double mx = 0.0;
+    double *e = malloc(sizeof(double) * (size_t)m);
+    for (long k = 0; k < m; k++) {
+        double s = 0.0;
+        for (long i = k * w; i < (k + 1) * w; i++) s += x[i] * x[i];
+        e[k] = sqrt(s / (double)w);
+        if (e[k] > mx) mx = e[k];
+    }
+    double t = -1.0;
+    for (long k = (long)(t_from * fs) / w; k < m && mx > 0.0; k++)
+        if (e[k] >= 0.02 * mx) { t = (double)(k * w) / fs; break; }
+    free(e);
+    return t;
+}
+
+double audio_onset(const double *x, long n, double fs) { return audio_onset_from(x, n, fs, 0.0); }
+
+/* Pearson correlation of x[i, i+W) with x[i+lag, i+lag+W) */
+static double pearson_lag(const double *x, long i, long W, long lag, double e1)
+{
+    double sxy = 0.0, e2 = 0.0;
+    for (long j = 0; j < W; j++) {
+        double b = x[i + lag + j];
+        sxy += x[i + j] * b;
+        e2 += b * b;
+    }
+    return sxy / sqrt(e1 * e2 + 1e-300);
+}
+
+long audio_corr_track(const double *x, long n, double fs, double f0, double t0, double *r, long rmax, double *hop_s)
+{
+    double P0 = fs / f0;
+    long W = (long)floor(P0 + 0.5), lo = (long)floor(0.95 * P0), hi = (long)ceil(1.05 * P0);
+    long hop = (long)(P0 / 8.0);
+    if (hop < 1) hop = 1;
+    if (hop_s) *hop_s = (double)hop / fs;
+    long i0 = (long)floor(t0 * fs);
+    if (i0 < 0) i0 = 0;
+    long k = 0;
+    double c[256];
+    if (hi - lo + 3 > 256) return 0;
+    for (long i = i0; i + W + hi + 2 <= n && k < rmax; i += hop, k++) {
+        double e1 = 0.0;
+        for (long j = 0; j < W; j++) e1 += x[i + j] * x[i + j];
+        if (e1 <= 1e-24) { r[k] = -1.0; continue; }
+        int bi = 1;
+        for (long l = lo - 1; l <= hi + 1; l++) {
+            c[l - lo + 1] = pearson_lag(x, i, W, l, e1);
+            if (l - lo + 1 >= 1 && l <= hi && c[l - lo + 1] > c[bi]) bi = (int)(l - lo + 1);
+        }
+        double a = c[bi - 1], b = c[bi], d = c[bi + 1];
+        double den = a - 2.0 * b + d, pk = b;
+        /* parabola peak value: b - (a - d)^2 / (8 (a - 2 b + d)) */
+        if (den < -1e-12) pk = b - (a - d) * (a - d) / (8.0 * den);
+        if (pk > 1.0) pk = 1.0;
+        r[k] = pk;
+    }
+    return k;
+}
+
+double audio_periodic_time(const double *x, long n, double fs, double f0, double t_from, double thr, int nper)
+{
+    long rmax = n;
+    double *r = malloc(sizeof(double) * (size_t)rmax);
+    double hop_s;
+    long m = audio_corr_track(x, n, fs, f0, t_from, r, rmax, &hop_s);
+    long need = (long)ceil((double)nper / f0 / hop_s);
+    double res = -1.0;
+    long run = 0;
+    for (long k = 0; k < m; k++) {
+        run = r[k] > thr ? run + 1 : 0;
+        if (run >= need) { res = t_from + (double)(k - need + 1) * hop_s; break; }
+    }
+    free(r);
+    return res;
+}
+
+double band_share_db(const double *x, long i0, long i1, double fs, double flo, double fhi)
+{
+    Spectrum *sp = spec_make(x + i0, i1 - i0, fs, 2);
+    double tot = 0.0, b = 0.0;
+    for (int i = 1; i < sp->n / 2; i++) {
+        double f = i * sp->df, p = sp->mag[i] * sp->mag[i];
+        tot += p;
+        if (f >= flo && f <= fhi) b += p;
+    }
+    spec_free(sp);
+    return 10.0 * log10(b / (tot + 1e-300) + 1e-30);
+}
+
+long pitch_track(const double *x, long n, double fs, double flo, double fhi, double win_s, double t0, double t1, double hop_s, double *tc, double *f, long kmax)
+{
+    long W = (long)(win_s * fs), lo = (long)floor(fs / fhi), hi = (long)ceil(fs / flo);
+    long hop = (long)(hop_s * fs);
+    if (hop < 1) hop = 1;
+    double *c = malloc(sizeof(double) * (size_t)(hi - lo + 3));
+    long k = 0;
+    for (long i = (long)(t0 * fs); (double)i / fs < t1 && i + W + hi + 2 <= n && k < kmax; i += hop, k++) {
+        double e1 = 0.0;
+        for (long j = 0; j < W; j++) e1 += x[i + j] * x[i + j];
+        if (e1 <= 1e-24) { f[k] = 0.0; tc[k] = ((double)i + 0.5 * (double)W) / fs; continue; }
+        int bi = 1;
+        for (long l = lo - 1; l <= hi + 1; l++) {
+            c[l - lo + 1] = pearson_lag(x, i, W, l, e1);
+            if (l >= lo && l <= hi && c[l - lo + 1] > c[bi]) bi = (int)(l - lo + 1);
+        }
+        double a = c[bi - 1], b = c[bi], d = c[bi + 1], den = a - 2.0 * b + d;
+        double dl = den < -1e-12 ? 0.5 * (a - d) / den : 0.0;
+        double lag = (double)(lo - 1 + bi) + dl;
+        f[k] = fs / lag;
+        tc[k] = ((double)i + 0.5 * ((double)W + lag)) / fs;
+    }
+    free(c);
+    return k;
+}

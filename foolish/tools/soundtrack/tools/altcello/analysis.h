@@ -59,4 +59,24 @@ SimpleHelm analyse_simple(const double *vrel, long n, double fs, double f_est, d
  * from t_start until the amplitude has fallen range_db below its first value or reaches the end. alpha[k-1] is the amplitude
  * decay rate in 1/s (0 if fewer than 4 windows). */
 void partial_decays(const double *x, long n, double fs, double f0, int K, double t_start, double win_s, double range_db, double *f_out, double *alpha);
+
+/* ---- AUDIO ONSET MEASURES (onset work, iteration 1; ONSET.md). One definition for the real notes and ours, on the radiated
+ * (or recorded) sound x at rate fs.
+ * audio_onset: first time the 5 ms rms reaches 2 percent of its maximum (the candidate scripts' onset), s.
+ * audio_corr_track: the normalised period autocorrelation r(t): window of one period P0 = fs / f0 at t (start of the window), against
+ * the next window shifted by the lag in [0.95 P0, 1.05 P0] that maximises the Pearson correlation (so vibrato and the pitch
+ * dips of a legato change do not count as aperiodic), sub-sample by a parabola; hop P0/8; returns the number of values, times
+ * t0 + k hop_s. r is -1 where the window has no energy.
+ * audio_periodic_time: the start time (s, absolute) of the first run of hops where r > thr for nper periods of time
+ * (thr 0.95, nper 10: "stays above 0.95 for 10 consecutive periods"), or -1. */
+double audio_onset(const double *x, long n, double fs);
+double audio_onset_from(const double *x, long n, double fs, double t_from); /* the same, looking from t_from on (the bow's landing click before the bow moves is not the note) */
+long audio_corr_track(const double *x, long n, double fs, double f0, double t0, double *r, long rmax, double *hop_s);
+double audio_periodic_time(const double *x, long n, double fs, double f0, double t_from, double thr, int nper);
+/* share of the power of x[i0,i1) (Hann window) that lies in [flo, fhi], dB re the total power of the window */
+double band_share_db(const double *x, long i0, long i1, double fs, double flo, double fhi);
+/* pitch track of a stretch with one pitch at a time between flo and fhi Hz: at t = t0 + k hop_s the correlation of the window
+ * x[i, i+W) (W = win_s) with the window shifted by lag in [fs/fhi, fs/flo], peak by a parabola; f[k] in Hz (0 when the window
+ * has no energy), assigned to the centre of the two windows (i + (W + lag) / 2) / fs, written to tc[k]. Returns the count. */
+long pitch_track(const double *x, long n, double fs, double flo, double fhi, double win_s, double t0, double t1, double hop_s, double *tc, double *f, long kmax);
 #endif

@@ -40,7 +40,9 @@ void room_spec_default(RoomSpec *s, double dist)
     s->order = 6;
     s->temp_c = 20.0; s->rh = 50.0;
     s->dir_db[0] = 0.0; s->dir_db[1] = 0.75; s->dir_db[2] = 1.5;
-    s->self_noise_dba = 12.0;
+    s->self_noise_dba = 2.0;
+    s->noise_knee_hz = 4000.0;
+    s->noise_tilt_db_oct = 3.0;
     s->ref_db_spl = 74.0;
     s->seed = ALTCELLO_ROOM_SEED;
 }
@@ -326,17 +328,36 @@ long room_apply(const RoomSpec *s, const float *ir, long nir, const float *in, l
         if (p >= 0.0625 * mx) { act += p; cnt += fl; }
     }
     double g = (cnt > 0 && act > 0.0) ? 1.0 / sqrt(act / (double)cnt) : 1.0;
+    /* microphone self-noise: white gaussian, shaped in the frequency domain (flat to the knee, tilt dB per octave above it), scaled so
+       that its A-weighted level is self_noise_dba */
     double sig = 0.0;
+    double *shape = NULL;
     if (s->self_noise_dba > 0.0) {
+        shape = malloc(sizeof(double) * (size_t)(N / 2 + 1));
         double pa = 0.0;
-        int nb = (int)(s->fs / 2.0);
-        for (int k = 0; k < nb; k++) { double a = pow(10.0, room_aweight_db(k + 0.5) / 20.0); pa += a * a; }
-        pa /= nb;
+        for (long k = 0; k <= N / 2; k++) {
+            double f = (double)k * s->fs / (double)N;
+            shape[k] = f > s->noise_knee_hz ? pow(f / s->noise_knee_hz, -s->noise_tilt_db_oct / 6.0206) : 1.0;
+            double a = pow(10.0, room_aweight_db(f < 20.0 ? 20.0 : f) / 20.0) * (f < 20.0 ? 0.0 : 1.0);
+            pa += a * a * shape[k] * shape[k];
+        }
+        pa /= (double)(N / 2 + 1);
         sig = pow(10.0, (s->self_noise_dba - s->ref_db_spl) / 20.0) / sqrt(pa);
     }
     Rng rng;
     rng_seed(&rng, s->seed ^ 0x6e015eULL);
-    for (long i = 0; i < nout; i++) y[i] = (float)(g * w[i] + (sig > 0.0 ? sig * rng_gauss(&rng) : 0.0));
+    if (shape) {
+        for (long i = 0; i < N; i++) { ar[i] = i < nout ? rng_gauss(&rng) : 0.0; ai[i] = 0.0; }
+        fft(ar, ai, (int)N);
+        for (long k = 0; k < N; k++) {
+            long kk = k <= N / 2 ? k : N - k;
+            ar[k] *= shape[kk];
+            ai[k] *= -shape[kk]; /* conjugated for the inverse */
+        }
+        fft(ar, ai, (int)N);
+        free(shape);
+    }
+    for (long i = 0; i < nout; i++) y[i] = (float)(g * w[i] + (sig > 0.0 ? sig * ar[i] / (double)N * 1.0 : 0.0));
     free(ar); free(ai); free(br); free(bi);
     *out = y;
     return nout;

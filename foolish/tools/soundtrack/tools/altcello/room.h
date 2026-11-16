@@ -35,7 +35,10 @@ typedef struct {
     int order;            /* image source order, 6 */
     double temp_c, rh;    /* air for the absorption: 20 C, 50 percent */
     double dir_db[ROOM_BANDS]; /* source directivity: half the front-back dB per band (gain dB = dir_db * cos(angle from front)) */
-    double self_noise_dba;     /* microphone self-noise, dB(A) SPL equivalent: 12 (U 87 Ai cardioid), 0 or less: off */
+    double self_noise_dba;     /* microphone self-noise, dB(A) SPL equivalent: 2 (candidate 2: 10 dB under the 12 of a U 87 Ai, to match the
+                                  Philharmonia recordings' floor, ONSET.md), 0 or less: off */
+    double noise_knee_hz, noise_tilt_db_oct; /* the noise is white up to the knee (4000 Hz) and falls by tilt dB per octave above it
+                                  (3, ASSUMED: closer to the measured floor of the Philharmonia notes than white noise) */
     double ref_db_spl;         /* level of rms 1.0: 74 */
     uint64_t seed;        /* sub-seed of the noise and the FDN signs */
 } RoomSpec;

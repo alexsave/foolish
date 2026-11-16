@@ -169,6 +169,25 @@ static void t_noise(void)
     printf("room noise: unweighted %.1f dB re rms 1 (= %.1f dB SPL), A-weighted %.2f dB(A) SPL, spec %.1f dB(A)\n", 10.0 * log10(raw / N),
            10.0 * log10(raw / N) + s.ref_db_spl, dba, s.self_noise_dba);
     CHECK(fabs(dba - s.self_noise_dba) < 2.0, "noise floor %.2f dB(A), spec %.1f", dba, s.self_noise_dba);
+    /* the noise falls by tilt dB per octave above the knee: power per Hz in 8-16 kHz against 1-4 kHz, from the same spectrum */
+    {
+        double p_lo = 0.0, p_hi = 0.0, m_lo = 0.0, m_hi = 0.0;
+        for (int k = 1; k < N / 2; k++) {
+            double f = k * s.fs / N, p = re[k] * re[k] + im[k] * im[k];
+            if (f >= 1000.0 && f < 4000.0) { p_lo += p; m_lo += 1.0; }
+            if (f >= 8000.0 && f < 16000.0) { p_hi += p; m_hi += 1.0; }
+        }
+        double meas = 10.0 * log10((p_hi / m_hi) / (p_lo / m_lo)), want = 0.0;
+        double acc = 0.0;
+        for (int k = 1; k < N / 2; k++) {
+            double f = k * s.fs / N;
+            if (f >= 8000.0 && f < 16000.0) acc += pow(f / s.noise_knee_hz, -s.noise_tilt_db_oct / 6.0206 * 2.0);
+        }
+        want = 10.0 * log10(acc / m_hi);
+        printf("room noise tilt: 8-16 kHz against 1-4 kHz %.2f dB, model %.2f dB\n", meas, want);
+        CHECK(fabs(meas - want) < 0.7, "noise tilt %.2f dB, model %.2f dB", meas, want);
+        CHECK(meas < -3.0, "noise is not shaped: 8-16 kHz is only %.2f dB under 1-4 kHz", meas);
+    }
     CHECK(fabs(room_aweight_db(1000.0)) < 0.05, "A(1 kHz) = %.3f dB", room_aweight_db(1000.0));
     CHECK(fabs(room_aweight_db(100.0) + 19.1) < 0.2, "A(100 Hz) = %.2f dB, table -19.1", room_aweight_db(100.0));
     CHECK(fabs(room_aweight_db(10000.0) + 2.5) < 0.3, "A(10 kHz) = %.2f dB, table -2.5", room_aweight_db(10000.0));

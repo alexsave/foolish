@@ -5,7 +5,7 @@ LIBO = $(LIB:.c=.o)
 TESTS = test_rng test_wav test_string_free test_helmholtz test_schelleng test_finger test_determinism \
 	test_body_energy test_admittance test_bridge_loss test_sympathetic test_body_helmholtz test_wolf test_torsion test_radiate test_bridge_hill test_hair test_instrument test_knobs test_room test_oracle_msw test_bow_noise test_player
 
-all: altcello geomdump test_geom bowhair_study sweep_tool
+all: altcello geomdump test_geom bowhair_study sweep_tool onset_tool
 
 bowhair_study: bowhair_study.o $(LIBO)
 	nice $(CC) $(CFLAGS) $^ -o $@ -lm
@@ -25,6 +25,9 @@ altcello: altcello.o $(LIBO)
 
 # the oracle (oracle_msw.h) is a test and diagnostic tool: it is not in LIB, so the shipped objects never depend on it
 sweep_tool: sweep_tool.o oracle_msw.o $(LIBO)
+	nice $(CC) $(CFLAGS) $^ -o $@ -lm
+
+onset_tool: onset_tool.o oracle_msw.o $(LIBO)
 	nice $(CC) $(CFLAGS) $^ -o $@ -lm
 
 test_oracle_msw: test_oracle_msw.o oracle_msw.o $(LIBO)
