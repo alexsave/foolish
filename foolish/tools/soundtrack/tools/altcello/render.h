@@ -1,6 +1,6 @@
 /* altcello render NOTES.txt OUT.wav [--style expert|novice] [--seed N] [--vib on|off] [--room off|RT60] [--dist M] [--trace PREFIX]
  *                                   [--fs HZ] [--damp PRESS] [--acc LO HI] [--vb MIN SPAN] [--frac MIN SPAN]
- *                                   [--att on|off] [--atta ACC] [--attk SLOPE] [--attv FRAC] [--attf FRAC] [--sw LO HI] [--rel LO HI]
+ *                                   [--predamp 0|1] [--att on|off] [--atta ACC] [--attk SLOPE] [--attv FRAC] [--attf FRAC] [--sw LO HI] [--rel LO HI]
  * Plays the note list (player.h) on the cello (all four strings on the bridge, modal body, physical radiation), takes the radiated
  * pressure decimated to 48 kHz and, with --room, applies the image-source plus FDN room and cardioid microphone (room.h; default RT60
  * 0.6 s, 1.5 m). Writes a float32 mono wav (peak -1 dBFS) and prints the real-time factor. */
@@ -19,6 +19,9 @@ typedef struct {
     double damp_ease; /* 0: default */
     double damp_delay; /* < 0: the player default */
     int slur;
+    double fr;       /* 0: the player default force ramp of the wedge attack, s */
+    double land[2];  /* 0 0: the player defaults (finger landing lead and press ramp, s) */
+    int predamp;     /* -1: the player default, 0 off, 1 on (the damping touch before a shift onto a ringing open string, player.h) */
     double swap_dip; /* < 0: default */
     double bc[2], dip; /* 0 0 / < 0: the defaults */
     double rock; /* < 0: default */

@@ -61,7 +61,7 @@ int main(void)
     BodyModes *bm = body_modes_build(instrument_cello());
     double worst = 0.0;
     for (int i = bm->nlead; i < bm->n; i++) {
-        double want = 1.0 / (0.012 * pow(bm->f[i] / 500.0, 0.3));
+        double want = 1.0 / (0.012 * pow(bm->f[i] / 500.0, instrument_cello()->body.eta_exp));
         double e = fabs(bm->Q[i] / want - 1.0);
         if (e > worst) worst = e;
     }

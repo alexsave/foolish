@@ -5,7 +5,8 @@
 #include "altstring.h"
 #include "instrument.h"
 
-#define BOW_NOISE_RATE 4000 /* noise draws per simulated second: one every 0.25 ms */
+#define BOW_NOISE_RATE 4000 /* the reference noise draw rate (draws per simulated second, one every 0.25 ms) and the default; the level is a density at this rate */
+#define BOW_NOISE_FC 3000.0 /* default corner of the noise low-pass, Hz */
 #define BOW_MAXPTS 64
 
 double bow_phi(const Friction *fr, double v);   /* friction curve, odd (constants: the instrument's BowSpec) */
@@ -44,6 +45,8 @@ void hair_reset(Hair *h);
 typedef struct {
     double level;       /* std of the raw draws (0 = off) */
     double lp_a;        /* one-pole coefficient */
+    long rate;          /* draws per simulated second (logical time) */
+    double gain;        /* draw scale sqrt(rate / BOW_NOISE_RATE): the noise density (relative fluctuation per sqrt(Hz)) does not depend on the draw rate */
     double lp_y;
     double x_prev, x_next;
     long idx_next;      /* index of x_next */
@@ -54,6 +57,9 @@ typedef struct {
 } BowNoise;
 
 void bow_noise_init(BowNoise *b, double level, double fs);
+/* the same with the low-pass corner fc (Hz) and the draw rate (per second of logical time; the linear interpolation between draws has its first null at the
+ * rate, so it should be at least 4 fc). level stays the std of a draw at the reference rate BOW_NOISE_RATE, so the spectral density is the same at any rate. */
+void bow_noise_init_ex(BowNoise *b, double level, double fs, double fc, long rate);
 /* noise value n(t) for sample n of rate fs (t = n/fs, integer arithmetic for
  * the draw schedule so it is identical at every sample rate) */
 double bow_noise_next(BowNoise *b, Rng *r, long n, double fs);

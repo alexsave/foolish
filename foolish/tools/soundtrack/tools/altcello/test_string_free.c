@@ -42,7 +42,10 @@ static void energy_cb(const Sim *S, long i, void *user)
 static void energy_test(const StringSpec *sp0, int lossless)
 {
     StringSpec sp = *sp0;
-    if (lossless) sp.sigma0 = sp.sigma1 = 0.0;
+    if (lossless) {
+        sp.sigma0 = sp.sigma1 = 0.0;
+        for (int r = 0; r < STR_NREL; r++) sp.rel_s1[r] = 0.0;
+    }
     Sim S;
     sim_init(&S, instrument_cello(), &sp, 96000.0);
     S.bow_on = 0;
@@ -88,8 +91,12 @@ int main(void)
     /* T1 */
     double fs = 96000.0;
     long n1, n2;
-    double *x1 = pluck_trace(sp, fs, 0.1, 2.0, &n1);
-    double *x2 = pluck_trace(sp, fs, 0.137, 2.0, &n2);
+    /* the partials are compared with the eigenfrequencies of the LOSSLESS scheme: the relaxation loss (altstring.h) adds a small dispersion (a rise of under 0.3 percent
+       above its corners, test_string_loss), so this check runs with the relaxation terms off; the sigma0 / sigma1 loss does not move the partials */
+    StringSpec spn = *sp;
+    for (int r = 0; r < STR_NREL; r++) spn.rel_s1[r] = 0.0;
+    double *x1 = pluck_trace(&spn, fs, 0.1, 2.0, &n1);
+    double *x2 = pluck_trace(&spn, fs, 0.137, 2.0, &n2);
     Spectrum *sa = spec_make(x1, n1, fs, 8), *sb = spec_make(x2, n2, fs, 8);
     String *s = string_new(sp, fs);
     double B = string_B(sp);
@@ -110,8 +117,12 @@ int main(void)
     free(x1);
     free(x2);
 
-    /* T2 */
+    /* T2: lossless, then lossy with each string loss model (sigma1 k^2 and the viscoelastic relaxation of altstring.h, whose stored energy is in string_energy) */
     energy_test(sp, 1);
     energy_test(sp, 0);
+    Instrument R = *instrument_cello();
+    instrument_cello_string_loss(&R, 1);
+    printf("T2 lossy with the relaxation loss:\n");
+    energy_test(instrument_string(&R, "D3"), 0);
     TEST_DONE("test_string_free");
 }

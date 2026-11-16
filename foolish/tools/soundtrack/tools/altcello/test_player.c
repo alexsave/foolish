@@ -520,8 +520,8 @@ static void check_attack(const Player *p, const Note *nt, int n, const char *wha
         CHECK(fabs(pl.trk.vB[i0]) > 0.6 * q->vB0 && fabs(pl.trk.vB[i0]) < 1.0 * q->vB0, "%s note %d: speed at the end of the acceleration %.3f of the plateau %.3f", what, k,
               fabs(pl.trk.vB[i0]), q->vB0);
         CHECK(fabs(pl.trk.vB[i1]) > 0.8 * q->vB0, "%s note %d: speed at the end of the swell %.3f is under the plateau %.3f", what, k, fabs(pl.trk.vB[i1]), q->vB0);
-        CHECK(pl.trk.FB[(long)floor((q->t_s - 0.03) * pl.trk.rate)] == 0.0 && pl.trk.FB[(long)floor((q->t_s - 0.015) * pl.trk.rate)] > 0.0 && fabs(pl.trk.vB[(long)floor((q->t_s - 0.005) * pl.trk.rate)]) == 0.0,
-              "%s note %d: the force does not land before the motion", what, k);
+        CHECK(pl.trk.FB[(long)floor((q->t_s - 0.045) * pl.trk.rate)] == 0.0 && pl.trk.FB[(long)floor((q->t_s - 0.015) * pl.trk.rate)] > 0.0 && fabs(pl.trk.vB[(long)floor((q->t_s - 0.005) * pl.trk.rate)]) == 0.0,
+              "%s note %d: the force does not land before the motion (it starts 35 ms and ends 20 ms before the start: the 15 ms ramp of richness F0)", what, k);
     }
     played_free(&pl);
 }

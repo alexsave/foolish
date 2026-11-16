@@ -45,6 +45,8 @@ typedef struct {
     Hair hair;              /* compliant bow-hair contact (bow.h), off by default; set with hair_init before sim_start */
     int torsion_on;         /* 1 (default): the bow contact includes the string's torsion (torsion.h); 0: transverse only */
     double bow_noise_level; /* std of raw draws; set before sim_start */
+    double bow_noise_fc;    /* low-pass corner, Hz; 0 = the instrument's (sim_init sets it) */
+    long bow_noise_rate;    /* draws per second; 0 = the instrument's */
     /* playing gestures (diagnosis knobs, all off by default): sinusoidal finger vibrato of the bowed string and slow random
        walks of the bow force and speed, both in logical time */
     double vib_depth_c, vib_rate, vib_t0; /* peak cents, Hz, s; depth 0 = off */

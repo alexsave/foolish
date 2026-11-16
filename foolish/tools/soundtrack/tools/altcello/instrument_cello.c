@@ -50,14 +50,23 @@
 
 #define L_ALL 0.69
 #define S0_ALL 1.2
-/* STRING LOSS (diagnosis setting C1, DIAGNOSIS.md E3 and the combined table). The earlier sigma1 of 3e-4 gave Q about 2700 at
- * 2 kHz, so the corners of the Helmholtz motion were not rounded. REFERENCES.md 2.4 (Galluzzo thesis): transverse zeta about 0.001 for the D string, i.e. Q = 1/(2 zeta)
- * = 500 under the reading that it holds at the partials that matter (UNVERIFIED as a per-partial figure); DIAGNOSIS.md E3 and the
- * C1 table adopt Q(2 kHz) = 500 for D3 and A3, 300 for C2 and G2 (the wound strings: ASSUMED lossier). The frequency dependent
- * loss is set per string so that a partial at 2 kHz has amplitude decay rate w/(2 Q): rate = s0 + s1 (w/c)^2 with c = 2 L f0
- * (the formula of the probe option --q2k). */
+/* STRING LOSS (diagnosis setting C1, DIAGNOSIS.md E3 and the combined table). REFERENCES.md 2.4 (Galluzzo thesis): transverse zeta about 0.001 for the D string, i.e. Q = 1/(2 zeta)
+ * = 500 under the reading that it holds at the partials that matter (UNVERIFIED as a per-partial figure); DIAGNOSIS.md E3 and the C1 table adopt Q(2 kHz) = 500 for D3 and A3, 300 for C2 and G2
+ * (the wound strings: ASSUMED lossier). The frequency dependent loss is set per string so that a partial at 2 kHz has amplitude decay rate w/(2 Q): rate = s0 + s1 (w/c)^2 with c = 2 L f0
+ * (the formula of the probe option --q2k). That decay rate grows like f^2, so the quality factor falls like 1/f above the anchor (Q 300 is Q 75 at 8 kHz). */
+/* 1: the shipped strings use the relaxation loss, 0: the sigma1 loss of candidate 4 (decided by the richness measurements, ITERATION_LOG.md) */
+#define STRING_LOSS_RELAX 0
 #define Q2K_S1(Q, f0) (((2.0 * M_PI * 2000.0 / (2.0 * (Q)) - S0_ALL) * (2.0 * L_ALL * (f0)) * (2.0 * L_ALL * (f0))) / \
                        ((2.0 * M_PI * 2000.0) * (2.0 * M_PI * 2000.0)))
+/* VISCOELASTIC STRING LOSS (richness iteration 1, charts/loss_fit_discrete.py, ITERATION_LOG.md): the alternative, instrument_cello_string_loss(I, 1) or the knob loss=1. A string's
+ * measured loss is closer to a constant quality factor than to f^2 (Galluzzo 2003 above; the level per string is the same ASSUMED 500 D and A, 300 C and G). Two standard linear solid
+ * terms (altstring.h) with the corners REL_F1 and REL_F2 and per string amplitudes A_i (the decay rate the term adds above its corner, 1/s; written A_i Q below: they scale like 1/Q) fit the
+ * DISCRETE scheme's decay rate (the characteristic equation of altstring.c, which differs from the continuous formula above 4 kHz) to: the earlier curve up to 500 Hz, constant Q from
+ * 1 kHz on, a log-log blend between. Result (loss_tool, test_string_loss): Q within 2 dB of the target from 2 to 10 kHz on every string, at most 4 dB more loss than before between 500 Hz
+ * and 1 kHz. The corners are inside the audio band (2.2 and 12 kHz); the relative frequency shift of the added dispersion is under 0.3 percent (Kramers-Kronig). */
+#define REL_F1 2199.5
+#define REL_F2 12000.0
+#define REL_TAU(F) (1.0 / (2.0 * M_PI * (F)))
 #define CT_RATIO 5.0
 #define ZETA_T 0.05
 #define ZT_RATIO 3.0
@@ -121,20 +130,22 @@
 #define WEDGE_K {0.66667, 0.6, 0.86667, 0.86667}
 /*WEDGE_END*/
 
-static const Instrument cello = {
+static Instrument cello = {
     "cello", 4,
     {
-        /* name f0       T      r       L      EI                  sigma0  sigma1  ct     zeta_t  zt */
-        {"C2", 65.41, 135.0, 0.80e-3, L_ALL, EI_B(8.0e-5, 135.0), S0_ALL, Q2K_S1(300.0, 65.41), CT_RATIO, ZETA_T, ZT_RATIO},
-        {"G2", 98.00, 130.0, 0.575e-3, L_ALL, 3.03e-4, S0_ALL, Q2K_S1(300.0, 98.00), CT_RATIO, ZETA_T, ZT_RATIO},
-        {"D3", 146.83, 140.0, 0.57e-3, L_ALL, EI_B(3.5e-5, 140.0), S0_ALL, Q2K_S1(500.0, 146.83), CT_RATIO, ZETA_T, ZT_RATIO},
-        {"A3", 220.00, 160.0, 0.50e-3, L_ALL, EI_B(2.5e-5, 160.0), S0_ALL, Q2K_S1(500.0, 220.00), CT_RATIO, ZETA_T, ZT_RATIO},
+        /* name f0       T      r       L      EI                  sigma0  sigma1  ct     zeta_t  zt   relaxation {s1_i}, {tau_i}: sigma1 and the relaxation terms are set
+           by instrument_cello_string_loss at the first use (the one owner of both loss models, below) */
+        {"C2", 65.41, 135.0, 0.80e-3, L_ALL, EI_B(8.0e-5, 135.0), S0_ALL, 0.0, CT_RATIO, ZETA_T, ZT_RATIO, {0.0, 0.0}, {0.0, 0.0}},
+        {"G2", 98.00, 130.0, 0.575e-3, L_ALL, 3.03e-4, S0_ALL, 0.0, CT_RATIO, ZETA_T, ZT_RATIO, {0.0, 0.0}, {0.0, 0.0}},
+        {"D3", 146.83, 140.0, 0.57e-3, L_ALL, EI_B(3.5e-5, 140.0), S0_ALL, 0.0, CT_RATIO, ZETA_T, ZT_RATIO, {0.0, 0.0}, {0.0, 0.0}},
+        {"A3", 220.00, 160.0, 0.50e-3, L_ALL, EI_B(2.5e-5, 160.0), S0_ALL, 0.0, CT_RATIO, ZETA_T, ZT_RATIO, {0.0, 0.0}, {0.0, 0.0}},
     },
     {36, 43, 50, 57},
     /* bow: width, noise, hair length, friction {a1 v1 a2 v2 c mu_static} */
-    {0.010, 0.01, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2},
+    {0.010, 0.02, 0.62, {0.4, 0.01, 0.45, 0.1, 0.35, 1.2},
      BOW_THERMAL, /* the bow model: BOW_CURVE (knob bow=0) or BOW_THERMAL; the thermal constants: friction_thermal.h, Table 1 of vW26 */
-     {1.05, 0.3, 1.0e6, 25.0, 0.4, 2.0, 0.5, 1.0e-6, 0.22, 1.0e-4, 4, 0.02}},
+     {1.05, 0.3, 1.0e6, 25.0, 0.4, 2.0, 0.5, 1.0e-6, 0.22, 1.0e-4, 4, 0.02},
+     16000.0, 64000}, /* bow noise: level 0.02 (a density at 4000 draws/s), low-pass corner 16 kHz, 64000 draws/s: richness F1 (a 3 kHz corner left nothing above 5 kHz) */
     /* finger: width, K, R */
     {0.010, 2e7, 200.0},
     /* body */
@@ -155,8 +166,9 @@ static const Instrument cello = {
         4,
         {1.0, 0.7, 0.7, 0.7}, /* compact monopole strengths (stage 2 values) */
         480.0, 12000.0, 18.0, 0.5 * STAT_M_SCALE, 6.0,
-        0.012, 0.3, /* eta0 at 500 Hz (range 0.008 - 0.02) and exponent (0 - 0.6): REFERENCES 7.1, DERIVED assumption */
+        0.012, 0.15, /* eta0 at 500 Hz (range 0.008 - 0.02) and exponent (0 - 0.6): REFERENCES 7.1, DERIVED assumption; 0.15 since richness F3 (0.3 before) */
         2.1e-6, BRIDGE_R_INF, 1500.0,
+        0.3, /* statistical mass law exponent m ~ f^0.3 (richness F3; m ~ sqrt(f) before) */
     },
     /* radiation: a_eff, f_c, area, perimeter, G_PLATE */
     {0.25, 3000.0, 0.17, 2.0, 1.245},
@@ -169,6 +181,36 @@ static const Instrument cello = {
     12.0, 5.4,
 };
 
+/* the string loss of each string: the quality factor target (300 C and G, 500 D and A) and the amplitudes A_i Q (1/s) of the two relaxation terms (REL_F1, REL_F2) of the fit */
+static const double LOSS_Q[4] = {300.0, 300.0, 500.0, 500.0};
+static const double LOSS_AQ[4][STR_NREL] = {{5729.4, 122050.0}, {7360.5, 81789.0}, {7910.1, 65648.5}, {8350.8, 58814.2}};
+
+void instrument_cello_string_loss(Instrument *I, int relax)
+{
+    for (int i = 0; i < I->nstr && i < 4; i++) {
+        StringSpec *s = &I->str[i];
+        double c2 = (2.0 * s->L * s->f0) * (2.0 * s->L * s->f0), fr[STR_NREL] = {REL_F1, REL_F2};
+        if (!relax) {
+            s->sigma1 = Q2K_S1(LOSS_Q[i], s->f0);
+            for (int j = 0; j < STR_NREL; j++) s->rel_s1[j] = s->rel_tau[j] = 0.0;
+            continue;
+        }
+        s->sigma1 = 0.0;
+        for (int j = 0; j < STR_NREL; j++) {
+            s->rel_tau[j] = REL_TAU(fr[j]);
+            s->rel_s1[j] = LOSS_AQ[i][j] / LOSS_Q[i] * c2 * s->rel_tau[j] * s->rel_tau[j];
+        }
+    }
+}
+
 static const Instrument *override_inst;
-const Instrument *instrument_cello(void) { return override_inst ? override_inst : &cello; }
+const Instrument *instrument_cello(void)
+{
+    static int inited;
+    if (!inited) {
+        inited = 1;
+        instrument_cello_string_loss(&cello, STRING_LOSS_RELAX);
+    }
+    return override_inst ? override_inst : &cello;
+}
 void instrument_cello_override(const Instrument *I) { override_inst = I; }

@@ -18,12 +18,13 @@
    the arithmetic does not depend on what the compiler can see as constant */
 /* RE-RECORDED again in iteration 2 (a88857656984cdac / 58f68de34d67ee18 before): the bow noise acts on the sliding friction
    coefficient instead of the bow force and its level is 0.01 (was 0.03), and the torsional damping ratio is 0.05 (was 0.01). */
-#define REF_D3 0xaea0191a9767bf02ULL /* the friction curve model (BOW_CURVE): unchanged by the thermal work, which proves the curve path is untouched */
-#define REF_C2 0x20e16156da2131f0ULL
+/* re-recorded in richness iteration 1 (deliberate): bow noise 16 kHz corner and level 0.02, body eta exponent 0.15 and mass exponent 0.3 change every probe */
+#define REF_D3 0x03a48479d9794aecULL /* the friction curve model (BOW_CURVE): unchanged by the thermal work, which proves the curve path is untouched */
+#define REF_C2 0x8460db965389ecd7ULL
 /* RECORDED deliberately in thermal iteration 1, when the default bow model became BOW_THERMAL (friction_thermal.h): the physics of the
    default instrument changed, so every sample changes. Same probes as above, the default instrument. */
-#define REF_D3_THERMAL 0x0812735492e9d6d7ULL
-#define REF_C2_THERMAL 0x1aa802cbd1ddb603ULL
+#define REF_D3_THERMAL 0x645e19137198416dULL
+#define REF_C2_THERMAL 0x4e01f691d1a3dd7cULL
 static uint64_t hash_trace(const Trace *tr)
 {
     uint64_t h = 1469598103934665603ULL;

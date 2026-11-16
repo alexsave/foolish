@@ -25,6 +25,7 @@ void render_opts_default(RenderOpts *o)
     o->fs = 96000.0;
     o->damp = -1.0;
     o->damp_delay = -1.0;
+    o->predamp = -1;
     o->rock = -1.0;
     o->dip = -1.0;
     o->swap_dip = -1.0;
@@ -41,6 +42,9 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     if (o->damp >= 0.0) pl.damp_press = o->damp;
     if (o->damp_ease > 0.0) pl.damp_ease = o->damp_ease;
     if (o->damp_delay >= 0.0) pl.damp_delay = o->damp_delay;
+    if (o->predamp >= 0) pl.predamp = o->predamp;
+    if (o->fr > 0.0) pl.f_ramp = o->fr;
+    if (o->land[0] > 0.0) { pl.land_lead = o->land[0]; pl.land_ramp = o->land[1]; }
     if (o->bc[1] > 0.0) { pl.bc_lo = o->bc[0]; pl.bc_hi = o->bc[1]; }
     pl.slur = o->slur;
     if (o->dip >= 0.0) pl.dip = o->dip;
@@ -99,6 +103,9 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--damp") && i + 1 < argc) o.damp = atof(argv[++i]);
         else if (!strcmp(argv[i], "--ddelay") && i + 1 < argc) o.damp_delay = atof(argv[++i]);
         else if (!strcmp(argv[i], "--dease") && i + 1 < argc) o.damp_ease = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--framp") && i + 1 < argc) o.fr = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--land") && i + 2 < argc) { o.land[0] = atof(argv[++i]); o.land[1] = atof(argv[++i]); }
+        else if (!strcmp(argv[i], "--predamp") && i + 1 < argc) o.predamp = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--bc") && i + 2 < argc) { o.bc[0] = atof(argv[i + 1]); o.bc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--swapdip") && i + 1 < argc) o.swap_dip = atof(argv[++i]);
         else if (!strcmp(argv[i], "--slur") && i + 1 < argc) o.slur = atoi(argv[++i]);

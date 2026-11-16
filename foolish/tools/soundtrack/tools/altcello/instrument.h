@@ -7,6 +7,7 @@
 
 #define INSTR_MAXSTR 4
 #define INSTR_MAXLEAD 16
+#define STR_NREL 2 /* relaxation terms of the string loss (StringSpec) */
 #define INSTR_MAXSEMI 15 /* stopped-pitch correction table: 0..14 semitones above the open string */
 
 typedef struct {
@@ -21,6 +22,11 @@ typedef struct {
     double ct_ratio; /* torsional wave speed / transverse wave speed */
     double zeta_t;   /* torsional damping ratio at the torsional fundamental (sigma_t = zeta_t w_t1); 0 = lossless */
     double zt_ratio; /* torsional characteristic impedance at the surface / Z0 = sqrt(T rho) */
+    /* viscoelastic relaxation loss (standard linear solid, altstring.h): the velocity gradient entering the loss is low-passed with time constant
+       rel_tau[i] (s) and weighted with rel_s1[i] (m^2/s, the k^2 coefficient it has below the corner 1 / (2 pi tau)); 0 = term off. The amplitude
+       decay rate it adds saturates at rel_s1 / (c tau)^2 above the corner, so a few terms make the quality factor flat over a band. */
+    double rel_s1[STR_NREL];
+    double rel_tau[STR_NREL];
 } StringSpec;
 
 /* friction curve phi(v) = a1 exp(-|v|/v1) + a2 exp(-|v|/v2) + c (odd), phi(0+) = mu_static */
@@ -44,11 +50,13 @@ typedef enum { BOW_CURVE = 0, BOW_THERMAL = 1 } BowModel;
 
 typedef struct {
     double width;       /* bow hair contact width, m */
-    double noise_level; /* std of the raw bow-noise draws */
+    double noise_level; /* std of the raw bow-noise draws at 4000 draws per second (a density: bow.h) */
     double hair_length; /* usable hair, m (the controller's bow length budget) */
     Friction friction;
     BowModel model;     /* BOW_CURVE: friction curve (bow.h); BOW_THERMAL: friction_thermal.h */
     ThermalSpec thermal;
+    double noise_fc;    /* corner of the one-pole low-pass of the bow noise, Hz (bow.h) */
+    long noise_rate;    /* bow noise draws per second of logical clock, see bow.h; the level is a density at 4000 per second */
 } BowSpec;
 
 typedef struct {
@@ -77,6 +85,7 @@ typedef struct {
     double bridge_inertia;        /* kg m^2 */
     double bridge_R;              /* rad/(m s N) */
     double bridge_f0;             /* Hz */
+    double stat_m_exp;            /* mass law exponent of the statistical modes: m = m500 (f / 500 Hz)^stat_m_exp */
 } BodySpec;
 
 typedef struct {
@@ -124,6 +133,8 @@ const Instrument *instrument_cello(void);
 /* DIAGNOSTIC HOOK (knobs.h): the tools install a modified copy of the cello (one factor changed) and every later instrument_cello()
    returns it; NULL restores the shipped values. The shipped renders never call it. */
 void instrument_cello_override(const Instrument *I);
+/* set the string loss of the four strings of I: relax = 0 the sigma1 k^2 loss of candidate 4 (Q 300 / 500 at 2 kHz only), 1 the viscoelastic relaxation loss (flat Q, altstring.h) */
+void instrument_cello_string_loss(Instrument *I, int relax);
 /* NULL if unknown */
 const StringSpec *instrument_string(const Instrument *I, const char *name);
 int instrument_string_index(const Instrument *I, const char *name); /* -1 if unknown */
@@ -132,6 +143,8 @@ double string_rho(const StringSpec *sp);         /* T / (2 L f0)^2, kg/m */
 double string_B(const StringSpec *sp);           /* pi^2 EI / (T L^2) */
 double string_EI_for_B(double B, double T, double L); /* EI = B T L^2 / pi^2 */
 double string_ct(const StringSpec *sp);          /* torsional wave speed, m/s */
+double string_alpha(const StringSpec *sp, double f);   /* amplitude decay rate of a partial of frequency f, 1/s (sigma0, sigma1, relaxation terms) */
+double string_Q(const StringSpec *sp, double f);       /* quality factor pi f / alpha */
 double string_Ip(const StringSpec *sp);          /* torsional inertia per length, kg m: Z_t,surface = Ip c_t / r^2 = zt_ratio Z0 */
 
 #endif

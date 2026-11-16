@@ -12,11 +12,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-static double q2k(const StringSpec *s)
-{
-    double c = 2.0 * s->L * s->f0, w = 2.0 * M_PI * 2000.0;
-    return w / (2.0 * (s->sigma0 + s->sigma1 * (w / c) * (w / c)));
-}
+static double q2k(const StringSpec *s) { return string_Q(s, 2000.0); }
 
 int main(void)
 {
@@ -25,7 +21,16 @@ int main(void)
     Instrument K = *I;
     double q0[4];
     for (int i = 0; i < 4; i++) q0[i] = q2k(&I->str[i]);
-    CHECK(fabs(q0[0] - 300.0) < 1e-6 && fabs(q0[2] - 500.0) < 1e-6, "baseline Q2k %.3f %.3f", q0[0], q0[2]);
+    CHECK(fabs(q0[0] / 300.0 - 1.0) < 0.03 && fabs(q0[2] / 500.0 - 1.0) < 0.03, "baseline Q2k %.3f %.3f (within 3 percent of 300 and 500)", q0[0], q0[2]);
+    K = *I;
+    CHECK(knobs_apply(&K, "loss=1") == 0, "loss=1 refused");
+    for (int i = 0; i < 4; i++)
+        CHECK(fabs(q2k(&K.str[i]) / (i < 2 ? 300.0 : 500.0) - 1.0) < 0.08 && K.str[i].rel_s1[0] > 0.0 && K.str[i].sigma1 == 0.0, "loss=1: string %d Q2k %.4f", i, q2k(&K.str[i]));
+    K = *I;
+    CHECK(knobs_apply(&K, "loss=0") == 0, "loss=0 refused");
+    for (int i = 0; i < 4; i++)
+        CHECK(fabs(q2k(&K.str[i]) - (i < 2 ? 300.0 : 500.0)) < 1e-6 && K.str[i].rel_s1[0] == 0.0 && K.str[i].sigma1 > 0.0, "loss=0: string %d Q2k %.4f", i, q2k(&K.str[i]));
+    K = *I;
     CHECK(knobs_apply(&K, "s0=2.4") == 0, "s0 refused");
     for (int i = 0; i < 4; i++) {
         CHECK(fabs(K.str[i].sigma0 - 2.4) < 1e-12, "sigma0 %g", K.str[i].sigma0);
@@ -34,7 +39,7 @@ int main(void)
     K = *I;
     CHECK(knobs_apply(&K, "q2k.CG=120,zeta.CG=0.12,zt.C=8") == 0, "refused");
     CHECK(fabs(q2k(&K.str[0]) - 120.0) < 1e-6 && fabs(q2k(&K.str[1]) - 120.0) < 1e-6, "C G Q2k %.3f %.3f", q2k(&K.str[0]), q2k(&K.str[1]));
-    CHECK(fabs(q2k(&K.str[2]) - 500.0) < 1e-6 && fabs(q2k(&K.str[3]) - 500.0) < 1e-6, "D A Q2k moved");
+    CHECK(fabs(q2k(&K.str[2]) - q0[2]) < 1e-6 && fabs(q2k(&K.str[3]) - q0[3]) < 1e-6, "D A Q2k moved");
     CHECK(K.str[0].zeta_t == 0.12 && K.str[1].zeta_t == 0.12 && K.str[2].zeta_t == I->str[2].zeta_t, "zeta reached the wrong strings");
     CHECK(K.str[0].zt_ratio == 8.0 && K.str[1].zt_ratio == I->str[1].zt_ratio, "zt reached the wrong strings");
     K = *I;

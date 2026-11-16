@@ -128,8 +128,15 @@ double bow_solve(const Friction *fr, double q, double G, double vprev, int stuck
 
 void bow_noise_init(BowNoise *b, double level, double fs)
 {
+    bow_noise_init_ex(b, level, fs, BOW_NOISE_FC, BOW_NOISE_RATE);
+}
+
+void bow_noise_init_ex(BowNoise *b, double level, double fs, double fc, long rate)
+{
     b->level = level;
-    b->lp_a = exp(-2.0 * M_PI * 3000.0 / fs);
+    b->rate = rate;
+    b->gain = sqrt((double)rate / BOW_NOISE_RATE);
+    b->lp_a = exp(-2.0 * M_PI * fc / fs);
     b->lp_y = 0.0;
     b->x_prev = b->x_next = 0.0;
     b->idx_next = 0;
@@ -139,9 +146,9 @@ void bow_noise_init(BowNoise *b, double level, double fs)
 
 static double draw(BowNoise *b, Rng *r, long idx, double now)
 {
-    double x = b->level * rng_gauss(r);
+    double x = b->level * b->gain * rng_gauss(r);
     if (b->nlog < 1000) {
-        b->log_t[b->nlog] = (double)idx / BOW_NOISE_RATE;
+        b->log_t[b->nlog] = (double)idx / b->rate;
         b->log_x[b->nlog] = x;
         b->log_now[b->nlog] = now;
         b->nlog++;
@@ -161,12 +168,12 @@ double bow_noise_next(BowNoise *b, Rng *r, long n, double fs)
     }
     /* advance while sample n is at or beyond draw idx_next:
        n/fs >= idx_next/RATE  <=>  n*RATE >= idx_next*fs */
-    while (n * (long)BOW_NOISE_RATE >= b->idx_next * ifs) {
+    while (n * b->rate >= b->idx_next * ifs) {
         b->x_prev = b->x_next;
         b->idx_next++;
         b->x_next = draw(b, r, b->idx_next, (double)n / fs);
     }
-    double frac = ((double)n * BOW_NOISE_RATE - (double)(b->idx_next - 1) * ifs) / (double)ifs;
+    double frac = ((double)n * (double)b->rate - (double)(b->idx_next - 1) * ifs) / (double)ifs;
     double x = b->x_prev + frac * (b->x_next - b->x_prev);
     b->lp_y = b->lp_a * b->lp_y + (1.0 - b->lp_a) * x;
     return b->lp_y;

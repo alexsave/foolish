@@ -14,6 +14,8 @@ static void common_init(Sim *S, const Instrument *I, double fs)
     finger_init(&S->finger, &I->finger);
     S->bow_width = I->bow.width;
     S->bow_noise_level = I->bow.noise_level;
+    S->bow_noise_fc = I->bow.noise_fc;
+    S->bow_noise_rate = I->bow.noise_rate;
     S->bow_on = 1;
     S->torsion_on = 1;
     env_const(&S->vB, 0.0);
@@ -45,7 +47,10 @@ void sim_init_instrument(Sim *S, const Instrument *I, double fs, const SimOpts *
     for (int i = 0; i < I->nstr; i++) {
         if (!o->all_strings && strcmp(I->str[i].name, bowed_name)) continue;
         StringSpec sp = I->str[i];
-        if (o->lossless) sp.sigma0 = sp.sigma1 = sp.zeta_t = 0.0;
+        if (o->lossless) {
+            sp.sigma0 = sp.sigma1 = sp.zeta_t = 0.0;
+            for (int r = 0; r < STR_NREL; r++) sp.rel_s1[r] = 0.0;
+        }
         S->str[S->nstr] = string_new(&sp, fs);
         if (!strcmp(I->str[i].name, bowed_name)) S->bowed = S->nstr;
         if (S->str[S->nstr]->N > maxN) maxN = S->str[S->nstr]->N;
@@ -133,7 +138,7 @@ static double walk_eval(const double *tab, long n, double t)
 void sim_start(Sim *S)
 {
     rng_seed(&S->rng, ALTCELLO_SEED);
-    bow_noise_init(&S->noise, S->bow_noise_level, S->fs);
+    bow_noise_init_ex(&S->noise, S->bow_noise_level, S->fs, S->bow_noise_fc, S->bow_noise_rate);
     S->n = 0;
     S->vrel_prev = 0.0;
     S->stuck = 0;

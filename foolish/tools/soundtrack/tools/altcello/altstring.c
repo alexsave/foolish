@@ -11,7 +11,10 @@ double string_h_min(const StringSpec *sp, double fs)
     double rho = string_rho(sp);
     double c2 = sp->T / rho;
     double kap2 = sp->EI / rho;
-    double a = c2 * k * k + 4.0 * sp->sigma1 * k;
+    double sg = sp->sigma1;
+    for (int i = 0; i < STR_NREL; i++)
+        if (sp->rel_s1[i] > 0.0 && sp->rel_tau[i] > 0.0) sg += sp->rel_s1[i]; /* the relaxation terms are bounded by their DC form: conservative */
+    double a = c2 * k * k + 4.0 * sg * k;
     return sqrt((a + sqrt(a * a + 16.0 * kap2 * k * k)) / 2.0);
 }
 
@@ -45,6 +48,15 @@ String *string_new(const StringSpec *sp, double fs)
     s->fing_lo = 1;
     s->fing_hi = 0;
     s->tor = torsion_new(sp, fs);
+    s->nrel = 0;
+    for (int i = 0; i < STR_NREL; i++) {
+        if (sp->rel_s1[i] <= 0.0 || sp->rel_tau[i] <= 0.0) continue;
+        int j = s->nrel++;
+        s->rel_s[j] = sp->rel_s1[i];
+        s->rel_a[j] = exp(-s->k / sp->rel_tau[i]);
+        for (int p = 0; p < 2; p++) s->g[p][j] = calloc((size_t)s->N + 1, sizeof(double));
+    }
+    s->gs = calloc((size_t)s->N + 1, sizeof(double));
     return s;
 }
 
@@ -55,6 +67,9 @@ void string_free(String *s)
         for (int i = 0; i < 3; i++) free(s->store[p][i]);
     free(s->invD);
     free(s->C);
+    for (int p = 0; p < 2; p++)
+        for (int j = 0; j < s->nrel; j++) free(s->g[p][j]);
+    free(s->gs);
     torsion_free(s->tor);
     free(s);
 }
@@ -103,11 +118,27 @@ void string_step_free(String *s, int pol, const double *fext)
     double a2 = s->kap2 * k * k;
     double a3 = 2.0 * s->s1 * k;
     double a4 = 1.0 - s->s0 * k;
+    const double *gs = s->gs;
+    if (s->nrel) {
+        /* relaxation: g_i = a_i g_i + (1 - a_i) (y1 - y0) / k at every point, gs = sum s1_i g_i (the term 2 k^2 dxx gs enters below) */
+        double ik = 1.0 / k;
+        for (int l = 0; l <= s->N; l++) {
+            double v = (y1[l] - y0[l]) * ik, acc = 0.0;
+            for (int j = 0; j < s->nrel; j++) {
+                double *g = s->g[pol][j];
+                g[l] = s->rel_a[j] * g[l] + (1.0 - s->rel_a[j]) * v;
+                acc += s->rel_s[j] * g[l];
+            }
+            s->gs[l] = acc;
+        }
+    }
+    double kr = 2.0 * k * k * ih2;
     for (int l = 1; l < s->N; l++) {
         double d1 = (y1[l + 1] - 2.0 * y1[l] + y1[l - 1]) * ih2;
         double d0 = (y0[l + 1] - 2.0 * y0[l] + y0[l - 1]) * ih2;
         double d4 = (y1[l + 2] - 4.0 * y1[l + 1] + 6.0 * y1[l] - 4.0 * y1[l - 1] + y1[l - 2]) * ih4;
         double S = 2.0 * y1[l] + a1 * d1 - a2 * d4 - a4 * y0[l] - a3 * d0 - s->C[l] * y0[l];
+        if (s->nrel) S += kr * (gs[l + 1] - 2.0 * gs[l] + gs[l - 1]);
         if (fext) S += s->kk * fext[l];
         y2[l] = S * s->invD[l];
     }
@@ -150,5 +181,23 @@ double string_energy(const String *s, const double *cur, const double *prev)
         stf += xx1 * xx0;
     }
     for (int l = 0; l < N; l++) pot += (cur[l + 1] - cur[l]) * (prev[l + 1] - prev[l]) / (h * h);
-    return h * (0.5 * kin + 0.5 * s->c2 * pot + 0.5 * s->kap2 * stf);
+    double rel = 0.0;
+    if (s->nrel) {
+        /* the energy stored in the relaxation (altstring.h): the polarisation is the one whose current state is cur */
+        int pol = cur == s->y1[0] ? 0 : cur == s->y1[1] ? 1 : -1;
+        if (pol >= 0) {
+            for (int j = 0; j < s->nrel; j++) {
+                const double *g = s->g[pol][j];
+                double cross = 0.0, sq = 0.0;
+                for (int l = 0; l < N; l++) {
+                    double G = (g[l + 1] - g[l]) / h;
+                    double D = ((cur[l + 1] - cur[l]) - (prev[l + 1] - prev[l])) / (h * k);
+                    cross += G * D;
+                    sq += G * G;
+                }
+                rel += k * s->rel_s[j] * (cross + (1.0 + s->rel_a[j]) / (2.0 * (1.0 - s->rel_a[j])) * sq);
+            }
+        }
+    }
+    return h * (0.5 * kin + 0.5 * s->c2 * pot + 0.5 * s->kap2 * stf + rel);
 }

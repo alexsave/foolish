@@ -64,6 +64,33 @@ static void b_schedule_logical_time(void)
     printf("T26b %ld draws at 48 kHz and 96 kHz over 1 s, first 1000 identical (values and logical times): %s\n", a.idx_next, ident ? "yes" : "NO");
 }
 
+/* T26d the faster, higher corner noise of richness F1: the draw schedule is still in logical time at 64000 draws per second (identical draws at 48 and 96 kHz, 64000 per
+ * second), and the level is a density: the draw at rate r is the draw at the reference rate times sqrt(r / 4000), so the noise density does not depend on the draw rate. */
+static void d_fast_noise(void)
+{
+    BowNoise a, b, c;
+    Rng ra, rb, rc;
+    rng_seed(&ra, ALTCELLO_SEED);
+    rng_seed(&rb, ALTCELLO_SEED);
+    rng_seed(&rc, ALTCELLO_SEED);
+    bow_noise_init_ex(&a, 0.02, 48000.0, 16000.0, 64000);
+    bow_noise_init_ex(&b, 0.02, 96000.0, 16000.0, 64000);
+    bow_noise_init(&c, 0.02, 96000.0);
+    double fa = 48000.0, fb = 96000.0;
+    for (long n = 0; n < (long)fb; n++) {
+        bow_noise_next(&b, &rb, n, fb);
+        bow_noise_next(&c, &rc, n, fb);
+        if (n % 2 == 0) bow_noise_next(&a, &ra, n / 2, fa);
+    }
+    CHECK(a.idx_next >= 63999 && b.idx_next == 64000, "draws after 1 s: %ld (48k, whose last sample is n = 47999) %ld (96k), want 63999+ / 64000", a.idx_next, b.idx_next);
+    int ident = 1;
+    for (long i = 0; i < 1000; i++) if (a.log_x[i] != b.log_x[i] || a.log_t[i] != b.log_t[i]) ident = 0;
+    CHECK(ident, "the first 1000 fast draws differ between 48 and 96 kHz");
+    double ratio = b.log_x[5] / c.log_x[5];
+    CHECK(fabs(ratio - 4.0) < 1e-12, "draw scale %g, want sqrt(64000 / 4000) = 4", ratio);
+    printf("T26d 64000 draws per second at 48 and 96 kHz identical: %s; draw scale against the 4000 per second noise %.6f\n", ident ? "yes" : "NO", ratio);
+}
+
 static void c_playability_table(void)
 {
     const Instrument *I = instrument_cello();
@@ -102,6 +129,7 @@ int main(void)
 {
     a_sticking_only_deterministic();
     b_schedule_logical_time();
+    d_fast_noise();
     c_playability_table();
     TEST_DONE("test_bow_noise");
 }

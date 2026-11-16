@@ -61,6 +61,15 @@ typedef struct {
        sustain position over a time drawn in [rel_lo, rel_hi] s while the speed swells to the plateau over [sw_lo, sw_hi] s. The 0.2 - 0.8 clamp of the
        log band applies from the end of the relaxation on; the force is continuous throughout. */
     double att_k, att_hold, rel_lo, rel_hi; /* att_hold: the wedge force is held this long after the bow reaches speed before it relaxes, s */
+    /* the damping touch before a shift onto a ringing string (richness iteration 1, F5): an OPEN string note leaves its string ringing for seconds (the left hand
+       holds no finger on it, unlike a stopped note, which the finger keeps damped). The expert, who has to put a finger down on that string for the next note,
+       touches it at the NEW position lightly (press predamp_press, 0 - 1) predamp_delay s after the bow lifted, over predamp_ease s, and presses fully as the
+       note starts: the ring is damped before the shift instead of being cut by a landing finger (the swept partials of the stepped pitch ladder). Only when the
+       gap is long enough for a ring (the next finger lands later than the touch plus its ease). predamp = 0 is the player of candidate 4. */
+    int predamp;
+    double f_ramp;               /* the wedge attack's force rises over f_ramp s, ending lead s before the motion (F0: a 5 ms step rings the string before the bow moves) */
+    double land_lead, land_ramp; /* the expert finger lands land_lead s before the note starts and its press rises over land_ramp s (F0: a fast landing rings the open string before the bow) */
+    double predamp_press, predamp_delay, predamp_ease;
 } Player;
 
 #define PLAYER_CTRL_RATE 1000.0

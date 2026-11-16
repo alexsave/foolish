@@ -9,6 +9,21 @@
  *              - (1 - s0 k) y0_l - 2 s1 k dxx y0 - C_l y0_l + k^2 f_l / rho
  *   D_l = 1 + s0 k + gam_l (K/2 + R/(2k)),  C_l = gam_l (K/2 - R/(2k)),
  *   gam_l = k^2 a g_l / rho.
+ *
+ * Viscoelastic relaxation loss (standard linear solid, richness iteration 1): the loss term 2 s1 dxx (dt- y) of the scheme above acts on a LOW-PASSED
+ * velocity, 2 sum_i s1_i dxx g_i with
+ *   g_i^n = a_i g_i^{n-1} + (1 - a_i) (y^n - y^{n-1}) / k,   a_i = exp(-k / tau_i)
+ * (g_i is the strain relaxation: a one-pole low-pass of the velocity, corner 1 / (2 pi tau_i), unit gain at DC). It is the force of a spring E_i = 2 s1_i rho / tau_i
+ * in series with a dashpot, in parallel with the string tension (the Zener model). Continuous: the amplitude decay rate of a partial is
+ *   alpha(w) = s0 + sum_i  s1_i (w / c)^2 / (1 + (w tau_i)^2)  = s0 + sum_i A_i x_i^2 / (1 + x_i^2),  A_i = s1_i / (c tau_i)^2,  x_i = w tau_i:
+ * it grows like w^2 below the corner and SATURATES at A_i above it, so a few terms with corners spread over the audio band give a decay rate that grows like
+ * w (a constant quality factor) instead of the w^2 (Q falling like 1/f) of s1 alone. The same terms add a small dispersion (a relative frequency rise
+ * below A_i tau_i, 0.2 percent at most, Kramers-Kronig).
+ * ENERGY (proved in TESTS.md T2r, tested by test_string_free and test_body_energy): with D^n = dx+ (y^n - y^{n-1}) / k, G_i^n = dx+ g_i^n and the Bilbao energy H
+ * of the lossless scheme, the quantity
+ *   E = H + k sum_i s1_i ( <G_i^n, D^{n+1}> + (1 + a_i) / (2 (1 - a_i)) |G_i^n|^2 )
+ * never increases (the extra terms are the energy stored in the relaxation); the proof pairs the loss with the centred velocity and uses that
+ * the dissipation of step n is s1 k (1 - a) ... precisely (s1 k / (1 - a)) (|G^n + G^{n-1}|^2 (1 - a) / 2) >= 0 for 0 <= a < 1 (x^2 + (1-a) x z - a z^2 - ((1+a)/2)(x^2 - z^2) = (1-a)(x+z)^2/2).
  * y0 = time n-1, y1 = n, y2 = n+1. Arrays are padded with 2 ghost points on
  * each side (index -2 .. N+2); ghosts hold the odd reflection of the
  * simply supported ends (y = y_xx = 0). */
@@ -29,6 +44,11 @@ typedef struct {
     double kk;          /* k^2 / rho */
     int fing_lo, fing_hi;
     Torsion *tor;       /* torsional motion of this string, own grid (torsion.h) */
+    int nrel;           /* relaxation terms in use */
+    double rel_s[STR_NREL];  /* s1_i in use (tests may override) */
+    double rel_a[STR_NREL];  /* one-pole coefficient exp(-k / tau_i) */
+    double *g[2][STR_NREL];  /* low-passed velocity per polarisation and term, points 0..N */
+    double *gs;         /* scratch: sum_i s1_i g_i, points 0..N */
 } String;
 
 String *string_new(const StringSpec *sp, double fs);

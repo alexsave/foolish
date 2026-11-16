@@ -79,7 +79,7 @@ BodyModes *body_modes_build_opts(const Instrument *I, const BodyOpts *o)
     double f = sp->stat_f0;
     while (f <= sp->stat_f1 && n < cap) {
         /* draws in Hz and kg, in this order per mode: mass, c_u, c_w, then the next gap */
-        double mean_m = sp->stat_m500 * sqrt(f / 500.0);
+        double mean_m = sp->stat_m500 * (sp->stat_m_exp == 0.5 ? sqrt(f / 500.0) : pow(f / 500.0, sp->stat_m_exp));
         double m = mean_m * pow(10.0, sp->stat_m_sd_db * rng_gauss(&rng) / 20.0);
         m *= o->stat_mass_scale;
         m /= body_bridge_gain_R(I, f, o->bridge_inertia, o->bridge_R);

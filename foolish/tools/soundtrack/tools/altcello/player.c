@@ -76,6 +76,13 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->att_acc = 0.0; /* 0: the Instrument's per string wedge acceleration (instrument_cello.c WEDGE); iteration 1 used 0.5 m/s^2 for all strings */
     p->att_k = 0.0;   /* 0: the Instrument's per string wedge slope */
     p->att_hold = 0.1; /* the wedge force is held until the Helmholtz motion has formed (G2 on C: 1 of 6 takes derailed at 0 s and 0.05 s hold, 5 of 6 periodic at 0.1 s) */
+    p->f_ramp = 0.015; /* 0.005 rang the string 24 dB under the sustain before the bow moved, 0.015 36-40 dB (richness F0) */
+    p->land_lead = 0.03;
+    p->land_ramp = 0.01;
+    p->predamp = 0;
+    p->predamp_press = 0.12;
+    p->predamp_delay = 0.05;
+    p->predamp_ease = 0.03;
     p->rel_lo = 0.05;
     p->rel_hi = 0.15;
     p->att_v_frac = 0.85; /* was 0.4 with the 0.5 m/s^2 ramp: the speed at 50 ms was 0.025 m/s and the level 8-17 dB under Philharmonia */
@@ -379,8 +386,8 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
             if (!q->linked_prev) {
                 if (att) {
                     va = 1.0; /* the profile is in V already */
-                    double tf = ts - lead - 0.005;
-                    fa = t < tf ? 0.0 : rc((t - tf) / 0.005);
+                    double tf = ts - lead - p->f_ramp;
+                    fa = t < tf ? 0.0 : rc((t - tf) / p->f_ramp);
                 } else if (expert) {
                     va = t < ts ? 0.0 : t >= ts + Tacc ? 1.0 : (t - ts) / Tacc;
                     double t0 = ts - lead - 0.02;
@@ -453,17 +460,30 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
             if (q->semis < INSTR_MAXSEMI) xnom = sim_vib_finger(L, xnom, I->stop_cents[s][q->semis]);
         }
         int same_swap = k > 0 && pl[k - 1].string == s && q->linked_prev && pl[k - 1].semis > 0;
-        double tL = expert ? ts - 0.03 : ts;
+        double tL = expert ? ts - p->land_lead : ts;
         if (expert && nn->slide && same_swap) tL = ts - 0.10;
         long iL = (long)ceil(tL * R - 1e-9);
         if (iL < 0) iL = 0;
         long ie = (long)floor(te * R);
         if (!stopped) { /* open string: the finger of any earlier note on this string lifts */
             for (long i = iL; i < N; i++) {
-                double u = ((double)i / R - tL) / (expert ? 0.01 : 0.001);
+                double u = ((double)i / R - tL) / (expert ? p->land_ramp : 0.001);
                 T->aF[s][i] *= 1.0 - rc(u);
             }
             continue;
+        }
+        if (expert && p->predamp && !same_swap) {
+            int j = k - 1;
+            while (j >= 0 && pl[j].string != s) j--;
+            if (j >= 0 && pl[j].semis == 0) {
+                double td = pl[j].t_e + p->predamp_delay;
+                if (td + p->predamp_ease < tL) {
+                    for (long i = (long)ceil(td * R - 1e-9); i < iL && i < N; i++) {
+                        T->xF[s][i] = xnom;
+                        T->aF[s][i] = p->predamp_press * rc((i / R - td) / p->predamp_ease);
+                    }
+                }
+            }
         }
         double xold = T->xF[s][iL];
         long m = N - iL;
@@ -519,10 +539,10 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
             if (t <= te) {
                 a = 1.0 - rock;
                 if (same_swap && expert && !nn->slide) { /* the old finger lifts and the new one lands within 10 ms: a dips, the position swaps in the middle */
-                    double u = (t - tL) / 0.01;
+                    double u = (t - tL) / p->land_ramp;
                     if (u >= -1e-6 && u <= 1.0) a *= 1.0 - p->swap_dip * sin(M_PI * u);
                 } else {
-                    double up = rc((t - tL) / (expert ? 0.01 : 0.001));
+                    double up = rc((t - tL) / (expert ? p->land_ramp : 0.001));
                     if (!(nn->slide && same_swap)) a = fmax(a * up, up < 1.0 ? T->aF[s][i] : 0.0);
                 }
             } else if (expert) {

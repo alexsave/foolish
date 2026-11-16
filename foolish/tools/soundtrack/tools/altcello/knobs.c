@@ -4,16 +4,14 @@
 #include <stdlib.h>
 #include <string.h>
 
-/* amplitude decay rate of a partial at 2 kHz is w / (2 Q) = sigma0 + sigma1 (w / c)^2 with c = 2 L f0 (instrument_cello.c Q2K_S1) */
-static double q2k_of(const StringSpec *s)
-{
-    double c = 2.0 * s->L * s->f0, w = 2.0 * M_PI * 2000.0;
-    return w / (2.0 * (s->sigma0 + s->sigma1 * (w / c) * (w / c)));
-}
+/* quality factor at 2 kHz (altstring.h string_alpha: sigma0, sigma1 and the relaxation terms) */
+static double q2k_of(const StringSpec *s) { return string_Q(s, 2000.0); }
+/* set the quality factor at 2 kHz by scaling the frequency dependent part (sigma1 and the relaxation amplitudes) with sigma0 kept */
 static void set_q2k(StringSpec *s, double Q)
 {
-    double c = 2.0 * s->L * s->f0, w = 2.0 * M_PI * 2000.0;
-    s->sigma1 = (w / (2.0 * Q) - s->sigma0) / ((w / c) * (w / c));
+    double w = 2.0 * M_PI * 2000.0, x = string_alpha(s, 2000.0) - s->sigma0, lam = (w / (2.0 * Q) - s->sigma0) / x;
+    s->sigma1 *= lam;
+    for (int i = 0; i < STR_NREL; i++) s->rel_s1[i] *= lam;
 }
 
 int knobs_apply(Instrument *I, const char *spec)
@@ -32,6 +30,10 @@ int knobs_apply(Instrument *I, const char *spec)
             double q[INSTR_MAXSTR];
             for (int i = 0; i < I->nstr; i++) q[i] = q2k_of(&I->str[i]);
             for (int i = 0; i < I->nstr; i++) { I->str[i].sigma0 = v; set_q2k(&I->str[i], q[i]); }
+        } else if (!strcmp(tok, "loss") && !names) {
+            /* loss=0: the sigma1 k^2 string loss of candidate 4 and earlier; loss=1: the viscoelastic relaxation loss (instrument_cello.c). Put it first in the list:
+               it replaces sigma1 and the relaxation terms of every string, so a later q2k or s0 knob acts on the chosen model */
+            instrument_cello_string_loss(I, v != 0.0);
         } else if (!strcmp(tok, "fifths") && !names) {
             /* the open strings tuned in pure fifths from A3 = 220 Hz (A 220, D 146.667, G 97.778, C 65.185); the finger position of a stopped
                note does not depend on f0, so the equal-tempered stopped notes land 2-4 cents off the open string in unison */
@@ -49,6 +51,22 @@ int knobs_apply(Instrument *I, const char *spec)
             I->bow.thermal.sigma0 = v;
         } else if (!strcmp(tok, "th_ns") && !names) {
             I->bow.thermal.nsub = (int)v;
+        } else if (!strcmp(tok, "bn_fc") && !names) {
+            I->bow.noise_fc = v;
+        } else if (!strcmp(tok, "bn_rate") && !names) {
+            I->bow.noise_rate = (long)v;
+        } else if (!strcmp(tok, "bn_level") && !names) {
+            I->bow.noise_level = v;
+        } else if (!strcmp(tok, "stat_f1") && !names) {
+            I->body.stat_f1 = v;
+        } else if (!strcmp(tok, "eta_exp") && !names) {
+            I->body.eta_exp = v;
+        } else if (!strcmp(tok, "mass_exp") && !names) {
+            I->body.stat_m_exp = v;
+        } else if (!strcmp(tok, "bridge_r") && !names) {
+            I->body.bridge_R *= v;
+        } else if (!strcmp(tok, "bw") && !names) {
+            I->bow.width = v;
         } else if (!strcmp(tok, "lead_mass") && !names) {
             for (int m = 0; m < I->body.nlead; m++) I->body.lead[m].m *= v;
         } else if (!strcmp(tok, "stat_mass") && !names) {
