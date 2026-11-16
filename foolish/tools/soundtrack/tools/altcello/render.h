@@ -1,5 +1,5 @@
 /* altcello render NOTES.txt OUT.wav [--style expert|novice] [--seed N] [--vib on|off] [--room off|RT60] [--dist M] [--trace PREFIX]
- *                                   [--fs HZ] [--damp PRESS] [--vb MIN SPAN] [--frac MIN SPAN]
+ *                                   [--fs HZ] [--damp PRESS] [--acc LO HI] [--vb MIN SPAN] [--frac MIN SPAN]
  * Plays the note list (player.h) on the cello (all four strings on the bridge, modal body, physical radiation), takes the radiated
  * pressure decimated to 48 kHz and, with --room, applies the image-source plus FDN room and cardioid microphone (room.h; default RT60
  * 0.6 s, 1.5 m). Writes a float32 mono wav (peak -1 dBFS) and prints the real-time factor. */
@@ -15,6 +15,8 @@ typedef struct {
     double dist;
     double fs;       /* simulation rate, 96000 */
     double damp;     /* < 0: the player default */
+    double rock; /* < 0: default */
+    double acc[2]; /* 0 0: the default */
     double beta0; /* 0: default */
     double vb[2], frac[2]; /* player speed and band-position laws (player.h), 0 0: the defaults */
     const char *trace;

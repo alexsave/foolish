@@ -24,6 +24,7 @@ void render_opts_default(RenderOpts *o)
     o->dist = 1.5;
     o->fs = 96000.0;
     o->damp = -1.0;
+    o->rock = -1.0;
 }
 
 int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, long *n48, Played *played, double *rtf)
@@ -33,6 +34,8 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
     player_init(&pl, I, o->style, o->seed);
     pl.vib_all_off = o->vib_off;
     if (o->damp >= 0.0) pl.damp_press = o->damp;
+    if (o->rock >= 0.0) pl.rock = o->rock;
+    if (o->acc[1] > 0.0) { pl.acc_lo = o->acc[0]; pl.acc_hi = o->acc[1]; }
     if (o->beta0 > 0.0) pl.beta_base = o->beta0;
     if (o->vb[1] > 0.0) { pl.vb_min = o->vb[0]; pl.vb_span = o->vb[1]; }
     if (o->frac[1] > 0.0) { pl.frac_min = o->frac[0]; pl.frac_span = o->frac[1]; }
@@ -61,7 +64,7 @@ int render_notes(const Note *notes, int n, const RenderOpts *o, float **pcm48, l
 int render_cli(int argc, char **argv)
 {
     if (argc < 4) {
-        fprintf(stderr, "usage: altcello render NOTES.txt OUT.wav [--style expert|novice] [--seed N] [--vib on|off] [--room off|RT60] [--dist M] [--trace PREFIX] [--fs HZ] [--damp PRESS] [--vb MIN SPAN] [--frac MIN SPAN]\n");
+        fprintf(stderr, "usage: altcello render NOTES.txt OUT.wav [--style expert|novice] [--seed N] [--vib on|off] [--room off|RT60] [--dist M] [--trace PREFIX] [--fs HZ] [--damp PRESS] [--acc LO HI] [--vb MIN SPAN] [--frac MIN SPAN]\n");
         return 2;
     }
     RenderOpts o;
@@ -75,6 +78,8 @@ int render_cli(int argc, char **argv)
         else if (!strcmp(argv[i], "--trace") && i + 1 < argc) o.trace = argv[++i];
         else if (!strcmp(argv[i], "--fs") && i + 1 < argc) o.fs = atof(argv[++i]);
         else if (!strcmp(argv[i], "--damp") && i + 1 < argc) o.damp = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--rock") && i + 1 < argc) o.rock = atof(argv[++i]);
+        else if (!strcmp(argv[i], "--acc") && i + 2 < argc) { o.acc[0] = atof(argv[i + 1]); o.acc[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--beta0") && i + 1 < argc) o.beta0 = atof(argv[++i]);
         else if (!strcmp(argv[i], "--vb") && i + 2 < argc) { o.vb[0] = atof(argv[i + 1]); o.vb[1] = atof(argv[i + 2]); i += 2; }
         else if (!strcmp(argv[i], "--frac") && i + 2 < argc) { o.frac[0] = atof(argv[i + 1]); o.frac[1] = atof(argv[i + 2]); i += 2; }

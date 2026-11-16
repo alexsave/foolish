@@ -41,10 +41,18 @@ def table(cols):
         print("| %s | " % G.LABEL[k] + " | ".join(fmt(c[k]) for _, c in cols) + " |")
 
 
+def measure_only(tag):
+    y = G.M.load_audio(os.path.join(G.TMP, tag + ".wav"))
+    return {m: G.alt_note_gates(y, t, m, "%s_%d" % (tag, m)) for m, t in NOTES}
+
+
 if __name__ == "__main__":
     style, tag = sys.argv[2], sys.argv[3]
     extra = sys.argv[4:]
-    rows, msg = single(style, tag, extra)
+    if sys.argv[1] == "measure":
+        rows, msg = measure_only(tag), "re-measured %s.wav" % tag
+    else:
+        rows, msg = single(style, tag, extra)
     print(msg)
     ref = {m: G.ref_gates(m) for m, _ in NOTES}
     for m, _ in NOTES:

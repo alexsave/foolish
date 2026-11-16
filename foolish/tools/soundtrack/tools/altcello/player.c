@@ -59,6 +59,9 @@ void player_init(Player *p, const Instrument *inst, PlayStyle style, uint64_t se
     p->damp_press = 0.12;
     p->vb_min = 0.06;
     p->vb_span = 0.12;
+    p->rock = 0.05;
+    p->acc_lo = 0.06;
+    p->acc_hi = 0.12;
     p->beta_base = 0.105;
     p->frac_min = 0.35;
     p->frac_span = 0.25;
@@ -252,7 +255,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
         sc[k].onset = d_uni(&d, 0.2, 0.3);
         sc[k].rate = d_uni(&d, 5.2, 5.6);
         sc[k].dmult = clampd(1.0 + 0.15 * d_gauss(&d), 0.6, 1.5);
-        sc[k].dacc = d_uni(&d, 0.06, 0.12);
+        sc[k].dacc = d_uni(&d, p->acc_lo, p->acc_hi);
         sc[k].lead = d_uni(&d, 0.02, 0.04);
         Wk[k] = d_uni(&d, 0.03, 0.05);
         sc[k].pk = d_uni(&d, 0.4, 0.6);
@@ -461,7 +464,7 @@ int player_play(const Player *p, const Note *nt, int n, Played *out)
                     while (j < ncyc - 1 && tau >= tc + Tc[j]) { tc += Tc[j]; j++; }
                     double ph = 2.0 * M_PI * (tau - tc) / Tc[j];
                     c += q->depth_c * env * (Ac[j] * sin(ph) - 0.4); /* below-and-around the pitch: the mean sits 0.4 D flat (ASSUMED) */
-                    rock = 0.05 * (1.0 + cos(ph)) * env;             /* press 0.9 to 1.0 */
+                    rock = p->rock * (1.0 + cos(ph)) * env;             /* press 0.9 to 1.0 */
                 }
             } else if (q->vib_on && t >= ts && t <= tvend) {
                 c += (nn->depth_c >= 0.0 ? nn->depth_c : 20.0) * sin(2.0 * M_PI * 6.5 * (t - ts));

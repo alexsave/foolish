@@ -39,6 +39,8 @@ typedef struct {
     int vib_all_off;    /* --vib off */
     double damp_press;  /* finger press left on the string after the bow lift (the damping contact) */
     double vb_min, vb_span;     /* plateau bow speed = vb_min + vb_span * vel, clamped to 0.06 - 0.18 m/s */
+    double rock;                /* amplitude of the finger press rocking with the vibrato (press 1 - 2 rock .. 1), 0.05 */
+    double acc_lo, acc_hi;      /* the Guettler acceleration time of the bow, s (drawn per note), 0.06 - 0.12 */
     double beta_base;           /* phrase beta (relative to the sounding length) at vel 0.5, 0.105; loud notes lower, soft higher */
     double frac_min, frac_span; /* aimed log-band position = frac_min + frac_span * vel (0.35 - 0.60) */
 } Player;
