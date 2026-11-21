@@ -16,6 +16,7 @@
 #include "gfx.h"
 #include "input.h"
 #include "gd_stack.h"
+#include "live.h"
 #include "art_tiles.h"
 
 // THE GAME'S ONE ENTROPY SOURCE: the frame count when a button is first
@@ -368,15 +369,11 @@ static void lr_step(int8_t step) {
     else cur = (int8_t)(((int16_t)cur + step + disp_n) % disp_n);
 }
 
-static void human_input(void) {
+// The keys that only touch the hand: the cursor, the selection and the
+// order (A, B, LEFT and RIGHT, alone or with A or SELECT held). They work
+// while a bot thinks too (live_think).
+static void hand_input(void) {
     int8_t steps = in_lr_steps();
-    if (in_pressed(J_START)) {
-        screen = SCREEN_DASH; dash_item = 0; dirty = 1;
-        // presses latched with START belong to the dashboard
-        in_keep_except(J_START);
-        return;
-    }
-    if (G.status != GD_PLAYING) return;
     // A is the website's Shift press: toggle the cursor card in or out of the selection.
     if (in_pressed(J_A) && cur >= 0 && !in_target && (uint8_t)cur < disp_n) { toggle(disp[(uint8_t)cur]); dirty = 1; }
     // B backs out: of target mode, else clears the selection.
@@ -386,11 +383,27 @@ static void human_input(void) {
     if (steps) { if (in_select_held() || in_a_held() || in_target) dirty = 1; else dirty_ui = 1; }
     while (steps > 0) { lr_step(1); steps--; }
     while (steps < 0) { lr_step(-1); steps++; }
+}
+
+static void human_input(void) {
+    if (in_pressed(J_START)) {
+        screen = SCREEN_DASH; dash_item = 0; dirty = 1;
+        // presses latched with START belong to the dashboard
+        in_keep_except(J_START);
+        return;
+    }
+    if (G.status != GD_PLAYING) return;
+    hand_input();
     // A or SELECT held: up and down are inert, so a held modifier never plays.
     if (in_down(J_A) || in_down(J_SELECT)) return;
     if (in_pressed(J_DOWN)) { if (in_target) in_target = 0; else take_or_good(); dirty = 1; }
     if (in_pressed(J_UP)) { up(); dirty = 1; }
 }
+
+// The screen while a bot thinks (below).
+static void think_begin(void);
+static void think_end(void);
+static void think_rail(void);
 
 static void bot_turn(void) {
     uint32_t n, r, t0;
@@ -406,24 +419,20 @@ static void bot_turn(void) {
         // Seoul: Monte Carlo over sampled worlds (gd_bot_seoul.c). It thinks for
         // seconds, with the screen still, so the rail says so first.
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
-        gfx_rail(17, "SEOUL THINKS", "");
-        gfx_flush();
+        think_begin();
         t0 = line_clock();
-        bot_thinking = 1;
         gd_seoul_choose(&G, BOT, &m);
-        bot_thinking = 0;
+        think_end();
         seoul_playouts_sum += gd_seoul_playouts;
         seoul_plies_sum += gd_seoul_plies;
         if (m.type == 0xFF) { dirty = 1; return; }
     } else if (bot_city == BOT_MOSCOW) {
         // Moscow: cut-down cordite (gd_bot_moscow.c), seconds of thought too
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
-        gfx_rail(17, "MOSCOW THINKS", "");
-        gfx_flush();
+        think_begin();
         t0 = line_clock();
-        bot_thinking = 1;
         gd_moscow_choose(&G, BOT, &m);
-        bot_thinking = 0;
+        think_end();
         moscow_playouts_sum += gd_moscow_playouts;
         moscow_plies_sum += gd_moscow_plies;
         moscow_nodes_sum += gd_moscow_nodes;
@@ -630,7 +639,9 @@ static void draw_foot(void) {
     uint8_t i, n;
     char foot_left[21];
     const char *fr;
-    if (G.status != GD_PLAYING) {
+    if (bot_thinking) {
+        think_rail();
+    } else if (G.status != GD_PLAYING) {
         const uint8_t r = gd_result(&G);
         gfx_rail(ROW_FOOT, r == GD_RESULT_FOOL1 ? "YOU WIN" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED",
                  r == GD_RESULT_DRAW ? IC_A "AGAIN" : "");
@@ -797,6 +808,65 @@ static void draw_table_sprites(void) {
         }
     }
     gfx_spr_end();
+}
+
+// ---- the screen while a bot thinks ------------------------------------------------------
+// Seoul and Moscow think for seconds. Meanwhile the input timer runs
+// live_think a tick at a time (live.c, from the interrupt, on its own stack):
+// the rail's dots step, and the hand keys (hand_input) move the cursor,
+// select and rearrange, drawn as at any other time. UP, DOWN and TARGET mode
+// wait for the bot's move, and a press of them meanwhile is dropped, so
+// nothing plays itself after the think; START is kept for after the move.
+// The search reads the rules state G (only read, there and here) and its own
+// memory; what live_think changes (the hand's order, the cursor, the
+// selection, the map and the sprites) is the screen's, which no bot reads.
+#define THINK_DOT_TICKS 15      // a dot every quarter second, then none again
+static uint8_t think_t, think_dots, think_sel;
+
+static void think_rail(void) {
+    char t[21];
+    uint8_t n = 0, k;
+    const char *p = bot_names[bot_city];
+    while (*p) t[n++] = *p++;
+    p = " THINKS";
+    while (*p) t[n++] = *p++;
+    for (k = 0; k < think_dots; k++) t[n++] = '.';
+    t[n] = 0;
+    gfx_rail(ROW_FOOT, t, "");
+}
+
+static void live_think(void) {
+    uint8_t rail = 0;
+    in_update();
+    in_give_back(J_START);
+    if (!in_target) hand_input();       // TARGET mode waits for the move
+    if (in_select_held() != think_sel) { think_sel = in_select_held(); dirty_ui = 1; }
+    if (++think_t >= THINK_DOT_TICKS) { think_t = 0; think_dots = (uint8_t)((think_dots + 1u) & 3u); rail = 1; }
+    if (dirty_ui && !dirty) {
+        // a cursor move: the hand only needs redrawing when it scrolls
+        const uint8_t off = view_off;
+        hand_layout();
+        if (view_off != off) dirty = 1;
+        else draw_table_sprites();
+    }
+    dirty_ui = 0;
+    if (dirty) { dirty = 0; draw_table(); draw_table_sprites(); }
+    else if (rail) { think_rail(); gfx_flush(); }
+}
+
+static void think_begin(void) {
+    think_t = 0;
+    think_dots = 0;
+    think_sel = in_select_held();
+    bot_thinking = 1;
+    think_rail();
+    gfx_flush();
+    live_start(live_think);
+}
+
+static void think_end(void) {
+    live_stop();
+    bot_thinking = 0;
 }
 
 // ---- the dashboard (the traveller), and the end of a game ---------------------------------

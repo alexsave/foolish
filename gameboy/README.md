@@ -293,6 +293,33 @@ The cross-compiler checks: `make moscowcheck` (100 decisions, 6 of them through 
 Mutation checked: a ROM-only Moscow with 5 worlds in stage 1, or 900 solver nodes, fails `moscowcheck`.
 `solvecheck` also caught a real bug no Mac test can see: the probe read the frame (in RAM bank 0) after switching to the table's bank.
 
+## The screen while a bot thinks
+
+Seoul and Moscow search for seconds in the game loop, and the screen used to hold still meanwhile, with presses queued until the move.
+Now the input timer's interrupt (`src/input.c` `in_tick`, 60.2 a second, which already reads the buttons) calls `live_tick` (`src/live.c`, bank 0), and while a think runs that runs the game's handler (`src/main.c` `live_think`, bank 1) once a tick:
+- the rail says MOSCOW THINKS (or SEOUL THINKS) and a dot more every quarter second, three at most, then none again (the font's own `.`, no new tiles);
+- LEFT, RIGHT, A, B, A held + LEFT / RIGHT and SELECT held + LEFT / RIGHT move the cursor, select, sweep-select and rearrange the hand, drawn as at any other time (the sprites through the staging copy, the hand by the usual board redraw);
+- UP and DOWN wait for the bot's move, and a press of either during the think is dropped, so nothing plays itself after it; TARGET mode waits too (in TARGET mode every key is dropped); START is kept and takes effect after the move.
+
+What makes it safe:
+- The search is stopped at any instruction, in any ROM bank and any cart RAM bank. `live_tick` saves the ROM bank (`_current_bank`), maps the handler's bank, maps cart RAM bank 3, moves the stack there (the free top of the bank, 0xB400 to 0xBFFF, above the solver's transposition table: `gd_solve.c` fails the build if the table ever grows into it), lets interrupts in again (the VBlank must still copy the sprites and count frames; a tick that comes meanwhile sees the handler busy and only latches the buttons), runs the handler, then puts the stack, the RAM bank and the ROM bank back.
+- Both banks are put back from what the search last asked for, not from a register (MBC1 registers read back nothing): GBDK's banked calls write `_current_bank` before the MBC register (read from GBDK 4.5's `___sdcc_bcall_ehl`), and the solver now writes a shadow, `gd_ram_bank`, before its register, so a tick that lands between the two still restores the bank meant.
+- On the search's stack (work RAM, about 80 bytes to spare) the handler costs only `in_tick`'s call to `live_tick`, 2 bytes; everything else runs on the cart RAM stack.
+- The search reads the rules state `G` (through a `const` pointer) and its own memory. The handler only reads `G` and changes what is the screen's: the hand's order (`mem`, `disp`), the cursor, the selection, the map and the sprites. No bot reads any of them, and the hand order is presentation (the rules keep hands as sets).
+- During a think the foot rail is the think rail, so the handler never asks the rules for the pills (`action_text`); the rest of the board redraw reads `G` only.
+- SDCC's `CRITICAL` on this CPU is a plain `di` / `ei` (seen in its output), so inside an interrupt it lets interrupts in anyway; the handler is written for that from the start (the busy flag), rather than relying on running with interrupts off.
+
+### Hypothesis (written before measuring)
+
+- Moscow's think time, on the same decisions: about 3% longer with no key pressed (a tick of the handler is about 600 machine cycles of 17556 a frame: the bank and stack switch, taking the buttons, the dot counter, and a rail row flushed every 15 ticks).
+  Falsifier: over 6% or under 1%.
+  A press costs more while it is drawn (a cursor move redraws the sprites, about 30 scanlines; a selection redraws the board, up to about 580), so the scripted game, which presses a key about every 12 frames, about 4%.
+- The handler's own stack: under 256 bytes of the 3 KB (the deepest call is the board redraw); falsifier over 1 KB.
+- Work RAM: 12 bytes more data (8 in `live.c`, the RAM bank shadow, 3 for the dots and SELECT), 2 bytes more of the search's stack.
+- ROM: about 100 bytes in bank 0, about 250 in bank 1.
+- A LEFT press during a think shows on the screen within 2 frames (falsifier: more than 4).
+- Moscow decides exactly as before: `moscowcheck` (now run with the handler ticking) matches clang.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
