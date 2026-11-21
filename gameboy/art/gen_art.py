@@ -361,12 +361,38 @@ XwX.....""",
 }
 
 
+def narrow_back():
+    """The card back squeezed to half width: the deal's flip, frame 2."""
+    b = card_back()
+    cv = Canvas(8, CH, None)
+    for y in range(CH):
+        for x in range(8):
+            cv.px[y][x] = b.px[y][x * 2 + (1 if x >= 4 else 0)]
+    cv.px[0][0] = cv.px[0][7] = cv.px[CH - 1][0] = cv.px[CH - 1][7] = None
+    return cv
+
+
+def edge_card():
+    """A card seen on its edge: the flip's middle frame."""
+    cv = Canvas(8, CH, None)
+    for y in range(1, CH - 1):
+        cv.put(3, y, K)
+        cv.put(4, y, W)
+        cv.put(5, y, K)
+    cv.put(4, 0, K)
+    cv.put(4, CH - 1, K)
+    return cv
+
+
 def sprite_bank():
     bank = {}
     for name, art in SPRITES.items():
         cv = Canvas(8, 8, T)
         cv.glyph(0, 0, G.g(art))
         bank["SP_" + name] = cv.tile(0, 0)
+    for name, cv in (("NARROW", narrow_back()), ("EDGE", edge_card())):
+        for ty, part in enumerate(("T", "M", "B")):
+            bank["SP_%s_%s" % (name, part)] = fill_none(cv.tile(0, ty), T)
     return bank
 
 
@@ -669,6 +695,71 @@ def screens_table(ui, sp):
     return out
 
 
+# ---- motion: card sprites -------------------------------------------------
+def card_sprites(scr, cv, x, y):
+    """A whole card as six 8x8 sprites (two per scanline).  The tiles are
+    the card bank's own, corners index 0 = transparent."""
+    for ty in range(3):
+        for tx in range(2):
+            scr.spr(x + tx * 8, y + ty * 8, fill_none(cv.tile(tx, ty), T))
+
+
+def strip_sprites(scr, sp, name, x, y):
+    for ty, part in enumerate(("T", "M", "B")):
+        scr.spr(x, y + ty * 8, sp["SP_%s_%s" % (name, part)])
+
+
+def lerp(a, b, f):
+    return round(a + (b - a) * f)
+
+
+def screens_motion(ui, sp):
+    out = []
+    # A card flies from the hand to the table: 4 of its ~12 frames
+    hand = [("6", "C"), ("7", "D"), ("9", "S"), ("J", "H"), ("Q", "C"), ("K", "D"), ("A", "S")]
+    src = None
+    dst = battle_pos(1)
+    for k, f in enumerate((0.0, 0.35, 0.7, 1.0)):
+        s = table_base("m1_fly_%d" % k, "Fly frame %d" % k, ui, bot_n=6, deck_n=18)
+        x, y = battle_pos(0)
+        put_card(s, card_face("7", "S"), x, y)
+        put_card(s, card_face("10", "S"), x + 1, y + 1)
+        rail(s, ROW_STATUS, "YOUR ATTACK", "", ui)
+        if f < 1.0:
+            cols = hand_columns(len(hand))
+            for i, c in enumerate(hand):
+                if i != 1:
+                    put_card(s, card_face(*c), cols[i], ROW_HAND)
+            sx, sy = cols[1] * 8, (ROW_HAND - 1) * 8
+            dx, dy = dst[0] * 8, dst[1] * 8
+            card_sprites(s, card_face("7", "D"), lerp(sx, dx, f), lerp(sy, dy, f) - round(12 * math.sin(math.pi * f)))
+        else:
+            put_card(s, card_face("7", "D"), *dst)
+            draw_hand(s, hand[:1] + hand[2:])
+        out.append(s)
+    # The deal: deck -> bot (back), deck -> you (flips in flight)
+    frames = [("bot", 0.5), ("you", 0.25), ("you", 0.5), ("you", 0.75)]
+    for k, (who, f) in enumerate(frames):
+        s = table_base("m2_deal_%d" % k, "Deal frame %d" % k, ui, bot_n=2, deck_n=30)
+        rail(s, ROW_STATUS, "DEALING", "", ui)
+        draw_hand(s, [("8", "H"), ("K", "C")])
+        sx, sy = DECK_AT[0] * 8, DECK_AT[1] * 8
+        if who == "bot":
+            dx, dy = 10 * 8, ROW_BOTHAND * 8
+            card_sprites(s, card_back(), lerp(sx, dx, f), lerp(sy, dy, f))
+        else:
+            dx, dy = 12 * 8, ROW_HAND * 8
+            x, y = lerp(sx, dx, f), lerp(sy, dy, f)
+            if f < 0.4:
+                strip_sprites(s, sp, "NARROW", x + 4, y)
+            elif f < 0.6:
+                strip_sprites(s, sp, "EDGE", x + 4, y)
+            else:
+                card_sprites(s, card_face("A", "H"), x, y)
+        out.append(s)
+    return out
+
+
 # --------------------------------------------------------------------------
 # Deliverable 1: the card sheet
 # --------------------------------------------------------------------------
@@ -727,6 +818,14 @@ def main():
               % (s.name, s.unique_bg, s.sprite_count, s.max_line))
     names = [s.name for s in screens_table(ui, sp)]
     contact(names, os.path.join(OUT_MOCK, "02_table_layouts.png"))
+    motion = screens_motion(ui, sp)
+    for s in motion:
+        s.check(banks)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        print("%-18s unique bg tiles %3d  sprites %2d  max/line %d"
+              % (s.name, s.unique_bg, s.sprite_count, s.max_line))
+    contact([s.name for s in motion if s.name.startswith("m1")], os.path.join(OUT_MOCK, "04_fly.png"))
+    contact([s.name for s in motion if s.name.startswith("m2")], os.path.join(OUT_MOCK, "05_deal.png"))
     import screens_full
     full = screens_full.screens_full(sp)
     for s in full:
