@@ -26,6 +26,7 @@ static snd_state S;
 volatile uint8_t snd_owner;
 static uint8_t snd_active;          // set by a strike, cleared by the tick that finds nothing left
 volatile uint8_t snd_refused;
+volatile uint8_t snd_starts;        // strikes started, wrapping (gbrun and host/snd_test.c read it)
 static uint8_t strikes;
 uint8_t snd_busy(void);             // round robin over a cue's takes: never the same twice running
 
@@ -75,6 +76,7 @@ static void start(uint8_t cue, uint8_t flags) {
     if (!c->n_takes) return;
     t = &c->takes[strikes % c->n_takes];
     strikes++;
+    snd_starts++;
     for (ch = 0; ch < 4; ch++) {
         const snd_row *r = t->v[ch];
         snd_voice *v = &S.v[ch];
@@ -125,8 +127,10 @@ void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
 
 void snd_tick(void) {
     uint8_t i;
-    // the common case, nothing sounding: two loads and a branch
-    if (snd_owner != SND_OWNER_SOUND || !snd_active) return;
+    // nothing sounding, or a bot thinking (snd_yield dropped every voice and
+    // strike, the next tick finds nothing and clears this, and snd_strike
+    // will not set it again until snd_claim): one load and a branch
+    if (!snd_active) return;
     for (i = 0; i < 4; i++) {
         snd_voice *v = &S.v[i];
         if (!v->row || --v->left) continue;
@@ -158,7 +162,6 @@ uint8_t snd_busy(void) {
 void snd_yield(void) {
     uint8_t i;
     snd_owner = SND_OWNER_BOT;
-    snd_active = 0;
     for (i = 0; i < 4; i++) { S.v[i].row = 0; silence(i); }
     for (i = 0; i < SND_QUEUE; i++) S.q_wait[i] = 0;
 }

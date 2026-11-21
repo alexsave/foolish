@@ -64,6 +64,7 @@ extern const uint8_t snd_dur[SND_N_CUES];   // ticks from a strike to the end of
 #define SND_OWNER_BOT   1u
 extern volatile uint8_t snd_owner;
 extern volatile uint8_t snd_refused;   // strikes refused while a bot owned the RAM (a test reads it; must stay 0)
+extern volatile uint8_t snd_starts;    // strikes started, wrapping: what a test counts
 
 void snd_init(void);
 // Strike `cue` `delay` ticks from now; `n` cards make min(n, 6) strikes,

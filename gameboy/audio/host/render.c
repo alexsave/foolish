@@ -196,7 +196,7 @@ static const ev context[] = {
     // the bot covers both, 30 frames after the board last changed
     { 152, SND_LIFT, 1, 0, 0 }, { 152 + FLY, SND_COVER, 2, 0, 1 },
     // I say good: the bout ends (no flight: the table clears)
-    { 220, SND_GOOD, 1, 0, 0 }, { 236, SND_SWEEP, 1, 0, 0 }, { 236 + 26, SND_PILE, 1, 0, 0 },
+    { 220, SND_GOOD, 1, 0, 0 }, { 236, SND_SWEEP, 1, 0, 0 }, { 236 + 16, SND_PILE, 1, 0, 0 },
     // the bot attacks, I pick up
     { 320, SND_LIFT, 1, 0, 0 }, { 320 + FLY, SND_PLACE, 1, 0, 1 },
     { 380, SND_PICKUP, 1, 0, 0 }, { 380 + FLY, SND_INTO_HAND, 1, 0, 1 },

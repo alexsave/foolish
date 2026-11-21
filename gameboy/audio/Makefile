@@ -13,7 +13,7 @@ CC       ?= cc
 CFLAGS   := -O2 -std=c11 -Wall -Wextra -I. -DSND_HOST
 PY       := python3 -I
 
-.PHONY: preview web tables render compare clean
+.PHONY: preview web tables render compare clean test
 
 build/soundgen: $(wildcard $(SOUNDGEN)/*.c $(SOUNDGEN)/c/*.c $(SOUNDGEN)/c/*.h $(SOUNDGEN)/tuning.tsv)
 	@mkdir -p build
@@ -51,3 +51,12 @@ preview: tables render compare
 
 clean:
 	rm -rf build
+
+# The driver's rules, on the Mac (host/snd_test.c), and each rule broken in a
+# copy of snd.c: the test must fail on every one (tests/mutants.sh).
+build/snd_test: host/snd_test.c snd.c snd.h snd_tab.c
+	@mkdir -p build
+	$(CC) $(CFLAGS) host/snd_test.c snd.c snd_tab.c -o $@
+test: build/snd_test
+	build/snd_test
+	sh tests/mutants.sh
