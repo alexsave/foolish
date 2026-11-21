@@ -15,7 +15,7 @@
 #include "../win_miami.h"
 #include "../win_new_york.h"
 #include "../win_seoul.h"
-#include "../win_warsaw.h"
+#include "../win_moscow.h"
 #include "../lose.h"
 #include "../lacquer.h"
 #include "../paper.h"
@@ -42,10 +42,10 @@ static const full_screen fulls[FULLS] = {
     {win_miami_tiles, win_miami_TILE_COUNT, win_miami_map},
     {win_new_york_tiles, win_new_york_TILE_COUNT, win_new_york_map},
     {win_seoul_tiles, win_seoul_TILE_COUNT, win_seoul_map},
-    {win_warsaw_tiles, win_warsaw_TILE_COUNT, win_warsaw_map},
+    {win_moscow_tiles, win_moscow_TILE_COUNT, win_moscow_map},
     {lose_tiles, lose_TILE_COUNT, lose_map},
 };
-static const char *const win_names[4] = {"MIAMI", "NEW YORK", "SEOUL", "WARSAW"};
+static const char *const win_names[4] = {"MIAMI", "NEW YORK", "SEOUL", "MOSCOW"};
 
 static void load_banks(void)
 {
