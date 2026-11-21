@@ -52,6 +52,7 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 | 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
 | 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
 | 140..157 | `sprites` | 18 | underline, arrow, brackets, nudge, pointer, deal flip, the club's sprite copies |
+| 160..168 | `pile` | 9 | the discard pile (`pile.c`), a 3x3 tile box |
 
 That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
@@ -151,8 +152,8 @@ Cost: 3 sprite tiles (155..157) and the OBP1 slot.
 | Row | What |
 | --- | --- |
 | 0 | top rail: bot name, `IC_MINIBACK` + bot card count; right: `IC_MINIDECK` + deck count, trump suit icon (the suit stays after the deck runs out) |
-| 1-3 | bot hand: backs one column apart, centred (18 at most; the rail has the true count) |
-| 4-11 | table: trump at (0,4) under the deck at (1,4); discard pile at (0,8) |
+| 1-3 | bot hand: backs one column apart, centred in columns 0-16 (16 at most shown; the rail has the true count); the discard pile at columns 17-19 |
+| 4-11 | table: trump at (0,4) under the deck at (1,4); the battles |
 | 12 | raise row: a selected card moves up one tile |
 | 13-15 | your hand |
 | 16 | underline row (wool); hidden-card tabs when the hand scrolls |
@@ -161,6 +162,15 @@ Cost: 3 sprite tiles (155..157) and the OBP1 slot.
 There is no rail across the middle of the screen: the status lives in the foot rail, under the hand.
 Rails are rows of `ui` font tiles (white on dark grey); everything else on the table is `WOOL` (one tile, repeated).
 The foot rail can be the window layer (`WY = 136`) if that is easier to update; it uses the same BGP.
+
+### The discard pile
+
+Top right, where the website draws it: a 3x3 tile box at columns 17-19, rows 1-3 (`ART_DISCARD_X`, `ART_DISCARD_Y`), tiles `T_PILE_00`..`T_PILE_22` in row-major order from `ART_PILE_BASE` (160).
+It echoes the website's jumble of randomly rotated backs in two cards' worth: one back turned on its side, another upright on it, a little off centre, over the wool (`gen_art.pile_canvas`).
+Draw it once the first bout is swept; the table above is empty before that.
+It clears every battle layout (up to six use columns 4-14 at rows 4-11; past six the code packs them from column 1 to 18 at rows 4-13), the TARGET arrow and its brackets, and the bot's hand, which keeps to columns 0-16 (`ART_BOT_HAND_LAST_COL`: 16 backs at most shown).
+A swept table flies there: each card's flight ends with its top left at pixel (`ART_DISCARD_LAND_PX`, `ART_DISCARD_LAND_PY`) = (142, 8), on the upright back, and the pile's tiles stay as they are (no count is drawn, as the rail has the numbers).
+Before and after on the busiest table: `mockups/33_discard_right_before_after.png`.
 
 ### Battles
 
@@ -208,11 +218,12 @@ Unique background tiles each screen uses (all banks together are 133, so every t
 | Screen | File | Unique BG tiles | Sprites | Max per line |
 | --- | --- | --- | --- | --- |
 | You attack | `mockups/t1_attack.png` | 56 | 2 | 2 |
-| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 59 | 0 | 0 |
+| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 68 | 0 | 0 |
 | Target mode, cover | `mockups/t3_target_cover.png` | 56 | 10 | 2 |
 | Target mode, pass | `mockups/t3b_target_pass.png` | 60 | 12 | 4 |
-| Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
-| Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
+| Pick up | `mockups/t4_pickup.png` | 56 | 0 | 0 |
+| Big hand (22), two selected | `mockups/t5_big_hand.png` | 60 | 1 | 1 |
+| Six battles, TARGET, the pile | `mockups/t7_busy.png` | 69 | 10 | 3 |
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 57 | 4 | 4 |
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |

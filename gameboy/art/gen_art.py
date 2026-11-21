@@ -514,7 +514,52 @@ class Screen:
 # Rows: 0 top rail (bot, deck, trump) | 1-3 bot hand | 4-11 table |
 #       12 raise row | 13-15 your hand | 16 underline row | 17 foot rail (status)
 ROW_BOTRAIL, ROW_BOTHAND, ROW_HAND, ROW_UNDER, ROW_FOOT = 0, 1, 13, 16, 17
-TRUMP_AT, DECK_AT, DISCARD_AT = (0, 4), (1, 4), (0, 8)
+TRUMP_AT, DECK_AT = (0, 4), (1, 4)
+# The discard pile: top right of the table (as the website draws it), a 3x3
+# tile box at columns 17-19, rows 1-3, beside the bot's hand.  No battle
+# layout reaches it (up to six use columns 4-14 at rows 4-11; past six they
+# pack from column 1 to 18 at rows 4-13), nor does the TARGET arrow or its
+# brackets.  The bot's hand keeps to columns 0-16 (16 backs at most shown).
+PILE_BOX = (17, 1)
+PILE_LAND = (17 * 8 + 6, 1 * 8)        # a swept card's flight ends here: its top left, in pixels
+BOT_HAND_LAST_COL = 16
+
+
+def rotate_cw(cv):
+    out = Canvas(cv.h, cv.w, None)
+    for y in range(cv.h):
+        for x in range(cv.w):
+            out.px[x][cv.h - 1 - y] = cv.px[y][x]
+    return out
+
+
+def pile_canvas():
+    """The jumbled pile, 24x24 over the wool: one back turned on its side,
+    another upright on top of it, a little off centre (the website's pile of
+    randomly rotated backs, in two cards' worth of tiles)."""
+    cv = Canvas(24, 24, None)
+    cv.blit(rotate_cw(card_back()), 0, 5)
+    cv.blit(card_back(), 6, 0)
+    return cv
+
+
+def pile_tiles():
+    wool = wool_tile()
+    cv = Canvas(24, 24, T)
+    for ty in range(3):
+        for tx in range(3):
+            cv.set_tile(tx, ty, wool)
+    cv.blit(pile_canvas(), 0, 0)
+    return cv
+
+
+def pile_bank():
+    cv = pile_tiles()
+    out = {}
+    for ty in range(3):
+        for tx in range(3):
+            out["PILE_%d%d" % (tx, ty)] = cv.tile(tx, ty)
+    return out
 
 
 def battle_layout(n):
@@ -580,16 +625,19 @@ def table_base(name, title, ui, bot="SEOUL", bot_n=6, deck_n=18, trump=("9", "H"
     rail(scr, ROW_BOTRAIL, "%s {MINIBACK}%d" % (bot, bot_n),
          ("{MINIDECK}%d {%s}" % (deck_n, trump[1])) if deck_n else "{%s}" % trump[1], ui)
     rail(scr, ROW_FOOT, "", "", ui)
-    shown = min(bot_n, 18)
-    x0 = (20 - (shown + 1)) // 2
+    shown = min(bot_n, BOT_HAND_LAST_COL)
+    x0 = (BOT_HAND_LAST_COL + 1 - (shown + 1)) // 2
     for i in range(shown):
         put_card(scr, card_back(), x0 + i, ROW_BOTHAND)
     if deck_n:
         put_card(scr, card_face(*trump), *TRUMP_AT)
         if deck_n > 1:
             put_card(scr, card_back(), *DECK_AT)
-    for i in range(min(discard, 2)):
-        put_card(scr, card_back(), DISCARD_AT[0] + i, DISCARD_AT[1])
+    if discard:
+        cv = pile_tiles()
+        for ty in range(3):
+            for tx in range(3):
+                scr.fill_tile(PILE_BOX[0] + tx, PILE_BOX[1] + ty, cv.tile(tx, ty))
     return scr
 
 
@@ -755,6 +803,21 @@ def screens_table(ui, sp):
     s.notes.append("22 cards: 19 show one column each; small tabs count the hidden ones each side and the hand scrolls with the cursor.")
     out.append(s)
 
+    s = table_base("t7_busy", "Six battles, TARGET, the pile", ui, bot="MOSCOW", bot_n=6, deck_n=8,
+                   trump=("9", "H"), discard=2)
+    pairs = [(("6", "C"), ("8", "C")), (("7", "D"), ("9", "D")), (("8", "S"), None), (("9", "H"), None),
+             (("10", "C"), ("Q", "C")), (("J", "D"), None)]
+    pos = battles(s, pairs)
+    hand = [("6", "D"), ("10", "H"), ("Q", "H"), ("K", "S"), ("A", "D"), ("7", "C")]
+    places, widths = draw_hand(s, hand)
+    underline(s, sp, places[2], widths[2])
+    tx, ty = pos[5]
+    arrow(s, sp, card_top_center(places[2], widths[2]), card_bottom(tx, ty))
+    brackets(s, sp, tx, ty)
+    rail(s, ROW_FOOT, "{LEFT}{RIGHT}TARGET", "{UP}COVER", ui)
+    s.notes.append("The busiest table: six battles, TARGET on the sixth, the discard pile top right.")
+    out.append(s)
+
     s = table_base("t6_rearrange", "Rearrange (SELECT held)", ui, bot_n=6, deck_n=18)
     hand = [("6", "C"), ("Q", "C"), ("9", "S"), ("J", "H"), ("7", "D"), ("K", "D"), ("A", "S")]
     places, widths = draw_hand(s, hand)
@@ -881,7 +944,7 @@ def main():
     os.makedirs(OUT_PNG, exist_ok=True)
     os.makedirs(OUT_MOCK, exist_ok=True)
     ui, cards, sp = ui_bank(), card_bank(), sprite_bank()
-    banks = {"ui": ui, "cards": cards, "sprites": sp}
+    banks = {"ui": ui, "cards": cards, "sprites": sp, "pile": pile_bank()}
     sheet_cards().image().save(os.path.join(OUT_MOCK, "01_cards_sheet.png"))
     print("banks: ui %d, cards %d, sprites %d  (bg+window %d of 256)"
           % (len(ui), len(cards), len(sp), len(ui) + len(cards)))
