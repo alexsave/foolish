@@ -13,13 +13,13 @@
 #define win_seoul_TILE_H 8
 #define win_seoul_WIDTH 160
 #define win_seoul_HEIGHT 144
-#define win_seoul_TILE_COUNT 136
+#define win_seoul_TILE_COUNT 129
 #define win_seoul_MAP_ATTRIBUTES 0
 extern const unsigned char win_seoul_map[360];
 #define win_seoul_map_attributes win_seoul_map
 
 BANKREF_EXTERN(win_seoul)
 
-extern const uint8_t win_seoul_tiles[2176];
+extern const uint8_t win_seoul_tiles[2064];
 
 #endif

@@ -189,10 +189,10 @@ Unique background tiles each screen uses (all banks together are 133, so every t
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 57 | 4 | 4 |
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
-| Win over Miami | `mockups/w_miami.png` | 152 (map shipped: 151) | 12 | 4 |
-| Win over New York | `mockups/w_new_york.png` | 152 (148) | 12 | 4 |
-| Win over Seoul | `mockups/w_seoul.png` | 139 (136) | 12 | 4 |
-| Win over Warsaw | `mockups/w_warsaw.png` | 154 (152) | 12 | 4 |
+| Win over Miami | `mockups/w_miami.png` | 141 | 12 | 4 |
+| Win over New York | `mockups/w_new_york.png` | 156 | 12 | 4 |
+| Win over Seoul | `mockups/w_seoul.png` | 132 | 12 | 4 |
+| Win over Warsaw | `mockups/w_warsaw.png` | 162 | 12 | 4 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
 
 Contact sheets: `mockups/01_cards_sheet.png`, `02_table_layouts.png`, `03_dashboard_win_lose.png`, `04_fly.png`, `05_deal.png`.
@@ -218,7 +218,7 @@ After the blind designer's departures board, in our style (`travel.py`; `mockups
 
 ### Win and lose
 
-- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: Miami's Freedom Tower among art deco hotels and palms, New York's Empire State with the Chrysler building and the Brooklyn Bridge, Seoul's N Seoul Tower on Namsan with Lotte World Tower and Namdaemun, Warsaw's Palace of Culture with the Old Town, Sigismund's Column and the new towers.
+- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: each drawn from reference photos (Wikimedia Commons) for true proportions and signature details: Miami's Freedom Tower (arcaded base, tiered tower, belfry, domed cupola, lantern) among art deco hotels and palms; New York's Empire State (podium, slim shaft of vertical piers, setbacks, the long mast) with the Chrysler building (terraced sunburst arches, needle) and a Brooklyn Bridge tower (twin pointed arches, cable fans); Seoul's N Seoul Tower (slim shaft, barrel pod, striped antenna) on wooded Namsan, Lotte World Tower (slender cone, split crown) and Namdaemun (stone gate base, two-tier roof with upturned eaves); Warsaw's Palace of Culture (wings, stepped tower with pinnacles, clock, long spire) with the Old Town, the Royal Castle's clock tower, Sigismund's Column and the new towers (`mockups/14_win_before_after.png`).
   Under it the bot's name, then "IS THE DURAK".
   The shipped map leaves the name row black: the code loads `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
   Each win tileset is at most 206 tiles (checked), so the tileset, the lacquer font and the fireworks fit one 256-tile space.
