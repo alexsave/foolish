@@ -122,8 +122,12 @@ rom-mutants: $(B)/durak.gb $(B)/gbrun
 	bash tests/rom_mutants.sh
 
 # ---- the headless runner ------------------------------------------------------------
+# libmgba and libpng: Homebrew's paths by default; on Linux, for example,
+# make MGBA_CFLAGS= MGBA_LIBS="-lmgba -lpng"
+MGBA_CFLAGS ?= -I/opt/homebrew/include
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
 $(B)/gbrun: tools/gbrun.c | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
+	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
 
 gbrun: $(B)/gbrun
 
