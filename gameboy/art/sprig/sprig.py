@@ -236,6 +236,48 @@ def vine_option(name):
 VINE_OPTIONS = {k: (lambda k=k: vine_option(k)) for k in "abcde"}
 
 
+# ---- Alex's combination: option a's curl + option d's uneven, hand-drawn
+# vine; the same leaf and berry; something in the bottom-left corner.
+LEAF_MINI = [      # 5x5, points down-left, stalk at the top right, a vein
+"...ww",
+".wwow",
+"wwow.",
+"wow..",
+".w...",
+]
+BUD = [            # 3x5: a closed rowan bud with its dark tip
+".w.",
+"www",
+"wow",
+"www",
+".o.",
+]
+
+
+def combo(corner):
+    f = Field()
+    f.stamp(6, 3, flip_x(LEAF_FINE))
+    f.stamp(0, 0, BIG_CURL)
+    # the uneven vine: a slow wobble that is not a sine, one pixel, no doubling
+    f.stem(curve(lambda t: (1.8 + 8.4 * t + 1.7 * math.sin(9.5 * t + 0.3) * (1 - 0.6 * t) + 0.6 * math.sin(23 * t),
+                            6 + 9 * t)))
+    if corner == "leaf":          # a small second leaf on a short stalk
+        f.stem([(5, 11), (4, 12), (3, 13)])
+        f.stamp(0, 13, LEAF_MINI)
+    elif corner == "bud":         # a bud on a curving stalk
+        f.stem([(5, 11), (4, 12), (3, 13), (2, 14)])
+        f.stamp(1, 15, BUD)
+    elif corner == "curl":        # a tiny curl and a scatter of dots
+        f.stem([(5, 11), (4, 12), (3, 13), (2, 13)] + [(1, 14), (1, 15), (2, 16), (3, 16), (3, 15)])
+        for (x, y) in ((0, 18), (2, 19), (4, 18), (1, 21)):
+            f.put(x, y, "o")
+    f.stamp(8, 16, BERRY, ring=True)
+    return f.rows()
+
+
+COMBO_OPTIONS = {k: (lambda k=k: combo(k)) for k in ("leaf", "bud", "curl")}
+
+
 LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching,
            "hanging_min": hanging_min, "diagonal_min": diagonal_min, "arching_min": arching_min}
 
