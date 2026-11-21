@@ -268,3 +268,10 @@ moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun $(B)/durak.gb
 	sh tests/moscowcheck.sh
 
 .PHONY: moscowcheck
+
+# The live-think handler on every tick of a 1024 Hz timer through moscowcheck
+# and solvecheck: the decisions and the solves must stay clang's.
+livestress: $(B)/durak.gb $(B)/moscowcheck_host $(B)/solvecheck_host $(B)/gbrun $(B)/moscowcheck.gb $(B)/solvecheck.gb
+	GBDK=$(GBDK) sh tests/livestress.sh
+
+.PHONY: livestress

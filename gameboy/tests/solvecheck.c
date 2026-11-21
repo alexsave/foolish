@@ -115,11 +115,35 @@ int main(void) {
     return 0;
 }
 #else
+#ifdef LIVE_STRESS
+// make livestress: the live-think handler's stand-in runs on its own stack in
+// cart RAM bank 3 on every tick of a fast timer while the solver switches
+// banks 0 to 3 under it; the solves must still be clang's
+#include "../src/input.h"
+#include "../src/live.h"
+uint32_t sc_ticks;
+uint8_t sc_stack_sum;
+static void sc_live(void) {
+    uint8_t buf[64], i, sum = 0;
+    for (i = 0; i < sizeof buf; i++) buf[i] = (uint8_t)(i + sc_ticks);
+    for (i = 0; i < sizeof buf; i++) sum += buf[i];
+    sc_stack_sum = sum;
+    sc_ticks++;
+}
+#endif
+
 void main(void) {
     // the cart's RAM: enabled, and MBC1's 4/32 mode so 0x4000 picks its bank
     *(volatile uint8_t *)0x0000u = 0x0Au;
     *(volatile uint8_t *)0x6000u = 0x01u;
+#ifdef LIVE_STRESS
+    in_init();
+    live_start(sc_live);
+#endif
     run();
+#ifdef LIVE_STRESS
+    live_stop();
+#endif
     sc_done = 1;
     for (;;) vsync();
 }

@@ -66,10 +66,26 @@ typedef struct {
 #define ST_BASE ((gd_sim *)0xA000u)
 #define FR_BASE ((sol_frame *)(0xA000u + SOLVE_FRAMES * sizeof(gd_sim)))
 #define MV_BASE ((sol_move *)(0xA000u + SOLVE_FRAMES * sizeof(gd_sim) + SOLVE_FRAMES * sizeof(sol_frame)))
-// The shadow first, then the register: the live-think handler (live.c) runs
-// from an interrupt, switches the RAM bank for its own stack and puts back
-// gd_ram_bank, so a switch it lands between ends on the bank meant.
-#define RAM_BANK(b) (gd_ram_bank = (b), *(volatile uint8_t *)0x4000u = gd_ram_bank)
+// The shadow, then the register, as two adjacent instructions in a function
+// of their own: the live-think handler (live.c) runs from an interrupt,
+// switches the RAM bank for its own stack and puts back gd_ram_bank, so a
+// switch it lands between ends on the bank meant. Not a macro: as
+// `(gd_ram_bank = b, *(0x4000) = gd_ram_bank)` SDCC hoisted the shadow's
+// store above the frame reads before the switch (non-volatile reads may move
+// across a volatile store), and a tick in that gap left those reads on the
+// table's bank (make livestress caught it). A call is a fence SDCC does not
+// move memory accesses across, either way.
+static void ram_bank(uint8_t b) __sdcccall(0) __naked {
+    (void)b;
+    __asm
+        ldhl    sp, #2
+        ld      a, (hl)
+        ld      (_gd_ram_bank), a
+        ld      (0x4000), a
+        ret
+    __endasm;
+}
+#define RAM_BANK(b) ram_bank(b)
 #define TT_TAGS ((uint8_t *)0xA000u)
 #define TT_VALS ((int8_t *)0xB000u)
 #else

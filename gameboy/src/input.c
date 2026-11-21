@@ -17,7 +17,13 @@ static volatile uint16_t first_press_time;     // sys_time at the first press ev
 static volatile uint8_t first_press_seen;
 
 static uint8_t live_idle;              // ticks since the think handler last ran
+// LIVE_STRESS (make livestress only): the handler on every tick of a timer
+// about 17 times faster, so the search is interrupted at many more points
+#ifdef LIVE_STRESS
+#define LIVE_IDLE_TICKS 1
+#else
 #define LIVE_IDLE_TICKS 3
+#endif
 
 static uint8_t now, pressed;
 static int8_t steps;
@@ -51,8 +57,13 @@ static void in_tick(void) {
 void in_init(void) {
     CRITICAL {
         add_TIM(in_tick);
+#ifdef LIVE_STRESS
+        TMA_REG = 252u;            // 4096 Hz / 4: 1024 ticks a second
+        TIMA_REG = 252u;
+#else
         TMA_REG = IN_TMA;
         TIMA_REG = IN_TMA;
+#endif
         TAC_REG = 0x04u;           // timer on, 4096 Hz
         set_interrupts(IE_REG | TIM_IFLAG);
     }
