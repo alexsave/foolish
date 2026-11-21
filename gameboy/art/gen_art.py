@@ -906,6 +906,9 @@ def main():
         s.check_sprites(fw)
         s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
         strip.append(s.name)
+    for city in wins.CITIES:          # every frame of every city keeps the fireworks in the sky
+        for f in range(len(wins.SCHEDULE)):
+            wins.win_screen(city, frame=f)
     contact(strip, os.path.join(OUT_MOCK, "09_fireworks_frames.png"), cols=4)
 
 

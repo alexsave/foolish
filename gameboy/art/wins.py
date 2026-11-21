@@ -48,6 +48,20 @@ def water(cv):
             cv.rect(x, y, 3, 1, D)
 
 
+def surf(cv):
+    """Miami's water: foam where the surf breaks on the sand, gentle swell
+    lines, and the moon's path on the water under it."""
+    for x in range(0, 160):
+        if (x // 3) % 3 != 2:
+            cv.put(x, GROUND, W)                          # the foam line
+    for y, ph in ((GROUND + 3, 0), (GROUND + 6, 4)):
+        for x in range(ph, 160, 9):
+            cv.rect(x, y, 4, 1, T)                        # swell
+    for y in range(GROUND + 1, 112, 2):
+        w = 2 + (y - GROUND) // 2
+        cv.rect(152 - w // 2, y, w, 1, W)                 # the moon's path
+
+
 def fool_cap(cv, cx, bottom):
     """The durak's jester cap, 13x7: two horns curling up and out, a bell
     on each tip, a chequered band, sitting on a spire top at (cx, bottom)."""
@@ -95,60 +109,115 @@ def filler(cv, x, w, h, s, step=3):
     lit(cv, x + 1, GROUND - h + 2, x + w - 1, GROUND - 2, step, 4, s)
 
 
+def condo(cv, x, top, kind, seed, base):
+    """A Brickell / Miami Beach condo tower, 7 px wide on the 8 px tile grid
+    (its balcony bands sit on the same rows everywhere, so their tiles repeat):
+    a balcony band every 4 px, a few lit windows, and a top: 'sail' (a
+    sloped wedge), 'curve' (a rounded crown) or 'crown' (a lit crown band)."""
+    cv.rect(x, top, 7, base - top, D)
+    for y in range(top + 2, base):
+        if y % 4 == 1:
+            cv.rect(x, y, 7, 1, T)                             # balcony band
+        elif y % 4 == 3 and (y // 4 + x // 8 + seed) % 4 == 0:
+            cv.put(x + 2 + seed % 3, y, W)                     # a lit window
+    if kind == "sail":
+        for j in range(5):
+            cv.rect(x, top - 1 - j, 7 - j, 1, D)
+    elif kind == "curve":
+        cv.rect(x + 1, top - 1, 5, 1, D)
+        cv.rect(x + 2, top - 2, 3, 1, D)
+    elif kind == "crown":
+        cv.rect(x, top - 3, 7, 3, D)
+        cv.rect(x + 1, top - 2, 5, 1, W)                       # the lit crown
+        cv.rect(x + 3, top - 6, 1, 3, D)
+
+
 def miami(cv):
+    """Miami Beach at night: Brickell condos behind, the Freedom Tower and
+    the art deco hotels on the street, palms, then the beach (sand, a
+    lifeguard hut, umbrellas), the surf and moonlight on the water."""
     g = GROUND
-    # art deco hotels on Ocean Drive: rounded corners, a central fin, neon bands
+    st = g - 12                                                # the street, above the sand
+    for (x, top, kind, seed) in ((0, st - 40, "curve", 0), (8, st - 48, "sail", 1), (16, st - 36, "crown", 2),
+                                 (40, st - 64, "crown", 0), (48, st - 46, "sail", 2),
+                                 (88, st - 50, "curve", 1), (96, st - 66, "sail", 0), (104, st - 40, "crown", 1),
+                                 (120, st - 44, "crown", 2), (128, st - 38, "curve", 0), (144, st - 46, "sail", 1),
+                                 (152, st - 36, "curve", 2)):
+        condo(cv, x, top, kind, seed, st)
+    # the art deco hotels on Ocean Drive, in front of the condos
     def deco(x, w, h, s):
-        cv.rect(x, g - h, w, h, D)
-        cv.put(x, g - h, K)
-        cv.put(x + w - 1, g - h, K)
-        cv.rect(x + w // 2 - 2, g - h - 6, 4, 6, D)          # the fin
-        cv.rect(x + w // 2 - 1, g - h - 9, 2, 3, D)
-        cv.rect(x, g - h + 2, w, 1, W)                      # neon band
-        cv.rect(x + 1, g - 6, w - 2, 1, T)                  # the porch line
-        for wx in range(x + 2, x + w - 2, 3):               # eyebrow windows
-            for wy in range(g - h + 5, g - 8, 4):
+        cv.rect(x - 1, st - h - 10, w + 2, h + 10, K)          # a lacquer gap: in front
+        cv.rect(x, st - h, w, h, D)
+        cv.rect(x + w // 2 - 2, st - h - 6, 4, 6, D)           # the fin
+        cv.rect(x + w // 2 - 1, st - h - 9, 2, 3, D)
+        cv.rect(x, st - h + 2, w, 1, W)                       # neon band
+        for wx in range(x + 2, x + w - 2, 3):                 # eyebrow windows
+            for wy in range(st - h + 5, st - 2, 4):
                 cv.put(wx, wy, T if (wx + wy + s) % 4 else W)
-    deco(4, 20, 20, 0)
-    deco(112, 18, 16, 1)
-    deco(134, 22, 24, 2)
-    # Freedom Tower: an arcaded base, a tiered tower with corner piers, a
-    # belfry, an octagonal domed cupola, a lantern and a finial
+    deco(2, 18, 16, 0)
+    deco(116, 16, 12, 1)
+    deco(138, 20, 18, 2)
+    # the Freedom Tower in front: an arcaded base, a tiered tower with corner
+    # piers, a belfry, an octagonal domed cupola, a lantern and a finial
     cx = 70
-    cv.rect(cx - 20, g - 16, 41, 16, D)                    # the base wing
-    for ax in range(cx - 18, cx + 20, 5):                  # its arches
-        cv.rect(ax, g - 9, 3, 6, K)
-        cv.put(ax + 1, g - 10, K)
-    for wx in range(cx - 18, cx + 20, 5):
-        cv.put(wx + 1, g - 13, T)
-    cv.rect(cx - 7, g - 50, 15, 34, D)                     # the tower
-    for k, y in enumerate(range(g - 48, g - 18, 8)):       # tiers: a cornice each
-        cv.rect(cx - 8, y + 6, 17, 1, D)
+    cv.rect(cx - 19, st - 13, 39, 13, K)
+    cv.rect(cx - 9, st - 64, 19, 52, K)
+    cv.rect(cx - 18, st - 12, 37, 12, D)
+    for ax in range(cx - 16, cx + 17, 5):
+        cv.rect(ax, st - 7, 3, 5, K)
+        cv.put(ax + 1, st - 8, K)
+    cv.rect(cx - 7, st - 42, 15, 30, D)
+    for k, y in enumerate(range(st - 40, st - 14, 7)):
+        cv.rect(cx - 8, y + 5, 17, 1, D)
         for wx in (cx - 4, cx, cx + 4):
-            cv.rect(wx, y, 1, 4, T if (k + wx) % 3 else W)
-    cv.rect(cx - 8, g - 50, 2, 34, D)                      # corner piers
-    cv.rect(cx + 7, g - 50, 2, 34, D)
-    cv.rect(cx - 5, g - 58, 11, 8, D)                      # the belfry
+            cv.rect(wx, y, 1, 3, T if (k + wx) % 3 else W)
+    cv.rect(cx - 8, st - 42, 2, 30, D)
+    cv.rect(cx + 7, st - 42, 2, 30, D)
+    cv.rect(cx - 5, st - 49, 11, 7, D)                        # the belfry
     for wx in (cx - 3, cx + 2):
-        cv.rect(wx, g - 56, 2, 4, K)
-        cv.put(wx, g - 57, K)
-    for j in range(7):                                     # the dome
-        w = 11 - (j * j) // 4
-        cv.rect(cx - w // 2, g - 59 - j, max(w, 1), 1, D)
-    cv.rect(cx - 1, g - 68, 3, 3, D)                       # lantern
-    cv.put(cx, g - 67, T)
-    cv.rect(cx, g - 73, 1, 5, D)                           # finial
-    # palms
+        cv.rect(wx, st - 47, 2, 4, K)
+        cv.put(wx, st - 48, K)
+    for j in range(6):                                        # the dome
+        w = 11 - (j * j) // 3
+        cv.rect(cx - w // 2, st - 50 - j, max(w, 1), 1, D)
+    cv.rect(cx - 1, st - 58, 3, 3, D)                         # lantern
+    cv.put(cx, st - 57, T)
+    cv.rect(cx, st - 62, 1, 4, D)                             # finial
+    top = st - 62
+    # the beach: dithered sand
+    for y in range(st, g):
+        for x in range(160):
+            if (x + y) % 2 == 0 and (y > st + 1 or x % 4 == 0):
+                cv.put(x, y, T)
+    # palms on the sand, in front of the hotels
     def palm(px, h):
-        for y in range(g - h, g):
-            cv.put(px + (1 if y < g - h * 2 // 3 else 0), y, D)
-        t = g - h
+        for y in range(st + 4 - h, st + 4):
+            cv.put(px + (1 if y < st + 4 - h * 2 // 3 else 0), y, D)
+        t = st + 4 - h
         for dx, dy in ((-5, 3), (-4, 2), (-3, 1), (-2, 0), (-1, 0), (1, 0), (2, 0), (3, 1), (4, 2), (5, 3),
                        (-3, -1), (-2, -2), (2, -2), (3, -1), (0, -1), (1, -1), (-1, -1)):
             cv.put(px + 1 + dx, t + dy, D)
-    for px, h in ((30, 24), (40, 18), (96, 22), (104, 16)):
+    for px, h in ((26, 24), (36, 18), (100, 22), (110, 17)):
         palm(px, h)
-    return cx, g - 73
+    # a lifeguard hut on stilts with its ramp and flag
+    hx, hy = 124, g - 11
+    cv.rect(hx, hy, 10, 5, W)
+    for xx in range(hx + 1, hx + 9, 2):
+        cv.rect(xx, hy + 1, 1, 3, D)                          # its stripes
+    cv.rect(hx - 1, hy - 1, 12, 1, D)                         # the roof
+    cv.rect(hx + 1, hy + 5, 1, 5, D)                          # stilts
+    cv.rect(hx + 8, hy + 5, 1, 5, D)
+    for k in range(5):
+        cv.put(hx - 1 - k, hy + 5 + k, D)                     # the ramp
+    cv.rect(hx + 5, hy - 5, 1, 4, D)
+    cv.rect(hx + 6, hy - 5, 2, 2, W)                          # the flag
+    # two beach umbrellas
+    for ux in (46, 92):
+        for j, w in enumerate((3, 7, 9)):
+            for i in range(w):
+                cv.put(ux - w // 2 + i, g - 10 + j, W if (i // 2) % 2 == 0 else D)
+        cv.rect(ux, g - 7, 1, 6, D)
+    return cx, top
 
 
 def new_york(cv):
@@ -346,7 +415,12 @@ def firework_bank():
 
 # where the bursts go (centre x, centre y) and when: a 4-frame loop, each
 # burst one phase behind the last; -1 = a rising shell under it
-BURSTS = ((24, 40), (104, 32), (140, 56))
+BURSTS = {                 # burst centres per city, found clear of every building
+    "MIAMI": ((24, 32), (136, 34)),
+    "NEW YORK": ((20, 40), (86, 36), (140, 40)),
+    "SEOUL": ((20, 40), (80, 40), (150, 40)),
+    "WARSAW": ((20, 40), (70, 40), (140, 40)),
+}
 SCHEDULE = (            # frame -> phase per burst (None = not shown, "S" = shell)
     (0, "S", None),
     (1, 0, "S"),
@@ -355,8 +429,8 @@ SCHEDULE = (            # frame -> phase per burst (None = not shown, "S" = shel
 )
 
 
-def fireworks(s, fw, frame):
-    for (cx, cy), ph in zip(BURSTS, SCHEDULE[frame]):
+def fireworks(s, fw, frame, city):
+    for (cx, cy), ph in zip(BURSTS[city], SCHEDULE[frame]):
         if ph is None:
             continue
         if ph == "S":
@@ -370,6 +444,18 @@ def fireworks(s, fw, frame):
 
 
 # ---- the screen ------------------------------------------------------------
+def check_sky(s):
+    """No firework pixel may land on a building, the cap or the text: only on
+    black sky or a star."""
+    for (x, y, t) in s.sprites:
+        for j in range(8):
+            for i in range(8):
+                if t[j * 8 + i] not in (None, T):
+                    v = s.bg.get(x + i, y + j)
+                    assert v == K or (x + i, y + j) in STARS, \
+                        "%s: a firework sprite covers the picture at (%d, %d)" % (s.name, x + i, y + j)
+
+
 def win_screen(city, frame=2, bake=True):
     s = Screen("w_%s" % city.lower().replace(" ", "_"), "Win over %s" % city)
     cv = s.bg
@@ -381,6 +467,8 @@ def win_screen(city, frame=2, bake=True):
     cx, top = DRAW[city](cv)
     fool_cap(cv, cx, top + 1)
     water(cv)
+    if city == "MIAMI":
+        surf(cv)
     if bake:
         lq = lacquer_font_bank()
         for i, ch in enumerate(city):
@@ -390,7 +478,8 @@ def win_screen(city, frame=2, bake=True):
     text(cv, 32, 136, "REMATCH", W)
     button(cv, 96, 136, "BTN_B")
     text(cv, 104, 136, "HOME", W)
-    fireworks(s, firework_bank(), frame)
+    fireworks(s, firework_bank(), frame, city)
+    check_sky(s)
     return s
 
 
