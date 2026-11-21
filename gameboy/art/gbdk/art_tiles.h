@@ -163,6 +163,11 @@
 #define T_SP_EDGE_B 154u
 
 /* the rail font: character c is at ART_UI_BASE + ART_FONT_FIRST + index of c in ART_FONT_CHARS */
+#define ART_LACQUER_COUNT 46u  /* lacquer.c: the same characters, white on black */
+#define ART_LACQUER_BASE 160u  /* where to load it on the win screen */
+#define ART_WIN_NAME_ROW 5u  /* win screen: the bot's name, columns (20 - len) / 2 */
+#define ART_DASH_CITY_ROW 11u  /* dashboard: the CONTINUE city, rail font, from column 11 */
+#define ART_DASH_CITY_COL 11u
 #define ART_FONT_CHARS " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?-:\'/+"
 #define ART_FONT_FIRST 1u
 

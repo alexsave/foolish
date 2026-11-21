@@ -12,7 +12,7 @@ The website is the reference: its card faces, its khokhloma card back, its wool 
 - `export.py`: writes the indexed PNGs, runs GBDK's `png2asset` on them, decodes its bytes back and asserts they equal the drawn tiles, and writes `gbdk/art_tiles.h`.
 - `png/`: the indexed 4-shade PNGs (palette in index order), one per bank and one per full screen.
   `cards.png`, `ui.png` and `sprites.png` are one tile wide so `png2asset` keeps their order; the `*_sheet.png` files are the same tiles 16 wide for looking at.
-- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `dashboard.c/.h`, `dashboard_new.c/.h`, `win.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
+- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `dashboard.c/.h`, `dashboard_new.c/.h`, `win.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
   All generated; do not edit them by hand.
 - `gbdk/check/`: a check ROM that loads the banks the way the game will and shows every table mockup composed from them (A or right: next, left: previous, B: the full screens).
 - `mockups/`: every screen at 4x with nearest neighbour (640x576), and contact sheets.
@@ -182,9 +182,9 @@ Unique background tiles each screen uses (all banks together are 131, so every t
 | Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
 | Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 55 | 4 | 4 |
-| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 146 | 1 | 1 |
-| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 139 | 1 | 1 |
-| Win | `mockups/e1_win.png` | 97 | 0 | 0 |
+| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 145 (map shipped: 140) | 1 | 1 |
+| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 138 | 1 | 1 |
+| Win | `mockups/e1_win.png` | 85 (map shipped: 83) | 0 | 0 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
 
 Contact sheets: `mockups/01_cards_sheet.png`, `02_table_layouts.png`, `03_dashboard_win_lose.png`, `04_fly.png`, `05_deal.png`.
@@ -197,16 +197,18 @@ Each is under 160 tiles because the sky, the lacquer and the black areas repeat 
 
 ### Dashboard (title + bot picker)
 
-- A city skyline from Miami to Moscow (palms, the Empire State, N Seoul Tower, the Palace of Culture in Warsaw, the Kremlin's Spasskaya tower) under the DURAK title.
+- A city skyline from Miami to Moscow (palms, the Empire State, N Seoul Tower, the Palace of Culture in Warsaw, the Kremlin's Spasskaya tower) under the ДУРАК title, with FOOLISH under it.
+- Moscow is the real top bot, but the Game Boy is too weak to run it, so it stands in the skyline only and has no picker row.
 - On black lacquer with a khokhloma vine edge: CONTINUE (when a game is open), then the bots Miami, New York, Seoul and Warsaw (the boss), with difficulty pips.
 - The menu rows sit on the tile grid (CONTINUE at row 11, the bots at rows 13 to 16).
-- The CONTINUE city is printed by the code with the rail font at row 11, columns 11 onwards (a dark pill, like the website's); `dashboard_new` is the same screen with no CONTINUE row.
+- The CONTINUE city is printed by the code with the rail font at row `ART_DASH_CITY_ROW` (11), from column `ART_DASH_CITY_COL` (11), tile = 160 + `ART_FONT_FIRST` + index in `ART_FONT_CHARS` (a dark pill, like the website's); the shipped `dashboard` map leaves those cells black, and `dashboard_new` is the same screen with no CONTINUE row.
 - The pointer is `SP_POINTER` at x = 6, on the selected row's y.
 - VRAM while the dashboard is up: its tileset takes tiles 0..145, which overlaps the usual sprite bank at 140, so load the `ui` bank at tile 160 (160..220) for the city name and copy `SP_POINTER` alone to tile 230.
 
 ### Win and lose
 
-- Win: "YOU WIN", "SEOUL IS THE DURAK" (the bot's name is baked into the mockup; four aces fan below).
+- Win: "YOU WIN", the bot's name, "IS THE DURAK", four aces below.
+  The shipped `win` map leaves the name row black: the code loads `lacquer.c` (the font, white on black, same characters as the rail font) at tile `ART_LACQUER_BASE` (160) and prints the name on row `ART_WIN_NAME_ROW` (5), from column (20 - length) / 2, tile = 160 + index of the character in `ART_FONT_CHARS`.
 - Lose: "ДУРАК!" in Cyrillic, "YOU ARE THE FOOL", the fool's cap and the cards left in your hand.
 - Both offer A rematch, B home.
 
@@ -232,4 +234,6 @@ Taking cards after a turn (pick up, or refilling from the deck) uses the same fl
 - `gen_art.py` fails if any table screen has a background tile that is not in a bank, a sprite tile not in a bank (with flips), more than 40 sprites, or more than 10 on a scanline; it also checks that every face is one rank tile plus five suit tiles, and that the wool's corner pixels are index 0.
 - `export.py` decodes `png2asset`'s 2bpp bytes back to pixels and asserts they equal the drawn tiles (banks) and the drawn screens (full maps, tile by tile).
   Mutation checked: corrupting one pixel of the PNG before conversion makes it fail with "png2asset bytes differ from the drawn tiles".
+- `export.py` also prints the names into the shipped (blank) dashboard and win maps the way the code will and asserts the result equals the mockups; mutation checked by printing the win name one column off.
+- The check ROM prints SEOUL on the dashboard and the win screen with the same rule.
 - `gbdk/check` builds with GBDK's `lcc` and runs in SameBoy, showing the table mockups composed at runtime from the exported banks.

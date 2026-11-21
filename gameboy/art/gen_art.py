@@ -215,6 +215,18 @@ def ui_bank():
     return bank
 
 
+def lacquer_font_bank():
+    """The font for the black lacquer screens (white on black), same order as
+    the rail font: the code prints the bot's name on the win screen with it."""
+    bank = {}
+    for ch in FONT_CHARS:
+        if ch == " ":
+            bank["LQ_ "] = tuple([K] * 64)
+        else:
+            bank["LQ_" + ch] = rail_glyph_tile(G.FONT[ch], fg=W, bg=K)
+    return bank
+
+
 # --------------------------------------------------------------------------
 # Card bank: every card tile and its round-corner variants.
 #   A round-corner pixel shows whatever is beneath it.  Beneath is always

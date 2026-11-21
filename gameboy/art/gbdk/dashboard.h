@@ -13,13 +13,13 @@
 #define dashboard_TILE_H 8
 #define dashboard_WIDTH 160
 #define dashboard_HEIGHT 144
-#define dashboard_TILE_COUNT 146
+#define dashboard_TILE_COUNT 140
 #define dashboard_MAP_ATTRIBUTES 0
 extern const unsigned char dashboard_map[360];
 #define dashboard_map_attributes dashboard_map
 
 BANKREF_EXTERN(dashboard)
 
-extern const uint8_t dashboard_tiles[2336];
+extern const uint8_t dashboard_tiles[2240];
 
 #endif

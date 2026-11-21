@@ -14,6 +14,20 @@
 #include "../dashboard_new.h"
 #include "../win.h"
 #include "../lose.h"
+#include "../lacquer.h"
+
+/* Print s with a font bank loaded at `base` whose character k is tile base + first + k
+ * (k = index in ART_FONT_CHARS), as the README tells the game to. */
+static void print_at(uint8_t x, uint8_t y, const char *s, uint8_t base, uint8_t first)
+{
+    static const char chars[] = ART_FONT_CHARS;
+    uint8_t k;
+    for (; *s; s++, x++) {
+        for (k = 0; chars[k] && chars[k] != *s; k++)
+            ;
+        set_bkg_tile_xy(x, y, (uint8_t)(base + first + k));
+    }
+}
 
 /* The full screens ship as png2asset maps with their own tilesets. */
 typedef struct { const uint8_t *tiles; uint8_t count; const uint8_t *map; } full_screen;
@@ -37,6 +51,13 @@ static void show_full(uint8_t k)
     DISPLAY_OFF;
     set_bkg_data(0, fulls[k].count, fulls[k].tiles);
     set_bkg_tiles(0, 0, 20, 18, fulls[k].map);
+    if (k == 0) {             /* dashboard: the CONTINUE city in the rail font */
+        set_bkg_data(160, ART_UI_COUNT, ui_tiles);
+        print_at(ART_DASH_CITY_COL, ART_DASH_CITY_ROW, "SEOUL", 160, ART_FONT_FIRST);
+    } else if (k == 2) {      /* win: the bot's name in the lacquer font, centred */
+        set_bkg_data(ART_LACQUER_BASE, ART_LACQUER_COUNT, lacquer_tiles);
+        print_at((20 - 5) / 2, ART_WIN_NAME_ROW, "SEOUL", ART_LACQUER_BASE, 0);
+    }
     for (i = 0; i < 40; i++)
         move_sprite(i, 0, 0);
     DISPLAY_ON;
