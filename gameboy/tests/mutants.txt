@@ -34,3 +34,6 @@ gd_sim.c~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8);~        k = (ui
 gd_sim.c~        if (p != DEF()) draw_up_to_six(p);~        if (p == DEF()) draw_up_to_six(p);~sim: the defender draws first
 gd_sim.c~    if (!IS_OUT(a) && IS_GOOD(a) && all_covered()) round_transition();~    if (!IS_OUT(a) && IS_GOOD(a)) round_transition();~sim: good ends the bout over an uncovered attack
 gd_sim.c~    for (r = 0; r < GD_NRANKS && m; r++)~    for (r = GD_NRANKS; r-- > 0 && m;)~sim: a capped throw-in keeps its lowest cards back
+gd_rng.c~    return low16 >= n || low16 >= (uint16_t)((uint16_t)(0u - n) % n);~    return 1;~Seoul's shuffle draw not uniform (no rejection)
+gd_rules.c~        GD_SET(g->gone, g->att[i]);~        ;~the discarded cards not remembered
+gd_rules.c~            GD_CLR(g->known[seat], m->cards[i]);~            ;~a played card stays known in the hand

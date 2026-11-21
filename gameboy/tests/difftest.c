@@ -122,6 +122,17 @@ static int same_state(const gd_game *g, const Game *f) {
     CHECK(f->defender == g->defender, "defender %d vs %d", f->defender, g->defender);
     CHECK((f->good_players_mask & 3u) == g->good, "goods %u vs %u", f->good_players_mask, g->good);
     CHECK(f->discard_pile_length == g->discard, "discard %d vs %d", f->discard_pile_length, g->discard);
+    // the public knowledge: the discarded cards are as many as the discard and
+    // nowhere in play; a seat's known cards are in its hand
+    CHECK(gd_count(&g->gone) == g->discard, "gone %d vs discard %d", gd_count(&g->gone), g->discard);
+    for (int c = 0; c < 36; c++) {
+        if (GD_HAS(g->gone, c)) {
+            CHECK(!GD_HAS(g->hand[0], c) && !GD_HAS(g->hand[1], c), "a gone card in a hand");
+            for (int i = 0; i < g->nb; i++) CHECK(g->att[i] != c && g->def[i] != c, "a gone card on the table");
+            for (int i = 0; i < g->stock_n; i++) CHECK(g->stock[i] != c, "a gone card in the stock");
+        }
+        for (int s2 = 0; s2 < 2; s2++) if (GD_HAS(g->known[s2], c)) CHECK(GD_HAS(g->hand[s2], c), "a known card not in its hand");
+    }
     CHECK((f->status == GAME_STATUS_GAME_OVER) == (g->status == GD_OVER), "status %d vs %d", f->status, g->status);
     uint8_t want = GD_RESULT_NONE;
     if (f->status == GAME_STATUS_GAME_OVER) {
@@ -460,6 +471,13 @@ static int hw_unit_checks(void) {
         for (int i = 0; i < lb; i++) { const uint16_t f = sc[gd_rng_below(18)]; gd_dbl_mul(&b, f); y *= f; }
         const int want = x < y ? -1 : x > y ? 1 : 0;
         if (gd_dbl_cmp(&a, &b) != want) { printf("FAIL soft double order: %.17g vs %.17g\n", x, y); return 0; }
+    }
+    // gd_rng_small (Seoul's shuffle): over every 16-bit draw, each value
+    // [0, n) accepted equally often
+    for (int sn = 2; sn <= 36; sn++) {
+        unsigned long cnt[36] = { 0 };
+        for (uint32_t r = 0; r < 65536; r++) { uint8_t v; if (gd_rng_small_try((uint16_t)r, (uint8_t)sn, &v)) cnt[v]++; }
+        for (int v = 1; v < sn; v++) if (cnt[v] != cnt[0]) { printf("FAIL gd_rng_small n %d not uniform\n", sn); return 0; }
     }
     printf("New York arithmetic: %lu threshold cases and %lu double products agree exactly\n", n, prods);
     return 1;

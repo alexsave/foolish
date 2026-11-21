@@ -1,7 +1,7 @@
 # Durak for the Game Boy
 
 Two-player Durak (you against one bot) for the original Game Boy (DMG), in C with GBDK-2020.
-Four bots on the dashboard: Miami plays a uniformly random legal move, drawn from the one seedable generator; New York is foolish's handwritten_prod bot, ported (below); Seoul and Moscow (the boss) play Miami's random brain until theirs land.
+Four bots on the dashboard: Miami plays a uniformly random legal move, drawn from the one seedable generator; New York is foolish's handwritten_prod bot, ported (below); Seoul is Monte Carlo over sampled worlds with the rollout engine (below); Moscow (the boss) plays Miami's random brain until its own lands.
 
 ```
 make                # build/durak.gb (GBDK= points at GBDK-2020 4.5.0)
@@ -12,6 +12,8 @@ make scripts        # every gbrun script against the ROM: screenshots in shots/,
 make rom-mutants    # break each control in a copy of the ROM; some script must catch every one
 make playout        # one random playout timed on the Game Boy
 make simbench       # one rollout-engine playout timed on the Game Boy
+make seoulcheck     # Seoul: the ROM must decide as the clang build does
+make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
 
@@ -32,6 +34,8 @@ make romusage       # ROM and RAM per bank
 | 3 | the four win pictures | 13.2 KB |
 | 4 | New York (`gd_bot_hw.c`) | 7.0 KB |
 | 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.4 KB |
+| 6 | the rollout engine (`gd_sim.c`, with its 2.5 KB rank-set table) | 9.6 KB |
+| 7 | Seoul (`gd_bot_seoul.c`) | 2.1 KB |
 
   - The rule that makes it work: anything a banked brain calls must be in bank 0, so the core and the library are linked first and nothing else is unbanked (the link fails on any overflow); a new brain gets a bank of its own and one `GD_BANKED` entry point.
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
@@ -124,6 +128,38 @@ Two tries made it slower and were undone: inlining the 5-byte count and test at 
 Result over 60000 seeds: 47570 boards, 1409978 plies stepped and compared, 95140 playouts compared, all equal (37 of them unfinished at 1000 plies in both, a cycle with no repetition rule).
 The one structural difference: foolish covers the uncovered attacks in table order, this state keeps no order and covers them in card order; the cards used come out the same for these nested cover sets, and the test checks it on every cover.
 9 sim mutants, all caught (`tests/mutants.txt`).
+
+## Seoul: the robusta idea
+
+`src/gd_bot_seoul.c`, after foolish's robusta (`foolish/c/src/robusta_strategy.c`): for each candidate move it samples worlds consistent with what it can see, plays the move on each, plays the game out with the rollout engine, and keeps the candidate that won most.
+- What it can see: its hand, the table, the face-up trump, the discarded cards, and the cards the opponent is known to hold because it picked them up and has not played them since (the rules state keeps these two, `gone` and `known`, as foolish's BotMemory does; no rule reads them, and the difftest checks they stay true).
+- A world: the cards it cannot place, shuffled (an exactly uniform draw, checked over every 16-bit value) and dealt to the opponent's unknown cards and the stock.
+- The candidates, at most 6: New York's move first (the tie-break), then done, pick up, a one-card transfer with each card that can, and a one-card attack or throw-in with each card, cheapest first. Robusta weighs every move of the full menu, 12 worlds each; on the Game Boy that is far beyond the time, so this is the cut.
+- The same worlds, and the same draws in their playouts, for every candidate (common random numbers), so candidates differ only by the move.
+- The budget: 20 playouts a decision, shared by the candidates (two to eight worlds each); a playout past 400 plies counts as lost, as robusta counts an unfinished one.
+
+Sizing, measured, for a budget of about 3 s a decision on the Game Boy:
+
+| budget (playouts) | Seoul's wins against New York (2000 games) | playouts a decision | modeled Game Boy time a decision |
+| --- | --- | --- | --- |
+| 12 | 78.3% | 8.4 | 1.0 s |
+| 16 | 77.8% | 10.6 | 1.3 s |
+| 20 | 81.2% | 11.9 | 1.5 s |
+| 24 | 77.2% | 13.4 | 1.6 s |
+
+Strength plateaus at about 78 to 81% (2000 games is about 2 points either way): more worlds do not help, and neither did 4 or 8 candidates instead of 6 (78.5%, 78.9%), so the cut, not the sample count, is what limits it.
+The model is the per-playout cost the profiling ROM measured (sampling 17.3 ms, apply and convert 6.8 ms, 3.30 ms a ply) times Seoul's own playouts and plies in the match.
+
+On the Game Boy itself (`make build/durak_prof.gb`, three scripted games, budget 20): 2.66 s a decision on average and 4.1 s at worst, 17.4 playouts a decision; its time is 82% playouts, 12% sampling worlds, 5% applying and converting, 1% the candidates.
+That is more than the model's 1.5 s because the scripted player keeps taking, so Seoul faces big hands and its budget fills.
+The rail says SEOUL THINKS while it searches, since the screen cannot move meanwhile.
+
+Strength, final (budget 20, seeds 9001 on):
+- Seoul against New York: 77.7% of 2000 games;
+- Seoul against random: 98.5%;
+- New York against random: 95.8%.
+
+`make seoulcheck`: a banked ROM laid out like the game makes Seoul's 146 decisions over two random games and must match the clang build's (mutation checked: building only the ROM's Seoul with a different budget fails it).
 
 ## Rules: foolish's variant, two seats
 
@@ -277,6 +313,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `game_win.txt` | a whole game won by an input loop, the Miami win picture with fireworks, a rematch | `80`, `81` |
 | `game_new_york.txt` | a whole game against New York, and its time per decision | `nyc_01`, `nyc_02` |
 | `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
+| `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
@@ -296,7 +333,8 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 
 ## Not done
 
-- Seoul and Moscow play the random brain (the plan: a cut-down robusta and a cut-down cordite).
+- Moscow plays the random brain (the plan: a cut-down cordite on the rollout engine).
+- Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
 - Motion: cards do not fly, the deal is not animated (the art has the frames).
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

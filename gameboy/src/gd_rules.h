@@ -84,6 +84,12 @@ typedef struct {
     uint8_t out;                // seat bits: out of the game
     uint8_t status;             // GD_PLAYING / GD_OVER
     uint8_t discard;            // cards in the discard pile
+    // Public knowledge, for the bots that sample what they cannot see (foolish
+    // keeps it in its BotMemory from the logs): the discarded cards, and the
+    // cards each seat is known to hold because it picked them up and has not
+    // played them since. No rule reads these.
+    gd_mask gone;
+    gd_mask known[2];
 } gd_game;
 
 // THE REPETITION DRAW's ring (foolish game.h GameRepetition), for two seats.

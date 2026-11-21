@@ -35,7 +35,7 @@ typedef struct {
 } gd_sim;
 
 // The board as a rollout state (the game must be playing).
-void gd_sim_from_game(gd_sim *s, const gd_game *g);
+void gd_sim_from_game(gd_sim *s, const gd_game *g) GD_BANKED;
 
 // One ply: the lowest eligible seat whose policy has a move plays it. Returns
 // that seat, or -1 when nobody acts (the game is over, or stuck).

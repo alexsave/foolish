@@ -25,6 +25,13 @@ void gd_rng_set(uint16_t state);
 // A uniform 16-bit value: exactly gd_rng_below(65536), cheaper.
 uint16_t gd_rng_u16(void);
 
+// A uniform value in [0, n), n <= 255, cheaper than gd_rng_below (its own
+// stream of values: not the same numbers gd_rng_below(n) would give).
+uint8_t gd_rng_small(uint8_t n);
+// Its step: 1 and *out when the 16-bit draw r is accepted for n (a test checks
+// every r gives each value equally often).
+uint8_t gd_rng_small_try(uint16_t r, uint8_t n, uint8_t *out);
+
 // A uniform value in [0, n), n >= 1, by rejection (no modulo bias). Values of n
 // above 65535 take two outputs per try.
 uint32_t gd_rng_below(uint32_t n);

@@ -141,6 +141,7 @@ void gd_deal(gd_game *g, gd_rep *r, const uint8_t deck[GD_NCARDS], uint8_t fallb
     g->good = 0;
     g->out = 0;
     g->discard = 0;
+    for (i = 0; i < 5; i++) { g->gone.b[i] = 0; g->known[0].b[i] = 0; g->known[1].b[i] = 0; }
     g->status = GD_PLAYING;
     // The lowest trump leads (foolish derive_lowest_power_index).
     for (s = 0; s < 2; s++)
@@ -319,6 +320,11 @@ uint8_t gd_legal(const gd_game *g, uint8_t seat, const gd_move *m) {
 // ---- applying (foolish handle_*) -------------------------------------------------
 
 static void end_bout_discard(gd_game *g) {
+    uint8_t i;
+    for (i = 0; i < g->nb; i++) {
+        GD_SET(g->gone, g->att[i]);
+        if (g->def[i] != GD_NONE) GD_SET(g->gone, g->def[i]);
+    }
     g->discard = (uint8_t)(g->discard + 2u * g->nb);
     g->nb = 0;
     refill(g);
@@ -331,6 +337,7 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
     case GD_ATTACK:
         for (i = 0; i < m->n; i++) {
             GD_CLR(g->hand[seat], m->cards[i]);
+            GD_CLR(g->known[seat], m->cards[i]);
             g->att[g->nb] = m->cards[i];
             g->def[g->nb] = GD_NONE;
             g->nb++;
@@ -345,6 +352,7 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
         for (i = 0; i < m->n; i++) {
             g->def[battle_of_uncovered(g, m->atts[i])] = m->cards[i];
             GD_CLR(g->hand[d], m->cards[i]);
+            GD_CLR(g->known[d], m->cards[i]);
         }
         if (gd_hand_n(g, d) == 0) {
             // A cover with the last card ends the bout: discard, refill, and the
@@ -364,6 +372,7 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
         const uint8_t next = next_seat(g, g->defender);
         for (i = 0; i < m->n; i++) {
             GD_CLR(g->hand[seat], m->cards[i]);
+            GD_CLR(g->known[seat], m->cards[i]);
             g->att[g->nb] = m->cards[i];
             g->def[g->nb] = GD_NONE;
             g->nb++;
@@ -378,7 +387,8 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
         g->good = 0;
         for (i = 0; i < g->nb; i++) {
             GD_SET(g->hand[g->defender], g->att[i]);
-            if (g->def[i] != GD_NONE) GD_SET(g->hand[g->defender], g->def[i]);
+            GD_SET(g->known[g->defender], g->att[i]);
+            if (g->def[i] != GD_NONE) { GD_SET(g->hand[g->defender], g->def[i]); GD_SET(g->known[g->defender], g->def[i]); }
         }
         g->nb = 0;
         refill(g);

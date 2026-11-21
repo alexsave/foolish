@@ -543,7 +543,7 @@ uint8_t gd_sim_playout(gd_sim *s, uint8_t me, uint16_t max_turns) GD_BANKED {
     return W.first_out == me ? 1 : 2;
 }
 
-void gd_sim_from_game(gd_sim *s, const gd_game *g) {
+void gd_sim_from_game(gd_sim *s, const gd_game *g) GD_BANKED {
     uint8_t i;
     s->hand[0] = g->hand[0];
     s->hand[1] = g->hand[1];

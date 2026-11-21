@@ -18,11 +18,13 @@ CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib
 CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
 ROM_BANK1 = main gfx gd_play
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu
-ROM_H    = src/gfx.h src/input.h $(CORE_H) $(wildcard art/gbdk/*.h)
+ROM_BANK6 = gd_sim
+ROM_BANK7 = gd_bot_seoul
+ROM_H    = src/gfx.h src/input.h $(CORE_H) src/gd_bot_seoul.h $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
 # pictures, 9.5 KB) goes to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with
@@ -67,7 +69,7 @@ $(B)/rom:
 $(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) -I$(B) -I$(ART) -c -o $@ $<
 
-bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5)))
+bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5,$(if $(filter $1,$(ROM_BANK6)),-Wf-bo6,$(if $(filter $1,$(ROM_BANK7)),-Wf-bo7)))))
 
 $(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -Wf-bo$(if $(filter $*,$(ART_BANK3)),3,2) -c -o $@ $<
@@ -166,3 +168,41 @@ simbench: $(B)/simbench_host $(B)/simbench.gb $(B)/simprof.gb $(B)/gbrun
 	sh tests/simbench.sh
 
 .PHONY: simbench
+
+# ---- bots against each other on the Mac (Seoul sized by SEOUL_SAMPLES) -----------------
+MATCH_SRC = tests/match.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
+$(B)/match: $(MATCH_SRC) $(CORE_H) src/gd_bot_seoul.h | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ $(MATCH_SRC)
+
+# ---- Seoul's decisions timed on the Game Boy, by section ------------------------------
+# The game ROM again, with Seoul's section marks calling a bank-0 clock
+# (tests/gb_prof.c, in this build only); scripts/game_seoul.txt plays it.
+$(B)/prof:
+	mkdir -p $@
+
+$(B)/prof/gb_prof.o: tests/gb_prof.c | $(B)/prof
+	$(LCC) $(LCCFLAGS) -c -o $@ $<
+
+$(B)/prof/gd_bot_seoul.o: src/gd_bot_seoul.c $(ROM_H) | $(B)/prof
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -DSEOUL_PROFILE -Wf-bo7 -I$(B) -I$(ART) -c -o $@ $<
+
+PROF_OBJ = $(B)/prof/gb_prof.o $(filter-out $(B)/rom/gd_bot_seoul.o,$(ROM_OBJ)) $(B)/prof/gd_bot_seoul.o
+$(B)/durak_prof.gb: $(PROF_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo8 -Wm-yn"DURAK" -o $@ $(PROF_OBJ)
+
+# ---- Seoul's cross-compiler check (a banked ROM, laid out like the game) --------------
+$(B)/seoulcheck_host: tests/seoulcheck.c $(MATCH_SRC) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DSEOULCHECK_HOST -I$(B) -o $@ tests/seoulcheck.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
+
+$(B)/rom/seoulcheck.o: tests/seoulcheck.c $(CORE_H) src/gd_bot_seoul.h | $(B)/rom
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
+
+SC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/seoulcheck.o \
+         $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_bot_seoul.o
+$(B)/seoulcheck.gb: $(SC_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo8 -o $@ $(SC_OBJ)
+
+seoulcheck: $(B)/seoulcheck_host $(B)/seoulcheck.gb $(B)/gbrun
+	sh tests/seoulcheck.sh
+
+.PHONY: seoulcheck

@@ -39,6 +39,26 @@ uint16_t gd_rng_u16(void) {
     return (uint16_t)(b - a);
 }
 
+// A uniform value in [0, n) for a small n, without the two 16-bit modulos of
+// gd_rng_below's path (Lemire's method: the high part of r * n, rejecting the
+// few r whose low part falls under (65536 - n) mod n; that modulo is taken
+// only when the low part is under n, so almost never).
+uint8_t gd_rng_small_try(uint16_t r, uint8_t n, uint8_t *out) {
+    const uint16_t hi = (uint16_t)((uint8_t)(r >> 8) * (uint16_t)n);     // r * n = hi * 256 + lo
+    const uint16_t lo = (uint16_t)((uint8_t)r * (uint16_t)n);
+    const uint16_t mid = (uint16_t)(hi + (lo >> 8));
+    const uint16_t low16 = (uint16_t)((uint16_t)(mid << 8) | (uint8_t)lo);   // r * n mod 65536
+    *out = (uint8_t)(mid >> 8);                                              // r * n / 65536
+    return low16 >= n || low16 >= (uint16_t)((uint16_t)(0u - n) % n);
+}
+
+uint8_t gd_rng_small(uint8_t n) {
+    uint8_t v;
+    if (n <= 1) return 0;
+    while (!gd_rng_small_try(gd_rng_u16(), n, &v)) {}
+    return v;
+}
+
 uint32_t gd_rng_below(uint32_t n) {
     if (n <= 1) return 0;
     if (n <= GD_RNG_SPAN) {

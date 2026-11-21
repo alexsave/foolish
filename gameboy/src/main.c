@@ -11,6 +11,7 @@
 #include "gd_play.h"
 #include "gd_rng.h"
 #include "gd_bot_hw.h"
+#include "gd_bot_seoul.h"
 #include "gfx.h"
 #include "input.h"
 #include "art_tiles.h"
@@ -65,6 +66,7 @@ uint8_t screen = SCREEN_DASH, dash_item;
 static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "MOSCOW" };
 uint8_t bot_city;
 #define BOT_NEW_YORK 1
+#define BOT_SEOUL    2
 // The finished table stays up this long before the win or lose picture.
 #define END_DELAY 90
 static uint8_t end_t;
@@ -78,6 +80,8 @@ uint32_t bot_lines_sum;
 gd_game bot_slowest;
 static gd_game bot_board;
 uint16_t bot_moves;
+// Seoul's playouts and their plies, all told (the README's sizing reads them).
+uint32_t seoul_playouts_sum, seoul_plies_sum;
 
 // Scanlines since an arbitrary start, for timing: sys_time counts VBlanks,
 // which begin at line 144, so the line is counted from there too.
@@ -360,6 +364,17 @@ static void bot_turn(void) {
         // New York: foolish's handwritten_prod (gd_bot_hw.c)
         gd_hw_choose(&G, BOT, &m);
         if (m.type == 0xFF) return;
+    } else if (bot_city == BOT_SEOUL) {
+        // Seoul: Monte Carlo over sampled worlds (gd_bot_seoul.c). It thinks for
+        // seconds, with the screen still, so the rail says so first.
+        if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        gfx_rail(17, "SEOUL THINKS", "");
+        gfx_flush();
+        t0 = line_clock();
+        gd_seoul_choose(&G, BOT, &m);
+        seoul_playouts_sum += gd_seoul_playouts;
+        seoul_plies_sum += gd_seoul_plies;
+        if (m.type == 0xFF) { dirty = 1; return; }
     } else {
         // Miami (and, until their brains land, Seoul and Moscow): a uniformly
         // random legal move, one draw below the menu's count
