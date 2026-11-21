@@ -1,0 +1,40 @@
+#!/bin/bash
+# Mutation check of the differential test: break one rule at a time in a COPY of
+# src/ (build/mut/src), rebuild the difftest against it, and require it to FAIL.
+# A mutant that passes is a rule the test does not prove. The sources in src/
+# are never touched.
+#
+# The mutants are tests/mutants.txt, one per line.
+set -u
+cd "$(dirname "$0")/.." || exit 2
+GAMES=${GAMES:-1000}
+FOOLISH=../foolish/c/src
+SHARED=../shared/c
+CC=${HOSTCC:-clang}
+FLAGS="-std=c11 -O2 -w -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_LOGS=64"
+
+
+caught=0; missed=0; i=0
+while IFS='~' read -r file from to what; do
+    [ -z "$file" ] && continue
+    i=$((i+1))
+    d=build/mut/$i
+    rm -rf "$d"; mkdir -p "$d/src"
+    cp src/*.c src/*.h "$d/src/"
+    FROM="$from" TO="$to" perl -0pi -e 'my $n = s/\Q$ENV{FROM}\E/$ENV{TO}/g; die "no match\n" unless $n' "$d/src/$file" \
+        || { echo "mutant $i: TEXT NOT FOUND ($what)"; missed=$((missed+1)); continue; }
+    if ! $CC $FLAGS -Ibuild -I$FOOLISH -o "$d/difftest" tests/difftest.c "$d/src/gd_rules.c" "$d/src/gd_play.c" \
+            "$d/src/gd_rng.c" $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c 2>"$d/cc.log"; then
+        echo "mutant $i: DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue
+    fi
+    out=$("$d/difftest" "$GAMES" 1 2>&1)
+    if [ $? -ne 0 ]; then
+        echo "mutant $i: caught - $what"
+        echo "$out" | grep -m1 MISMATCH | sed 's/^/    /'
+        caught=$((caught+1))
+    else
+        echo "mutant $i: MISSED - $what"; missed=$((missed+1))
+    fi
+done < <(grep -v "^#" tests/mutants.txt)
+echo "mutants: $caught caught, $missed missed"
+[ "$missed" -eq 0 ]

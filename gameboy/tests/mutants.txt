@@ -1,0 +1,17 @@
+# file ~ exact text ~ replacement ~ what the mutant breaks (tests/mutants.sh)
+gd_rules.c~return gd_rank_of[d] > gd_rank_of[a];~return gd_rank_of[d] != gd_rank_of[a];~a lower card of the suit beats
+gd_rules.c~(int16_t)gd_hand_n(g, g->defender) - (int16_t)gd_uncovered(g)~(int16_t)GD_MAXB~no throw-in limit (defender's hand)
+gd_rules.c~        if (p != g->defender) draw_up_to_six(g, p);~        if (p != g->defender) draw_up_to_six(g, p ^ 1u);~the defender draws first
+gd_rules.c~if (gd_rank_of[f] == GD_ACE && stock_holds_non_ace(g))~if (0)~an Ace may be turned for trump
+gd_rules.c~    if (g->nb == 0 || any_covered(g)) return 0xFF;~    return 0xFF;~no transfer (podkidnoy)
+gd_rules.c~    g->fa = lowest_seat;~    g->fa = (uint8_t)(lowest_seat ^ 1u);~the lowest trump defends instead of leads
+gd_rules.c~if (gd_hand_n(g, seat) == 0 && no_cards_left(g)) g->out |= BIT(seat);~if (gd_hand_n(g, seat) == 0) g->out |= BIT(seat);~an attacker is out while the stock still has cards
+gd_rules.c~    return seen >= 2;~    return seen >= 1;~the repetition draw on the second occurrence
+gd_rules.c~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = cv.T; }~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = 0; }~the cover menu forgets trumps beat other suits
+gd_rules.c~        return kind == KIND_DEFENDER && gd_uncovered(g) > 0;~        return kind == KIND_DEFENDER;~pickup on the menu over a covered table
+gd_rules.c~            if (all_good && g->nb > 0 && gd_uncovered(g) == 0) {~            if (all_good && g->nb > 0) {~good ends the bout over an uncovered attack
+gd_rules.c~    g->discard = (uint8_t)(g->discard + 2u * g->nb);~    g->discard = (uint8_t)(g->discard + g->nb);~the discard counts battles, not cards
+gd_rules.c~        if (gd_hand_n(g, d) == 0) {~        if (0) {~covering with the last card does not end the bout
+gd_play.c~        if (sw > sb) best = (int8_t)b;~        if (sw >= sb) best = (int8_t)b;~Cover aims at the rightmost of equal attacks
+gd_play.c~    if (defender && g->nb > 0 && n == 0 && !out_of_play) pills |= GD_PILL_PICKUP;~    if (defender && gd_uncovered(g) > 0 && n == 0 && !out_of_play) pills |= GD_PILL_PICKUP;~Take only while an attack is uncovered
+gd_play.c~        for (j = 0; j < n; j++) if (sel[j] == c) rs_sel[rs_n++] = c;~        for (j = n; j-- > 0;) rs_sel[rs_n++] = sel[j];~the Cover button pairs in selection order, not hand order
