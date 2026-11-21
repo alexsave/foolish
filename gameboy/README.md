@@ -30,7 +30,7 @@ make romusage       # ROM and RAM per bank
 | 2 | the table's tile banks, the fonts, the dashboards, the lose picture | 12.6 KB |
 | 3 | the four win pictures | 13.2 KB |
 | 4 | New York (`gd_bot_hw.c`) | 7.0 KB |
-| 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.1 KB |
+| 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.4 KB |
 
   - The rule that makes it work: anything a banked brain calls must be in bank 0, so the core and the library are linked first and nothing else is unbanked (the link fails on any overflow); a new brain gets a bank of its own and one `GD_BANKED` entry point.
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
