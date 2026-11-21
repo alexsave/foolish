@@ -55,7 +55,7 @@ def windows(cv, x0, y0, x1, y1, step_x=3, step_y=4, c=T):
 
 def skyline(cv, base):
     """Five cities left to right, black silhouettes with light windows,
-    standing on y = base.  Miami, New York, Seoul, Warsaw, Moscow."""
+    standing on y = base.  Miami, New York, Seoul, then Moscow: Moscow-City and the Kremlin."""
     # Miami: two palms and a low art-deco hotel
     def palm(x, h):
         for y in range(base - h, base):
@@ -93,17 +93,13 @@ def skyline(cv, base):
     cv.put(x + 5, base - 36, T)
     cv.put(x + 7, base - 36, T)
     cv.rect(x + 5, base - 43, 2, 3, K)                       # mast
-    # Warsaw: the Palace of Culture and Science, wedding-cake tiers + spire
-    x = 98
-    cv.rect(x, base - 14, 28, 14, K)
-    cv.rect(x + 4, base - 24, 20, 10, K)
-    cv.rect(x + 7, base - 32, 14, 8, K)
-    cv.rect(x + 9, base - 38, 10, 6, K)
-    cv.rect(x + 11, base - 42, 6, 4, K)
-    cv.rect(x + 13, base - 44, 2, 2, K)
-    windows(cv, x + 2, base - 12, x + 27, base - 2)
-    windows(cv, x + 6, base - 22, x + 23, base - 15)
-    windows(cv, x + 9, base - 30, x + 20, base - 25)
+    # Moscow-City: a cluster of glass towers, the Federation's spire,
+    # Evolution's twist
+    for (gx, w, h) in ((98, 7, 28), (106, 8, 38), (115, 7, 32), (123, 6, 24)):
+        cv.rect(gx, base - h, w, h, K)
+        for y in range(base - h + 2, base - 1, 3):
+            cv.rect(gx + 1, y, w - 2, 1, T)
+    cv.rect(109, base - 43, 1, 5, K)
     # Moscow: the Kremlin's Spasskaya tower (tent roof, the star) behind
     # the wall's swallow-tail battlements
     x = 132
@@ -152,56 +148,6 @@ def lacquer(cv, y0, y1):
 
 
 # ---- screens -----------------------------------------------------------------
-CITIES = [("MIAMI", 1), ("NEW YORK", 2), ("SEOUL", 3), ("WARSAW", 4)]
-
-
-def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
-    s = Screen("d1_dashboard" if cont else "d1b_dashboard_new", "Dashboard")
-    cv = s.bg
-    cv.rect(0, 0, 160, 144, T)
-    # sky: a big pale moon and a few stars
-    for (x, y) in ((8, 6), (30, 12), (60, 4), (118, 8), (150, 14), (140, 30), (20, 30)):
-        cv.put(x, y, W)
-    for j in range(9):
-        for i in range(9):
-            if (i - 4) ** 2 + (j - 4) ** 2 <= 17:
-                cv.put(136 + i, 2 + j, W)
-    title = "ДУРАК"
-    bx = (160 - big_width(title)) // 2
-    big_text(cv, bx, 4, title)
-    text(cv, (160 - 7 * 8) // 2, 28, "FOOLISH", K)
-    skyline(cv, 80)
-    lacquer(cv, 80, 144)
-    # menu rows sit on the tile grid (rows 11, 13..16) so the code can
-    # print the CONTINUE city with the lacquer font instead of a map per city
-    rows = []
-    if cont:
-        text(cv, 16, 88, "CONTINUE", W)
-        # the city is printed by the code with the rail font (ui bank, white
-        # on dark grey) at row 11, columns 11..19, so any city fits
-        if bake:              # the mockup; the exported map leaves these cells black
-            ui = ui_bank()
-            for i, ch in enumerate(cont):
-                cv.set_tile(11 + i, 11, ui["CH_" + ch])
-        rows.append(88)
-    y = 104
-    for name, level in CITIES:
-        text(cv, 16, y, name, W)
-        if level == 4:
-            text(cv, 160 - 5 * 8, y, "BOSS", W)
-        else:
-            for k in range(level):
-                cv.glyph(160 - 5 * 8 + 1 + k * 8, y + 1, G.SMALL["D"], W)
-        rows.append(y)
-        y += 8
-    s.spr(6, rows[cursor], sp["SP_POINTER"])
-    s.notes.append("START in a game comes back here at once (the website's back button has no confirm); the game stays and CONTINUE resumes it.")
-    return s
-
-
-NAME_ROW = 5     # win screen: the bot's name, printed by the code, centred
-
-
 def outcome(win, bot="SEOUL", bake=True):
     s = Screen("e1_win" if win else "e2_lose", "Win" if win else "Lose")
     cv = s.bg

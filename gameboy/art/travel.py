@@ -7,9 +7,8 @@
 #              printed by the code with the paper font (black on white)
 #   row 11     DEPARTURES, and A FLY on the right
 #   rows 13-16: a split-flap board, one row per bot, a departure
-#              time (later = harder; Warsaw, the boss, leaves at midnight)
-# Moscow stands in the skyline only: it is the real top bot, too big for the
-# Game Boy, so it has no row on the board.
+#              time (later = harder; Moscow, the boss, leaves at midnight)
+# Moscow is the boss: on the Game Boy it names the strongest bot that fits.
 
 import glyphs as G
 from gen_art import Canvas, Screen, T, W, D, K, rail_glyph_tile
@@ -20,8 +19,8 @@ BOARD_ROW = 13                       # first city row
 PAPER_BASE, POINTER_TILE, PLANE_TILE = 200, 250, 251
 TILESET_MAX = PAPER_BASE
 
-BOARD = (("MIAMI", "06:10", 1), ("NEW YORK", "09:45", 2), ("SEOUL", "17:20", 3), ("WARSAW", "23:55", 0))
-CITY_X = {"MIAMI": 14, "NEW YORK": 44, "SEOUL": 75, "WARSAW": 112}   # plane x over each city
+BOARD = (("MIAMI", "06:10", 1), ("NEW YORK", "09:45", 2), ("SEOUL", "17:20", 3), ("MOSCOW", "23:55", 0))
+CITY_X = {"MIAMI": 14, "NEW YORK": 44, "SEOUL": 75, "MOSCOW": 146}   # plane x over each city
 ROUTE_Y = 40
 
 PLANE = G.g("""

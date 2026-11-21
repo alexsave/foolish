@@ -898,7 +898,7 @@ def main():
         s.check_sprites(fw)
         s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
         print("%-18s unique bg tiles %3d  sprites %2d  max/line %d" % (s.name, len(tiles), s.sprite_count, s.max_line))
-    contact(["w_miami", "w_new_york", "w_seoul", "w_warsaw"], os.path.join(OUT_MOCK, "08_win_cities.png"))
+    contact(["w_miami", "w_new_york", "w_seoul", "w_moscow"], os.path.join(OUT_MOCK, "08_win_cities.png"))
     strip = []
     for f in range(len(wins.SCHEDULE)):
         s = wins.win_screen("SEOUL", frame=f)

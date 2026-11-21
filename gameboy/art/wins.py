@@ -17,7 +17,7 @@ LACQUER_BASE, FW_BASE = 206, 252
 TILESET_MAX = LACQUER_BASE
 NAME_ROW = 14          # the bot's name, columns (20 - len) / 2, lacquer font
 GROUND = 104           # the skyline stands on this y; water below to y 111
-CITIES = ("MIAMI", "NEW YORK", "SEOUL", "WARSAW")
+CITIES = ("MIAMI", "NEW YORK", "SEOUL", "MOSCOW")
 
 STARS = ((6, 34), (19, 4), (27, 40), (44, 30), (58, 38), (71, 33), (88, 2), (99, 36),
          (112, 30), (126, 39), (139, 33), (152, 3), (153, 41), (3, 12), (80, 44), (35, 44))
@@ -443,93 +443,138 @@ def seoul(cv):
     return cx, top
 
 
-def warsaw(cv):
+def in_front(cv, draw):
+    """Draw a front silhouette on its own layer, then lay it on the picture
+    with a one-pixel lacquer outline, so the towers behind stay whole and the
+    silhouette still reads in front of them."""
+    layer = Canvas(160, 144, None)
+    draw(layer)
+    for y in range(144):
+        for x in range(160):
+            if layer.px[y][x] is None:
+                continue
+            for dx, dy in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+                xx, yy = x + dx, y + dy
+                if 0 <= xx < 160 and 0 <= yy < 144 and layer.px[yy][xx] is None:
+                    cv.put(xx, yy, K)
+    cv.blit(layer, 0, 0)
+
+
+def onion(cv, cx, base_y, w, drum):
+    """An onion dome of St Basil's: a drum, the bulb with twisted stripes, a
+    small cross on top."""
+    cv.rect(cx - w // 2 + 1, base_y - drum, w - 2, drum, D)              # the drum
+    widths = [1, 1, 3, max(w - 2, 3), w, w, max(w - 2, 3), 3]
+    top = base_y - drum - len(widths)
+    for j, ww in enumerate(widths):
+        for i in range(ww):
+            x = cx - ww // 2 + i
+            y = top + j
+            cv.put(x, y, W if (x + y) % 3 == 0 else D)                    # the twisted stripes
+    cv.rect(cx, top - 3, 1, 3, W)                                          # the cross
+    cv.rect(cx - 1, top - 2, 3, 1, W)
+
+
+def moscow(cv):
     st = RIVER
-    # the new towers behind: glass, Varso's spire, Złota 44's sail
-    for (x, h, style, roof) in ((96, 40, "glass", "flat"), (104, 30, "grid", "flat"), (136, 44, "glass", "flat"),
-                                (152, 34, "grid", "flat")):
+    # Moscow-City behind on the right: glass towers, the Federation's spire,
+    # Mercury's stepped crown, Evolution's twist
+    for (x, h, style, roof) in ((96, 38, "glass", "flat"), (104, 50, "lit", "flat"), (120, 44, "glass", "setback"),
+                                (128, 30, "grid", "flat"), (144, 40, "glass", "flat"), (152, 28, "grid", "flat")):
         back_tower(cv, x, st - h, style, roof)
-    vx = 144                                                    # Varso, the tallest, its long spire
-    cv.rect(vx, st - 58, 7, 58, D)
-    for y in range(st - 56, st, 2):
-        cv.rect(vx + 1, y, 5, 1, T if y % 4 else D)
-    cv.rect(vx + 3, st - 72, 1, 14, D)
-    zx = 120                                                    # Złota 44: the sail
-    cv.rect(zx, st - 50, 9, 50, D)
-    for j in range(8):
-        cv.rect(zx, st - 51 - j, max(9 - j, 1), 1, D)
-    for y in range(st - 48, st, 3):
-        cv.rect(zx + 1, y, 7, 1, T)
-    # the Old Town's coloured gabled row and the Royal Castle
-    gap(cv, 0, st - 44, 58, st)
-    x = 0
-    shades = (D, T, D, W, D, T)
-    for k, (w, h) in enumerate(((6, 22), (5, 26), (6, 20), (5, 24), (6, 21))):
-        c = shades[k]
-        cv.rect(x, st - h, w, h, D)
-        for y in range(st - h + 1, st - 1, 2):                  # a coloured façade in dither
-            for xx in range(x + 1, x + w - 1):
-                if (xx + y) % 2 == 0 and c != D:
-                    cv.put(xx, y, c)
-        for y in range(st - h + 3, st - 2, 4):
-            for xx in range(x + 1, x + w - 1, 2):
-                cv.put(xx, y, K)                                # windows
-        tri(cv, x + w // 2, st - h - w // 2, w // 2 + 1, D)     # steep roof
-        cv.put(x + w // 2, st - h - w // 2 - 1, D)              # the scrolled gable top
-        x += w
-    cv.rect(28, st - 16, 18, 16, D)                             # the Royal Castle
-    lit(cv, 29, st - 14, 45, st - 2, 3, 4, 3)
-    cv.rect(33, st - 30, 6, 14, D)
-    cv.put(35, st - 26, W)
-    cv.put(36, st - 26, W)
-    tri(cv, 36, st - 38, 8, D, 0.4)
-    # Sigismund's Column
-    sx = 52
-    cv.rect(sx - 2, st - 6, 5, 6, D)
-    cv.rect(sx, st - 36, 1, 30, T)
-    cv.rect(sx - 1, st - 37, 3, 1, T)
-    cv.rect(sx, st - 41, 1, 4, W)
-    cv.rect(sx - 1, st - 40, 3, 1, W)
-    cv.rect(sx + 1, st - 44, 1, 4, W)
-    cv.rect(sx, st - 43, 3, 1, W)
-    # the Palace of Culture and Science, front and centre
-    cx = 84
-    gap(cv, cx - 27, st - 70, cx + 28, st)
-    cv.rect(cx - 26, st - 12, 53, 12, D)
-    for px in (cx - 26, cx - 20, cx + 20, cx + 26):
-        cv.rect(px, st - 16, 1, 4, D)
-    lit(cv, cx - 24, st - 10, cx + 26, st - 2, 3, 4, 5)
-    tiers = ((24, 16), (18, 11), (14, 9), (10, 6), (6, 4))
-    y = st - 12
-    for k, (w, h) in enumerate(tiers):
-        cv.rect(cx - w // 2, y - h, w, h, D)
-        cv.put(cx - w // 2, y - h - 1, D)
-        cv.put(cx + w // 2 - 1, y - h - 1, D)
-        cv.put(cx - w // 2, y - h - 2, D)
-        cv.put(cx + w // 2 - 1, y - h - 2, D)
-        if h > 6:
-            column(cv, cx - w // 2 + 2, cx + w // 2 - 1, y - h + 1, y - 1, 3, k)
-        y -= h
-    cv.rect(cx - 1, y + 2, 2, 2, W)
-    for yy in range(st - 66, y):
-        cv.rect(cx - (1 if yy > y - 6 else 0), yy, 2 if yy > y - 6 else 1, 1, D)
+    fx = 112                                                            # Federation, the tallest
+    cv.rect(fx, st - 60, 7, 60, D)
+    for y in range(st - 58, st, 2):
+        cv.rect(fx + 1, y, 5, 1, T if y % 4 else D)
+    cv.rect(fx + 3, st - 70, 1, 10, D)
+    ex = 136                                                            # Evolution, twisting
+    cv.rect(ex, st - 46, 7, 46, D)
+    for y in range(st - 46, st, 3):
+        k = (y // 3) % 6
+        cv.rect(ex + (k if k < 4 else 6 - k), y, 3, 1, T)
+    # Moscow State University behind on the left: a Seven Sister
+    mx = 22
+    cv.rect(mx - 20, st - 14, 41, 14, D)                               # the wings
+    for wx in (mx - 16, mx + 16):                                       # their towers
+        cv.rect(wx - 2, st - 24, 5, 10, D)
+        cv.rect(wx, st - 28, 1, 4, D)
+    cv.rect(mx - 6, st - 32, 13, 18, D)                                 # the central tower
+    cv.rect(mx - 4, st - 40, 9, 8, D)
+    cv.rect(mx - 2, st - 46, 5, 6, D)
+    cv.rect(mx, st - 54, 1, 8, D)                                       # its spire
+    cv.put(mx, st - 55, T)                                              # and star
+    lit(cv, mx - 18, st - 12, mx + 19, st - 2, 3, 4, 2)
+    column(cv, mx - 4, mx + 5, st - 30, st - 15, 3, 1)
+    # the Kremlin wall with its swallow-tail battlements
+    gap(cv, 40, st - 16, 112, st)
+    cv.rect(40, st - 10, 72, 10, D)
+    for x in range(40, 112, 4):
+        cv.rect(x, st - 13, 3, 3, D)
+        cv.put(x + 1, st - 13, K)                                       # the swallow tail
+    # the Spasskaya Tower, front and centre: body, clock, tiers, tent, star
+    cx = 76
+    cv.rect(cx - 6, st - 32, 13, 32, D)                                 # the body
+    cv.rect(cx - 1, st - 8, 3, 8, K)                                    # the gate
+    cv.put(cx, st - 9, K)
+    for y in range(st - 30, st - 12, 4):
+        cv.put(cx - 4, y, T)
+        cv.put(cx + 4, y, T)
+    cv.rect(cx - 7, st - 33, 15, 1, D)                                  # cornice
+    cv.rect(cx - 5, st - 42, 11, 9, D)                                  # the clock tier
+    for (dx, dy) in ((0, -2), (-2, 0), (2, 0), (0, 2), (-1, -1), (1, -1), (-1, 1), (1, 1)):
+        cv.put(cx + dx, st - 38 + dy, W)                                # the clock face
+    cv.put(cx, st - 38, T)
+    for px in (cx - 6, cx + 6):                                         # pinnacles
+        cv.rect(px, st - 46, 1, 4, D)
+    cv.rect(cx - 4, st - 47, 9, 5, D)                                   # the octagonal tiers
+    cv.rect(cx - 3, st - 50, 7, 3, D)
+    cv.put(cx - 1, st - 49, T)
+    cv.put(cx + 1, st - 49, T)
+    for j in range(10):                                                 # the tented spire
+        w = 7 - (j * 6) // 10
+        cv.rect(cx - w // 2, st - 51 - j, max(w, 1), 1, D)
+    cv.rect(cx, st - 62, 1, 1, D)
+    star = G.g("""
+..w..
+wwwww
+.www.
+.w.w.
+""")
+    cv.glyph(cx - 2, st - 66, star)                                     # the red star
     top = st - 66
+    # St Basil's Cathedral, front right on Red Square
+    bx = 124
+
+    def basil(cv):
+        cv.rect(bx - 14, st - 10, 29, 10, D)                                # its arcaded base
+        for ax in range(bx - 12, bx + 14, 4):
+            cv.rect(ax, st - 7, 2, 4, K)
+            cv.put(ax, st - 8, K)
+        for j in range(22):                                                 # the central tent
+            w = 7 - (j * 6) // 22
+            cv.rect(bx - w // 2, st - 11 - j, max(w, 1), 1, D)
+            if j % 4 == 1:
+                cv.put(bx, st - 11 - j, T)
+        onion(cv, bx, st - 33, 5, 2)                                        # its small top dome
+        onion(cv, bx - 9, st - 10, 7, 6)                                    # the onion domes round it
+        onion(cv, bx + 9, st - 10, 7, 4)
+        onion(cv, bx - 4, st - 10, 5, 12)
+        onion(cv, bx + 5, st - 10, 5, 10)
+
+    in_front(cv, basil)
     river(cv)
-    # Świętokrzyski Bridge: one tilted pylon and its cable fan over the Vistula
-    py = RIVER + 4
-    cv.rect(96, py, 64, 1, T)                                   # the deck
-    for k in range(18):
-        cv.rect(116 + k // 4, py - 1 - k, 2, 1, W)              # the pylon, leaning
-    for k in range(6):
-        for sign in (-1, 1):
-            x1 = 120 + sign * (5 + k * 6)
-            n = max(abs(x1 - 120), 17)
-            for step in range(0, n + 1, 2):
-                cv.put(round(120 + (x1 - 120) * step / n), round(py - 17 + 17 * step / n), T)
+    # Bolshoy Moskvoretsky Bridge: one long low arch over the Moskva
+    cv.rect(0, RIVER + 1, 56, 2, D)
+    for x in range(0, 56):
+        a = 4 - int(4 * math.sin(math.pi * x / 56))
+        cv.put(x, RIVER + 3 + (4 - a), T)                               # the arch
+    for x in range(2, 56, 4):
+        cv.put(x, RIVER, W)                                             # its lamps
     return cx, top
 
 
-DRAW = {"MIAMI": miami, "NEW YORK": new_york, "SEOUL": seoul, "WARSAW": warsaw}
+DRAW = {"MIAMI": miami, "NEW YORK": new_york, "SEOUL": seoul, "MOSCOW": moscow}
+
 
 
 
@@ -574,7 +619,7 @@ BURSTS = {                 # burst centres per city, found clear of every buildi
     "MIAMI": ((24, 32), (136, 34)),
     "NEW YORK": ((22, 32), (88, 34), (136, 36)),
     "SEOUL": ((20, 36), (80, 36), (142, 36)),
-    "WARSAW": ((20, 36), (68, 36), (112, 36)),
+    "MOSCOW": ((12, 36), (92, 36), (140, 32)),
 }
 SCHEDULE = (            # frame -> phase per burst (None = not shown, "S" = shell)
     (0, "S", None),

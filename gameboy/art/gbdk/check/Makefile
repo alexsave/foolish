@@ -2,7 +2,7 @@
 GBDK ?= /Users/alex/Dev/gb-hello/toolchain/dl/gbdk
 LCC = $(GBDK)/bin/lcc
 SRC = check.c check_screens.c ../cards.c ../ui.c ../sprites.c \
-      ../dashboard.c ../dashboard_new.c ../win_miami.c ../win_new_york.c ../win_seoul.c ../win_warsaw.c ../lose.c ../lacquer.c ../paper.c
+      ../dashboard.c ../dashboard_new.c ../win_miami.c ../win_new_york.c ../win_seoul.c ../win_moscow.c ../lose.c ../lacquer.c ../paper.c
 check.gb: $(SRC)
 	$(LCC) -Wm-yn"DURAKART" -o $@ $(SRC)
 clean:
