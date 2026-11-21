@@ -7,6 +7,7 @@
 // the LCD off there are no VBlank interrupts. The repeat timing counts ticks.
 #include <gb/gb.h>
 #include "input.h"
+#include "live.h"
 
 static volatile uint8_t isr_now, isr_pressed;   // down now; went down since last taken
 static volatile int8_t isr_steps;               // LEFT/RIGHT presses and repeats not yet taken
@@ -33,6 +34,7 @@ static void in_tick(void) {
     } else lr_frames = 0;
     if (j & J_A) { if (a_frames < 255) a_frames++; } else a_frames = 0;
     if (j & J_SELECT) { if (sel_frames < 255) sel_frames++; } else sel_frames = 0;
+    live_tick();    // a bot thinking: the screen's handler (live.h)
 }
 
 // 4096 Hz / (256 - 188) = 60.2 ticks a second, one a frame near enough.
@@ -70,6 +72,13 @@ void in_keep_except(uint8_t used) {
         isr_steps = (int8_t)(isr_steps + steps);
         pressed = 0;
         steps = 0;
+    }
+}
+
+void in_give_back(uint8_t mask) {
+    CRITICAL {
+        isr_pressed |= (uint8_t)(pressed & mask);
+        pressed &= (uint8_t)~mask;
     }
 }
 

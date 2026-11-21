@@ -27,6 +27,9 @@ uint8_t in_any_pressed(void);
 // Give back what this update took and did not use, but `used` (a screen
 // change mid-update): the next update sees those presses and steps again.
 void    in_keep_except(uint8_t used);
+// Give back only the presses in `mask` (the rest are dropped): during a bot's
+// think, START waits for the move.
+void    in_give_back(uint8_t mask);
 // The frame count (sys_time) when the first button press of the session was
 // read: the game's one entropy source (main.c GD_SEED_FIXED).
 uint16_t in_first_press_time(void);
