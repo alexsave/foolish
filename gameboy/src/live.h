@@ -19,7 +19,8 @@
 // caller's own), runs once every timer tick until live_stop.
 void live_start(void (*fn)(void));
 void live_stop(void);
-// From the timer interrupt only (interrupts off).
+// From the timer interrupt only (interrupts off), while live_on.
+extern volatile uint8_t live_on;
 void live_tick(void);
 
 #endif

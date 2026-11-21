@@ -4,7 +4,7 @@
 #include "live.h"
 #include "gd_botlib.h"
 
-static volatile uint8_t live_on;
+volatile uint8_t live_on;           // a think runs (input.c reads it every tick)
 static uint8_t live_busy;          // the handler is running (a nested tick returns)
 static uint8_t live_bank;          // the handler's ROM bank
 static uint8_t live_rom;           // the search's ROM bank, while the handler runs
