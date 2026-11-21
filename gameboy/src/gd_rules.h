@@ -34,6 +34,7 @@
 #define GD_MAXB    18           // a table of b battles holds 2b of 36 cards
 #define GD_NONE    0xFFu        // no card (an uncovered battle's cover)
 #define GD_STOCK   24           // the stock after the deal (36 - 12)
+#define GD_VOIDS   6            // voids remembered a seat (foolish BOT_MEM_VOIDS)
 
 #define GD_PLAYING 1
 #define GD_OVER    2
@@ -90,10 +91,11 @@ typedef struct {
     // played them since. No rule reads these.
     gd_mask gone;
     gd_mask known[2];
-    // A belief, not knowledge (foolish's voids): the cards each seat is taken
-    // not to hold because it picked up a lone attack they would beat. Cleared
-    // when the seat draws, or plays one of them.
+    // A belief, not knowledge (foolish BotMemory's voids): the cards each seat
+    // is taken not to hold because it picked up a lone attack they would beat,
+    // from at most GD_VOIDS such pickups; cleared when the seat draws.
     gd_mask nocover[2];
+    uint8_t nvoid[2];
 } gd_game;
 
 // THE REPETITION DRAW's ring (foolish game.h GameRepetition), for two seats.

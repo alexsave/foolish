@@ -24,10 +24,10 @@
 #endif
 #define MOSCOW_MAX_TURNS 400    // a playout past this counts as lost
 #ifndef MOSCOW_PLY_BUDGET
-#define MOSCOW_PLY_BUDGET 2500u // no new world after this many plies, solver nodes counted at 2.5 (the worst case bound)
+#define MOSCOW_PLY_BUDGET 1500u // no new world after this many plies, solver nodes counted at 2.5 (the worst case bound)
 #endif
 #ifndef MOSCOW_WIN_NODES
-#define MOSCOW_WIN_NODES   1000u   // the solver's win hunt, all root moves together
+#define MOSCOW_WIN_NODES   400u    // the solver's win hunt, all root moves together (3.3 s on the Game Boy)
 #endif
 #ifndef MOSCOW_SOLVE_CARDS
 #define MOSCOW_SOLVE_CARDS 8       // solve only endgames with at most this many cards in hand

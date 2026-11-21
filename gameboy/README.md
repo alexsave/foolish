@@ -1,7 +1,7 @@
 # Durak for the Game Boy
 
 Two-player Durak (you against one bot) for the original Game Boy (DMG), in C with GBDK-2020.
-Four bots on the dashboard: Miami plays a uniformly random legal move, drawn from the one seedable generator; New York is foolish's handwritten_prod bot, ported (below); Seoul is Monte Carlo over sampled worlds with the rollout engine (below); Moscow (the boss) plays Miami's random brain until its own lands.
+Four bots on the dashboard: Miami plays a uniformly random legal move, drawn from the one seedable generator; New York is foolish's handwritten_prod bot, ported (below); Seoul is Monte Carlo over sampled worlds with the rollout engine (below); Moscow (the boss) is a cut-down cordite: Monte Carlo behind New York's move, and an exact endgame solver (below).
 
 ```
 make                # build/durak.gb (GBDK= points at GBDK-2020 4.5.0)
@@ -13,6 +13,9 @@ make rom-mutants    # break each control in a copy of the ROM; some script must 
 make playout        # one random playout timed on the Game Boy
 make simbench       # one rollout-engine playout timed on the Game Boy
 make seoulcheck     # Seoul: the ROM must decide as the clang build does
+make moscowcheck    # Moscow: the same
+make solvecheck     # the endgame solver: the same, and its time on the Game Boy
+make build/vscordite && build/vscordite cordite 2000   # Moscow against foolish's real cordite
 make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
@@ -24,22 +27,25 @@ make romusage       # ROM and RAM per bank
   Falsifier: over 28 KB, which would force banking.
   - Measured with placeholder tiles: 26.4 KB, so the hypothesis was wrong by almost 2x (SDCC's SM83 code for the rules is about 2.5 times what I guessed), but it fitted 32 KB.
   - Measured with the real art: it does not fit 32 KB, so the cart is MBC1.
-  - With New York the code no longer fit the 32 KB the CPU sees at once either, so the code is banked (128 KB cart, `src/gd_bank.h`):
+  - With New York the code no longer fit the 32 KB the CPU sees at once either, so the code is banked (`src/gd_bank.h`); with Moscow's solver the cart is MBC1 with 32 KB of RAM and a 256 KB ROM (table as measured with Moscow):
 
 | Bank | Holds | Used |
 | --- | --- | --- |
-| 0 (fixed) | the rules core (`gd_rules.c`), the RNG, the input interrupt, `_HOME` and all of GBDK's library | 10.0 KB |
-| 1 | the UI: `main.c`, `gfx.c`, `gd_play.c` | 13.3 KB |
+| 0 (fixed) | the rules core (`gd_rules.c`), the RNG, the input interrupt, the bots' shared scratch (`gd_botlib.c`), `_HOME` and all of GBDK's library | 11.1 KB |
+| 1 | the UI: `main.c`, `gfx.c`, `gd_play.c` | 13.8 KB |
 | 2 | the table's tile banks, the fonts, the dashboards, the lose picture | 12.6 KB |
 | 3 | the four win pictures | 13.2 KB |
 | 4 | New York (`gd_bot_hw.c`) | 7.0 KB |
 | 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.4 KB |
-| 6 | the rollout engine (`gd_sim.c`, with its 2.5 KB rank-set table) | 9.6 KB |
-| 7 | Seoul (`gd_bot_seoul.c`) | 2.1 KB |
+| 6 | the rollout engine (`gd_sim.c` on the board rules of `gd_simboard.h`, with its 2.5 KB rank-set table) | 11.3 KB |
+| 7 | Seoul and Moscow (`gd_bot_seoul.c`, `gd_bot_moscow.c`) | 6.9 KB |
+| 8 | the endgame solver (`gd_solve.c`, on its own copy of the board rules and tables) | 12.2 KB |
 
   - The rule that makes it work: anything a banked brain calls must be in bank 0, so the core and the library are linked first and nothing else is unbanked (the link fails on any overflow); a new brain gets a bank of its own and one `GD_BANKED` entry point.
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
   Measured: 5.5 KB (3.9 KB + 1.6 KB).
+  With Moscow: 7.1 KB (3.9 KB + 3.3 KB), 0.7 KB left above the stack; Seoul and Moscow share one world and one candidate list (`gd_botlib.h`), and Moscow ranks candidates by menu index, as a move is 38 bytes.
+  The cart's 32 KB of RAM is the solver's: bank 0 its stack (49 states and frames, 640 moves, the hash's table at 0xBF00), banks 1 to 3 its transposition table (3 x 1024 entries of a 32-bit tag and a value).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
   Falsifier: a typical move over one frame (154 lines, 16.7 ms).
   - Measured over two whole scripted games: 251 and 261 scanlines on average (27 to 28 ms, 1.7 frames), worst 1186 scanlines (129 ms, 7.7 frames).
@@ -198,6 +204,67 @@ The cartridge RAM: MBC1 with 32 KB of RAM (four 8 KB banks), no battery.
 - Time a decision on the Game Boy: 3.5 s on average and under 13 s at worst (falsifier: over 5 s average or 15 s worst).
 - Strength (2000 games each): Moscow beats Seoul about 62% (falsifier: under 55%, which is not clearly), New York about 85%, random about 99%; against foolish's real cordite (8 to 10 times the playouts, 15 times the solver budget) about 40%.
 
+### Measured (marking the hypothesis)
+
+The proof, `tests/solvetest.c` (`make test` runs `solvetest 60 1 20000`):
+- It solves boards against foolish's `cd_sim_solve` at every ply once the stock is gone, in games whose moves are uniformly random or New York's (half each), and in random small endgames built field by field for both solvers.
+- Each board is solved from each seat's side in the full window and in Moscow's window (0, 2000).
+- 100 games at 200000 nodes: 1412 full-window values where both finished, all identical including the distance to the end; 3793 windowed verdicts the same.
+- The final run (60 games and 1200 random endgames, 20000 nodes): 2020 identical values, 5221 identical windowed verdicts.
+- The hypothesis held: no difference ever.
+- The random endgames were added because games alone never make a transfer of several cards decisive: a mutant that allowed only one-card transfers survived 400 games, and is caught now.
+- 10 solver mutants (`solve:` in `tests/mutants.txt`), all caught.
+
+Speed on the Game Boy, `make solvecheck` (86 solves at a 1500-node cap, the scanline clock): falsified.
+- First 11.3 ms a node. Timing the parts showed the hash at 3.4 ms (5 Pearson lanes in C) and move generation at 5.4 ms.
+- The hash in assembly, its table copied to an aligned address in cart RAM so a lookup is one `ld l,a; ld c,(hl)`: 0.97 ms. A table of the cards that beat each card: generation 4.6 ms.
+- Now 8.2 ms a node (84564 nodes in 6.41 million scanlines): twice my guess, just over the falsifier. SDCC's code for the move generation is most of what is left (about 45 cycles to list each card of a hand).
+
+Resolution: falsified, worse than guessed. Within 200000 nodes the root win hunt finished:
+
+| Cards in both hands | 4 | 6 | 8 | 10 | 12 | 14 | 16 | 18 |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Solves finished | 99% | 96% | 82% | 62% | 32% | 15% | 12% | 4% |
+| Nodes when finished (mean) | 284 | 2848 | 10284 | 19945 | 21111 | 10378 | 21245 | 50057 |
+
+At about 400 nodes the Game Boy reliably finishes only endgames of 6 cards or fewer.
+
+Strength, and why (2000 games each unless marked): falsified first, then found.
+- The first cut (cordite's candidates, 4 and 8 worlds, both solver passes at 1500 and 1000 nodes) beat Seoul only 53.9%: under the falsifier.
+- Ablations against Seoul: solver off 52.6%; solver at 200000 nodes 56.1%; 16 and 32 worlds 61.2%. So at two players the solver adds a few points at most and the worlds add the most, and on the Game Boy the worlds are what the time buys.
+- Cordite's second pass (drop the moves proven to lose, when some move is proven not to) never fired in about 10,000 solves. At two players a draw needs both seats out at once, so a move proven not to lose is a proven win, which pass 1 already took. It is gone, and its node cap with it.
+- New York's move as the first candidate (Seoul's anchor, and the tie-break): 60.0% against 53.9% at the same time. Cordite needs no anchor with 144 worlds a candidate; Moscow has 6 to 18.
+- With the anchor: solver off 58.0%, the solver only for endgames of at most 8 cards 59.8%, for a fifth of the solver's time.
+- The time bound: a budget of plies a decision, a solver node charged as 2.5 plies (8.2 ms against 3.3 ms), checked before each world. 2500 plies 59 to 60%, 1500 57.7%, 1200 56.4%. 1500 holds the hard scripted game below to 5 s a decision; at 1000 solver nodes a big solve then left no worlds, so the cap is 400 (59.0%).
+
+The final Moscow: up to 6 candidates (New York's move, then cordite's ranking: 5 attacks, 3 covers, 2 transfers, done, pick up), stage 1 on 6 worlds, the best two on 12 more, voids in 3 worlds of 4, the win hunt for endgames of at most 8 cards with 400 nodes, 1500 plies a decision.
+
+| Moscow against | Games | Moscow wins | Hypothesis |
+| --- | --- | --- | --- |
+| Seoul | 8000 (seeds 9001 and 30001) | 59.7% (60.1%, 59.4%) | 62%: lower, but clearly ahead (17 standard errors from even) |
+| New York | 2000 | 84.4% | 85% |
+| random | 2000 | 98.5% | 99% |
+| foolish's cordite | 2000 | 42.8% | 40% |
+| foolish's octogen | 400 | 23.2% | (not guessed) |
+
+For scale, Seoul against cordite: 34.6% (2000 games); New York against cordite 9.0% (400 games), which checks the harness against foolish's published 88% for cordite over handwritten.
+`make build/vscordite && build/vscordite cordite 2000 9001` runs both rule engines in lockstep and feeds cordite foolish's own game, logs and legal-move list (foolish's sources read, built into `build/` with foolish's defaults).
+
+The void belief (`nocover` in the rules state) matched foolish's BotMemory after every move of those 2000 cordite games (159518 moves, 128824 seat-moves holding a void); 4 mutants (`void:`) caught.
+
+Time a decision on the Game Boy:
+- The scripted game (`scripts/game_moscow.txt`, the input loop that keeps taking, so Moscow faces big hands and long playouts): 26 decisions, 4.84 s on average, 5.99 s at worst; 964 playouts, 36 plies each.
+- `make moscowcheck`, 100 decisions over games of random and New York moves: 2.3 s on average.
+- The solver at its cap: 400 nodes, 3.3 s. The Mac's model over 8000 games against Seoul: 3.3 s on average, 8.4 s at most; against random, 9.1 s at most.
+- The hypothesis (3.5 s, under 13 s) held; the budget (5 s, 15 s) holds.
+- The rail says MOSCOW THINKS while it searches (`shots/moscow_02_thinks.png`); `shots/moscow_03_end.png` is the finished game.
+
+The cart's RAM in practice: the 400-node cap stores at most 400 values, which 8 KB would have held; the 32 KB keep the stack (2.8 KB of states and frames, 5 KB of moves) in a bank of its own and leave room for the 1500-node solves of `make solvecheck`.
+
+The cross-compiler checks: `make moscowcheck` (100 decisions, 6 of them through the solver) and `make solvecheck` (86 solves) match the clang build.
+Mutation checked: a ROM-only Moscow with 5 worlds in stage 1, or 900 solver nodes, fails `moscowcheck`.
+`solvecheck` also caught a real bug no Mac test can see: the probe read the frame (in RAM bank 0) after switching to the table's bank.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
@@ -351,6 +418,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `game_new_york.txt` | a whole game against New York, and its time per decision | `nyc_01`, `nyc_02` |
 | `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
 | `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
+| `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
@@ -367,11 +435,15 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 - `sys_time` ticks at line 144 and LY wraps at 154, so a timer built from the two went negative; the line clock counts from line 144.
 - mGBA logs that GBDK's start-up writes an MBC1 RAM bank on a cart with no RAM; gbrun sends the emulator's log to stderr.
 - mGBA's video buffer is sized for a Super Game Boy border (256x224); gbrun crops to 160x144.
+- The solver's frames are in bank 0 of the cart's RAM and its table in banks 1 to 3, and its first ROM read the frame's slot index after switching to the table's bank: a read of the wrong RAM, so the ROM searched more nodes than the clang build. `make solvecheck` caught it; the code now copies what it needs out of the frame before every switch.
+- The rollout state is 33 bytes, not the 32 the plan said; the solver's stack layout uses `sizeof`, and a compile-time check fails the build if the stack outgrows its bank.
+- `sys_time` is 16 bits, so a long bench wraps it: the clocks take differences across the wrap, and a decision is timed in 32 bits (Moscow can think past the 7 s that 16 bits of scanlines hold).
 
 ## Not done
 
-- Moscow plays the random brain (the plan: a cut-down cordite on the rollout engine).
+- Moscow's solver runs at 8.2 ms a node, most of it SDCC's code for move generation; assembly there (as for the hash) would buy it bigger endgames, though the measurements above say the worlds matter more at two players.
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
+- Moving the aim in TARGET mode redraws over about 5 frames, and for a frame or two the new arrow's sprites show over the old dotted path (seen frame by frame with gbrun; `shots/12` waits for it to settle): the sprites should move only once the background path is flushed.
 - Motion: cards do not fly, the deal is not animated (the art has the frames).
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

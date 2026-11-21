@@ -22,7 +22,9 @@
 # right: the arrow moves to the other eight
 +1   press RIGHT
 +4   expect _tgt_i 01
-+0   shot shots/12_target_cover_second.png 3
+# the redraw of a moved aim takes until about frame 6 (frame 4 shows the new
+# arrow's sprites over the old path: README "Not done"), so the shot waits
++4   shot shots/12_target_cover_second.png 3
 # down cancels back to the cards; up again aims at the first eight, up covers it
 +1   press DOWN
 +4   expect _in_target 00

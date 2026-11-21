@@ -1,0 +1,34 @@
+# A whole game against Moscow (cut-down cordite, gd_bot_moscow.c), by
+# the input loop of game_lose.txt, to the end screen; then how long Moscow's
+# decisions took, in scanlines (slowest, sum, count).
+# The seed is set by poking sys_time (the one entropy source) before the first press.
+@99  poke _sys_time 07 00
+@100 press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 03
++20  shot shots/moscow_01_deal.png 3
+# the first time Moscow thinks, the rail says so while the screen holds still
++0   until _bot_thinking 01
++30  expect _bot_thinking 01
++0   shot shots/moscow_02_thinks.png 3
+repeat 900
++12  press RIGHT
++6   press UP
++6   press UP
++6   press DOWN
++30  press RIGHT
+endrepeat
++0   expect _G+79 02
++0   expect _screen 02
++0   shot shots/moscow_03_end.png 3
++0   peek _bot_lines_max 4
++0   peek _bot_lines_sum 4
++0   peek _bot_moves 2
++0   peek _moscow_playouts_sum 4
++0   peek _moscow_plies_sum 4
++0   peek _moscow_nodes_sum 4
++0   peek _moscow_thinks 2
++0   peek _moscow_solves 2

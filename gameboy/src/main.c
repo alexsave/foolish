@@ -87,6 +87,8 @@ uint32_t seoul_playouts_sum, seoul_plies_sum;
 // and solved (gd_moscow_solve not NONE)
 uint32_t moscow_playouts_sum, moscow_plies_sum, moscow_nodes_sum;
 uint16_t moscow_thinks, moscow_solves;
+// 1 while a bot thinks with the screen still (gbrun waits on it for a shot)
+uint8_t bot_thinking;
 
 // Scanlines since an arbitrary start, for timing: sys_time counts VBlanks,
 // which begin at line 144, so the line is counted from there too. 32 bits:
@@ -381,7 +383,9 @@ static void bot_turn(void) {
         gfx_rail(17, "SEOUL THINKS", "");
         gfx_flush();
         t0 = line_clock();
+        bot_thinking = 1;
         gd_seoul_choose(&G, BOT, &m);
+        bot_thinking = 0;
         seoul_playouts_sum += gd_seoul_playouts;
         seoul_plies_sum += gd_seoul_plies;
         if (m.type == 0xFF) { dirty = 1; return; }
@@ -391,7 +395,9 @@ static void bot_turn(void) {
         gfx_rail(17, "MOSCOW THINKS", "");
         gfx_flush();
         t0 = line_clock();
+        bot_thinking = 1;
         gd_moscow_choose(&G, BOT, &m);
+        bot_thinking = 0;
         moscow_playouts_sum += gd_moscow_playouts;
         moscow_plies_sum += gd_moscow_plies;
         moscow_nodes_sum += gd_moscow_nodes;

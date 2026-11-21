@@ -90,6 +90,7 @@ static void draw_up_to_six(gd_game *g, uint8_t seat) {
         if (!draw_card(g, &c)) break;
         GD_SET(g->hand[seat], c);
         for (i = 0; i < 5; i++) g->nocover[seat].b[i] = 0;    // unknown new cards: the belief expires
+        g->nvoid[seat] = 0;
     }
     if (gd_hand_n(g, seat) == 0 && !(g->out & BIT(seat))) g->out |= BIT(seat);
 }
@@ -146,6 +147,7 @@ void gd_deal(gd_game *g, gd_rep *r, const uint8_t deck[GD_NCARDS], uint8_t fallb
         g->gone.b[i] = 0; g->known[0].b[i] = 0; g->known[1].b[i] = 0;
         g->nocover[0].b[i] = 0; g->nocover[1].b[i] = 0;
     }
+    g->nvoid[0] = g->nvoid[1] = 0;
     g->status = GD_PLAYING;
     // The lowest trump leads (foolish derive_lowest_power_index).
     for (s = 0; s < 2; s++)
@@ -334,13 +336,11 @@ static void end_bout_discard(gd_game *g) {
     refill(g);
 }
 
-// A seat played card c: out of its hand and its known cards, and if it was a
-// card the seat was believed not to hold, that belief was wrong and goes.
+// A seat played card c: out of its hand and its known cards. (A card its void
+// forbade does not drop the void: foolish only flags the seat, for octogen.)
 static void played(gd_game *g, uint8_t seat, uint8_t c) {
-    uint8_t i;
     GD_CLR(g->hand[seat], c);
     GD_CLR(g->known[seat], c);
-    if (GD_HAS(g->nocover[seat], c)) for (i = 0; i < 5; i++) g->nocover[seat].b[i] = 0;
 }
 
 uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
@@ -398,12 +398,14 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
         // One uncovered attack picked up: the defender is believed to hold
         // nothing that beats it (foolish BotMemory's void, a belief: a player
         // may take what it could beat).
-        if (gd_uncovered(g) == 1)
+        if (gd_uncovered(g) == 1 && g->nvoid[g->defender] < GD_VOIDS) {
+            g->nvoid[g->defender]++;
             for (i = 0; i < g->nb; i++)
                 if (g->def[i] == GD_NONE) {
                     uint8_t c;
                     for (c = 0; c < GD_NCARDS; c++) if (can_cover(g->att[i], c, g->trump)) GD_SET(g->nocover[g->defender], c);
                 }
+        }
         for (i = 0; i < g->nb; i++) {
             GD_SET(g->hand[g->defender], g->att[i]);
             GD_SET(g->known[g->defender], g->att[i]);

@@ -17,6 +17,7 @@
 #include "game.h"
 #include "legal.h"
 #include "foolish_map.h"
+#include "bot_memory.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,24 @@ int cordite_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves,
 int octogen_strategy_choose(const Game *g, int bot_idx, const LegalMoves *moves, void *ctx);
 
 static LegalMoves *lm;
+static unsigned long void_checks, void_seen;
+
+// The rules state's void belief (nocover) against foolish's BotMemory, read
+// from the same game's log: the cards that beat any remembered void.
+static int same_voids(const gd_game *g, const Game *f) {
+    const BotMemory *mem = bot_mem_of(f);
+    for (int p = 0; p < 2; p++) {
+        gd_mask want;
+        memset(&want, 0, sizeof want);
+        for (int k = 0; k < mem->void_n[p]; k++)
+            for (uint8_t c = 0; c < 36; c++)
+                if (gd_can_cover(gd_of(mem->voids[p][k]), c, g->trump)) GD_SET(want, c);
+        if (memcmp(&want, &g->nocover[p], sizeof want) || g->nvoid[p] != mem->void_n[p]) return 0;
+        if (mem->void_n[p]) void_seen++;
+    }
+    void_checks++;
+    return 1;
+}
 
 static void to_gd(const LegalMove *f, gd_move *m) {
     m->type = (uint8_t)f->type;
@@ -85,6 +104,7 @@ int main(int argc, char **argv) {
                 if (!f_apply(f, seat, &m)) { fprintf(stderr, "foolish refused a move (game %lu)\n", gi); return 1; }
                 game_settle_status(f);
                 if (!gd_apply(&g, &r, seat, &m)) { fprintf(stderr, "gd refused a move (game %lu)\n", gi); return 1; }
+                if (!same_voids(&g, f)) { fprintf(stderr, "MISMATCH game %lu: the void belief differs from foolish's BotMemory\n", gi); return 1; }
                 acted = 1;
             }
             if (!acted) break;
@@ -100,5 +120,6 @@ int main(int argc, char **argv) {
     }
     printf("%s vs %s, %lu games: %s wins %lu (%.1f%%), %s wins %lu (%.1f%%), draws %lu, unfinished %lu\n",
            ours, octo ? "octogen" : "cordite", games, ours, wm, 100.0 * wm / games, octo ? "octogen" : "cordite", wc, 100.0 * wc / games, draws, cut);
+    printf("  the void belief matched foolish's BotMemory after all %lu moves (%lu seat-moves with a void)\n", void_checks, void_seen);
     return 0;
 }

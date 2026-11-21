@@ -32,7 +32,15 @@ while IFS='~' read -r file from to what; do
     fi
     # the solver's mutants are proven by the solver test, the rest of the sim's
     # by the sim test, the rest by the difftest
-    if [ "${what#solve:}" != "$what" ]; then
+    if [ "${what#void:}" != "$what" ]; then
+        # the void belief, against foolish's BotMemory in games with cordite
+        $CC -std=c11 -O2 -w -D_Thread_local= -Ibuild -I$FOOLISH -o "$d/vscordite" tests/vscordite.c $core "$d/src/gd_bot_seoul.c" "$d/src/gd_bot_moscow.c" \
+            $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c $FOOLISH/cordite_strategy.c $FOOLISH/cordite_sim.c \
+            $FOOLISH/bot_common.c $FOOLISH/bot_memory.c $FOOLISH/bot_knobs.c $FOOLISH/random_strategy.c $FOOLISH/espresso_strategy.c \
+            $FOOLISH/handwritten_strategy.c $FOOLISH/octogen_strategy.c $FOOLISH/view.c 2>>"$d/cc.log" \
+            || { echo "mutant $i: VSCORDITE DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue; }
+        out=$("$d/vscordite" cordite 100 9001 2>&1)
+    elif [ "${what#solve:}" != "$what" ]; then
         $CC -std=c11 -O2 -w -DMAX_LOGS=64 -Ibuild -I$FOOLISH -o "$d/solvetest" tests/solvetest.c $core \
             $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c \
             build/cordite_sim.o 2>>"$d/cc.log" || { echo "mutant $i: SOLVETEST DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue; }
