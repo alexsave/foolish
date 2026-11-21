@@ -26,10 +26,13 @@ ART      = art/gbdk
 # interrupt-safe routines and gfx.c's bank loader) is placed first, in bank 0,
 # because the loader maps bank 2 over 0x4000-0x7FFF while it runs; the check
 # script fails the build if _HOME ever lands past 0x3FFF.
-ART_TABLE = $(ART)/cards.c $(ART)/ui.c $(ART)/sprites.c
-ART_FULL  = $(ART)/dashboard.c $(ART)/dashboard_new.c $(ART)/win.c $(ART)/lose.c
-ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC) $(ART_TABLE))) \
-            $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ART_FULL)))
+# Bank 2: the table's banks, the fonts and small sprites, the dashboards and
+# the lose picture; bank 3: the four win pictures. gfx.c reads each file's bank
+# with BANK(), so this list is the one place that decides it.
+ART_BANK2 = cards ui sprites lacquer paper plane fireworks dashboard dashboard_new lose
+ART_BANK3 = win_miami win_new_york win_seoul win_warsaw
+ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC))) \
+            $(patsubst %,$(B)/rom/%.o,$(ART_BANK2) $(ART_BANK3))
 
 HOSTFLAGS = -std=c11 -O2 -g -Wall -Wextra -Wno-unused-parameter
 # foolish's production caps (its README): a menu as wide as the shipped one.
@@ -54,7 +57,7 @@ $(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h | $(B)/rom
 	$(LCC) $(LCCFLAGS) -I$(B) -I$(ART) -c -o $@ $<
 
 $(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
-	$(LCC) $(LCCFLAGS) -Wf-bo2 -c -o $@ $<
+	$(LCC) $(LCCFLAGS) -Wf-bo$(if $(filter $*,$(ART_BANK3)),3,2) -c -o $@ $<
 
 $(B)/durak.gb: $(ROM_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo4 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \

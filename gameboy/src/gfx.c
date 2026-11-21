@@ -9,17 +9,18 @@
 #include "sprites.h"
 #include "dashboard.h"
 #include "dashboard_new.h"
-#include "win.h"
+#include "win_miami.h"
+#include "win_new_york.h"
+#include "win_seoul.h"
+#include "win_warsaw.h"
 #include "lose.h"
+#include "lacquer.h"
+#include "paper.h"
+#include "plane.h"
+#include "fireworks.h"
 
-// All the art lives in ROM bank 2 (Makefile ART_BANK): the table's tile
-// banks and the full-screen pictures. The loaders that switch to it run from
-// bank 0.
-#define ART_BANK 2
-// While a full screen is up its tileset takes the low tiles, so the rail font
-// moves here (art README "Dashboard").
-#define FULL_UI_BASE 160u
-#define FULL_POINTER 230u
+// All the art lives in switchable ROM banks (the Makefile places each file;
+// BANK() reads where it went). The loaders that switch run from bank 0.
 
 static uint8_t map[SCR_H * SCR_W];
 // What VRAM holds, so a flush writes only the rows that changed: writing all
@@ -27,21 +28,26 @@ static uint8_t map[SCR_H * SCR_W];
 // long drops short button presses.
 static uint8_t shown[SCR_H * SCR_W];
 static uint8_t shown_valid;
+// The tile of character code c is font_base + char_off[c] (see char_tile).
 static uint8_t font_base = ART_UI_BASE;
 
 #define VRAM_TILE(i) ((uint8_t *)(0x8000u + 16u * (uint16_t)(i)))
-static void from_art_bank(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED;
+static void from_bank(uint8_t bank, uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED;
 static void build_char_table(void);
 static void build_corner_table(void);
 
 // ---- loading --------------------------------------------------------------------------
 void gfx_load_table(void) {
     DISPLAY_OFF;    // VRAM is free to write while the LCD is off
-    from_art_bank(VRAM_TILE(ART_CARDS_BASE), cards_tiles, 16u * ART_CARDS_COUNT);
-    from_art_bank(VRAM_TILE(ART_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
-    from_art_bank(VRAM_TILE(ART_SPRITES_BASE), sprites_tiles, 16u * ART_SPRITES_COUNT);
+    from_bank(BANK(cards), VRAM_TILE(ART_CARDS_BASE), cards_tiles, 16u * ART_CARDS_COUNT);
+    from_bank(BANK(ui), VRAM_TILE(ART_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
+    from_bank(BANK(sprites), VRAM_TILE(ART_SPRITES_BASE), sprites_tiles, 16u * ART_SPRITES_COUNT);
     font_base = ART_UI_BASE;
+    // Never show new tiles under the old screen's map, even for a frame: the
+    // map goes out (plain wool) before the display comes back.
+    memset(map, T_WOOL, sizeof map);
     shown_valid = 0;
+    gfx_flush();
     DISPLAY_ON;
 }
 
@@ -61,50 +67,62 @@ void gfx_init(void) {
     DISPLAY_ON;
 }
 
-// From bank 0, with the display off: switch the picture's bank in, copy its
-// tiles to VRAM and its map to RAM with plain loops, switch back. Interrupts
-// are off and no library routine is called while bank 2 is mapped, because
-// the library and the game code live in 0x4000-0x7FFF, which bank 2 replaces;
-// only this function (in _HOME, which the Makefile places in bank 0) runs.
+// From bank 0, with the display off when the copy goes to VRAM: switch the
+// art's bank in, copy with a plain loop, switch back. Interrupts are off and no
+// library routine is called while the art bank is mapped, because the library
+// and the game code live in 0x4000-0x7FFF, which the art bank replaces; only
+// these functions (in _HOME, which the Makefile places in bank 0) run.
 static void copy_banked(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
     while (n--) *dst++ = *src++;
 }
 
-// Copy n bytes out of the art bank. Display off when dst is VRAM.
-static void from_art_bank(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
+static void from_bank(uint8_t bank, uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
     const uint8_t save = _current_bank;
     __asm__("di");
-    SWITCH_ROM(ART_BANK);
+    SWITCH_ROM(bank);
     copy_banked(dst, src, n);
     SWITCH_ROM(save);
     __asm__("ei");
 }
 
-static void load_full_banked(uint8_t which) NONBANKED {
-    const uint8_t save = _current_bank;
-    const uint8_t *tiles, *m;
-    uint16_t count;
-    __asm__("di");
-    SWITCH_ROM(ART_BANK);
-    switch (which) {
-    case FULL_DASHBOARD:     tiles = dashboard_tiles; count = dashboard_TILE_COUNT; m = dashboard_map; break;
-    case FULL_DASHBOARD_NEW: tiles = dashboard_new_tiles; count = dashboard_new_TILE_COUNT; m = dashboard_new_map; break;
-    case FULL_WIN:           tiles = win_tiles; count = win_TILE_COUNT; m = win_map; break;
-    default:                 tiles = lose_tiles; count = lose_TILE_COUNT; m = lose_map; break;
-    }
-    copy_banked((uint8_t *)0x8000, tiles, (uint16_t)(count * 16u));
-    copy_banked(map, m, sizeof map);
-    SWITCH_ROM(save);
-    __asm__("ei");
+// A full-screen picture: its tileset from tile 0, its map into RAM.
+static void load_picture(uint8_t bank, const uint8_t *tiles, uint8_t count, const uint8_t *m) {
+    from_bank(bank, VRAM_TILE(0), tiles, (uint16_t)(count * 16u));
+    from_bank(bank, map, m, sizeof map);
 }
 
 void gfx_load_full(uint8_t which) {
     DISPLAY_OFF;    // VRAM is free to write while the LCD is off
-    load_full_banked(which);
-    from_art_bank(VRAM_TILE(FULL_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
-    from_art_bank(VRAM_TILE(FULL_POINTER), sprites_tiles + 16u * (T_SP_POINTER - ART_SPRITES_BASE), 16u);
-    font_base = FULL_UI_BASE;
+    switch (which) {
+    case FULL_DASHBOARD:
+    case FULL_DASHBOARD_NEW:
+        if (which == FULL_DASHBOARD) load_picture(BANK(dashboard), dashboard_tiles, dashboard_TILE_COUNT, dashboard_map);
+        else load_picture(BANK(dashboard_new), dashboard_new_tiles, dashboard_new_TILE_COUNT, dashboard_new_map);
+        // the paper font (the city on the boarding pass), the pointer, the plane
+        from_bank(BANK(paper), VRAM_TILE(ART_PAPER_BASE), paper_tiles, 16u * ART_PAPER_COUNT);
+        from_bank(BANK(sprites), VRAM_TILE(ART_DASH_POINTER_TILE), sprites_tiles + 16u * (T_SP_POINTER - ART_SPRITES_BASE), 16u);
+        from_bank(BANK(plane), VRAM_TILE(ART_DASH_PLANE_TILE), plane_tiles, 16u);
+        font_base = (uint8_t)(ART_PAPER_BASE - ART_FONT_FIRST);
+        break;
+    case FULL_LOSE:
+        load_picture(BANK(lose), lose_tiles, lose_TILE_COUNT, lose_map);
+        break;
+    default: {
+        // a win: the city's picture, the lacquer font (the bot's name), the fireworks
+        const uint8_t city = (uint8_t)(which - FULL_WIN);
+        if (city == 0) load_picture(BANK(win_miami), win_miami_tiles, win_miami_TILE_COUNT, win_miami_map);
+        else if (city == 1) load_picture(BANK(win_new_york), win_new_york_tiles, win_new_york_TILE_COUNT, win_new_york_map);
+        else if (city == 2) load_picture(BANK(win_seoul), win_seoul_tiles, win_seoul_TILE_COUNT, win_seoul_map);
+        else load_picture(BANK(win_warsaw), win_warsaw_tiles, win_warsaw_TILE_COUNT, win_warsaw_map);
+        from_bank(BANK(lacquer), VRAM_TILE(ART_LACQUER_BASE), lacquer_tiles, 16u * ART_LACQUER_COUNT);
+        from_bank(BANK(fireworks), VRAM_TILE(ART_FW_BASE), fireworks_tiles, 16u * fireworks_TILE_COUNT);
+        font_base = (uint8_t)(ART_LACQUER_BASE - ART_FONT_FIRST);
+        break;
+    }
+    }
+    // the picture's map goes out before the display comes back (see gfx_load_table)
     shown_valid = 0;
+    gfx_flush();
     DISPLAY_ON;
 }
 
@@ -179,7 +197,8 @@ static void build_corner_table(void) {
     uint8_t t[16];
     uint8_t i;
     for (i = 0; i < CORNER_TILES; i++) {
-        from_art_bank(t, i < ART_CARDS_COUNT ? cards_tiles + 16u * i : ui_tiles + 16u * (i - ART_UI_BASE), 16);
+        if (i < ART_CARDS_COUNT) from_bank(BANK(cards), t, cards_tiles + 16u * i, 16);
+        else from_bank(BANK(ui), t, ui_tiles + 16u * (i - ART_UI_BASE), 16);
         corner[i] = (uint8_t)(px_colour(t, 0) | (px_colour(t, 7) << 2));
     }
 }
@@ -225,8 +244,10 @@ void gfx_card(uint8_t x, uint8_t y, uint8_t card) {
 
 void gfx_back(uint8_t x, uint8_t y) {
     const uint8_t tl = left_pixel(at(x, y), 0), bl = left_pixel(at(x, (uint8_t)(y + 2u)), 7);
-    put6(x, y, tl ? T_BACK_TL_U3 : T_BACK_TL_U0, T_BACK_TR, T_BACK_ML, T_BACK_MR,
-         bl ? T_BACK_BL_U3 : T_BACK_BL_U0, T_BACK_BR);
+    // under a corner: the table (_u0), a black border (_u3, the deck over the
+    // trump) or another back's dark grey ring (_u2, the bot's hand)
+    put6(x, y, tl == 3 ? T_BACK_TL_U3 : tl == 2 ? T_BACK_TL_U2 : T_BACK_TL_U0, T_BACK_TR, T_BACK_ML, T_BACK_MR,
+         bl == 3 ? T_BACK_BL_U3 : bl == 2 ? T_BACK_BL_U2 : T_BACK_BL_U0, T_BACK_BR);
 }
 
 void gfx_pass_slot(uint8_t x, uint8_t y) {

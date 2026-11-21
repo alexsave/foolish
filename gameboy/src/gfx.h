@@ -23,12 +23,12 @@
 // The full-screen pictures.
 #define FULL_DASHBOARD     0
 #define FULL_DASHBOARD_NEW 1
-#define FULL_WIN           2
-#define FULL_LOSE          3
+#define FULL_LOSE          2
+#define FULL_WIN           3    // + the bot's city, 0..3
 
 void gfx_init(void);
 void gfx_load_table(void);                       // the three banks (after a full screen)
-void gfx_load_full(uint8_t which);               // a picture, into the map; the rail font at 160
+void gfx_load_full(uint8_t which);               // a picture into the map, and the font it prints with
 void gfx_clear_table(void);                      // wool, rails empty
 void gfx_tile(uint8_t x, uint8_t y, uint8_t tile);
 void gfx_text(uint8_t x, uint8_t y, const char *s);

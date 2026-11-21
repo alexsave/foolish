@@ -616,45 +616,82 @@ static void draw_table_sprites(void) {
     gfx_spr_end();
 }
 
-// ---- the dashboard, and the end of a game ---------------------------------------------
+// ---- the dashboard (the traveller), and the end of a game ---------------------------------
+// gameboy/art/README.md "Dashboard": the pointer on the selected row (the
+// boarding pass first when a game is open), and the plane over the selected
+// city on the flight route, gliding when the pointer moves.
 #define DASH_CONTINUE 0
-#define DASH_ROW_CONTINUE 11
+#define DASH_ROW_CONTINUE 10
 #define DASH_ROW_BOT0 13
-#define DASH_LACQUER 74       // the plain black tile of the dashboard picture
-#define WIN_BLACK 2           // and of the win picture
+#define PLANE_STEP 2            // pixels a frame the plane glides
+static const uint8_t city_x[4] = { 14, 44, 75, 112 };    // art travel.py CITY_X
+static uint8_t plane_x;
 
 static uint8_t can_continue(void) { return live && G.status == GD_PLAYING; }
 
-// `full`: load the picture (entering the screen); otherwise only the pointer moves.
-static void draw_dash(uint8_t full) {
-    uint8_t row;
-    if (full) {
-        gfx_load_full(can_continue() ? FULL_DASHBOARD : FULL_DASHBOARD_NEW);
-        if (can_continue()) {
-            // the open game's city, printed over the picture's sample name
-            for (row = 11; row < SCR_W; row++) gfx_tile(row, DASH_ROW_CONTINUE, DASH_LACQUER);
-            gfx_text(11, DASH_ROW_CONTINUE, bot_names[bot_city]);
-        }
-        gfx_flush();
-    }
-    row = dash_item == DASH_CONTINUE ? DASH_ROW_CONTINUE : (uint8_t)(DASH_ROW_BOT0 + dash_item - 1u);
+static void dash_sprites(void) {
+    const uint8_t row = dash_item == DASH_CONTINUE ? DASH_ROW_CONTINUE : (uint8_t)(DASH_ROW_BOT0 + dash_item - 1u);
+    const uint8_t city = dash_item == DASH_CONTINUE ? bot_city : (uint8_t)(dash_item - 1u);
+    const uint8_t want = city_x[city];
+    if (plane_x < want) plane_x = (uint8_t)(want - plane_x < PLANE_STEP ? want : plane_x + PLANE_STEP);
+    else if (plane_x > want) plane_x = (uint8_t)(plane_x - want < PLANE_STEP ? want : plane_x - PLANE_STEP);
     gfx_spr_begin();
-    gfx_spr(6, row * 8, 230, 0);
+    gfx_spr(0, row * 8, ART_DASH_POINTER_TILE, 0);
+    gfx_spr((int16_t)plane_x - 4, ART_DASH_ROUTE_Y - 4, ART_DASH_PLANE_TILE, 0);
     gfx_spr_end();
 }
 
+// `full`: load the picture (entering the screen); otherwise only the sprites move.
+static void draw_dash(uint8_t full) {
+    if (full) {
+        gfx_load_full(can_continue() ? FULL_DASHBOARD : FULL_DASHBOARD_NEW);
+        // the open game's city on the boarding pass, in the paper font
+        if (can_continue()) gfx_text(ART_DASH_CITY_COL, ART_DASH_CITY_ROW, bot_names[bot_city]);
+        gfx_flush();
+        if (!plane_x) plane_x = city_x[bot_city];
+    }
+    dash_sprites();
+}
+
+// The win screen's fireworks (art wins.py BURSTS and SCHEDULE): three bursts,
+// each a phase behind the last, in a 4-frame loop of FW_FRAME vsyncs a frame.
+#define FW_FRAME 8
+static const uint8_t fw_x[3] = { 24, 104, 140 }, fw_y[3] = { 40, 32, 56 };
+// per loop frame, per burst: 0xFF none, 0xFE a rising shell, else the phase
+static const uint8_t fw_sched[4][3] = {
+    { 0, 0xFE, 0xFF }, { 1, 0, 0xFE }, { 2, 1, 0 }, { 0xFF, 2, 1 },
+};
+static uint8_t fw_t;
+
+static void fireworks(void) {
+    uint8_t k;
+    const uint8_t f = (uint8_t)((fw_t / FW_FRAME) & 3u);
+    gfx_spr_begin();
+    for (k = 0; k < 3; k++) {
+        const uint8_t ph = fw_sched[f][k];
+        const int16_t x = fw_x[k], y = fw_y[k];
+        if (ph == 0xFF) continue;
+        if (ph == 0xFE) { gfx_spr(x - 4, y + 10, T_FW_SHELL, 0); continue; }
+        gfx_spr(x - 8, y - 8, (uint8_t)(T_FW_SPARK + ph), 0);
+        gfx_spr(x, y - 8, (uint8_t)(T_FW_SPARK + ph), S_FLIPX);
+        gfx_spr(x - 8, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPY);
+        gfx_spr(x, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPX | S_FLIPY);
+    }
+    gfx_spr_end();
+}
+
+static uint8_t won(void) { return gd_result(&G) == GD_RESULT_FOOL1; }
+
 static void draw_end(void) {
-    uint8_t x;
-    const uint8_t won = gd_result(&G) == GD_RESULT_FOOL1;
-    gfx_load_full(won ? FULL_WIN : FULL_LOSE);
-    if (won) {
-        // "<CITY> / IS THE DURAK", printed over the picture's sample name (rows 4-6),
-        // in the rail font until the art's white-on-black font lands
-        for (x = 0; x < SCR_W; x++) { gfx_tile(x, 4, WIN_BLACK); gfx_tile(x, 5, WIN_BLACK); gfx_tile(x, 6, WIN_BLACK); }
-        gfx_text((uint8_t)((SCR_W - gfx_text_len(bot_names[bot_city])) / 2u), 5, bot_names[bot_city]);
-        gfx_text(4, 6, "IS THE DURAK");
+    if (won()) {
+        gfx_load_full((uint8_t)(FULL_WIN + bot_city));
+        // the bot's name, centred, in the lacquer font
+        gfx_text((uint8_t)((SCR_W - gfx_text_len(bot_names[bot_city])) / 2u), ART_WIN_NAME_ROW, bot_names[bot_city]);
+    } else {
+        gfx_load_full(FULL_LOSE);
     }
     gfx_flush();
+    fw_t = 0;
     gfx_spr_begin();
     gfx_spr_end();
 }
@@ -696,8 +733,10 @@ void main(void) {
         in_update();
         if (screen == SCREEN_DASH) {
             dash_input();
+            if (shown == SCREEN_DASH && !dirty) dash_sprites();
         } else if (screen == SCREEN_END) {
             end_input();
+            if (shown == SCREEN_END && won()) { fw_t++; if (fw_t % FW_FRAME == 0) fireworks(); }
         } else {
             if (idle < 255) idle++;
             if (flash_t) { flash_t--; if (!flash_t) dirty = 1; }
