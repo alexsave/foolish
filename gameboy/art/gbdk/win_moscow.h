@@ -13,13 +13,13 @@
 #define win_moscow_TILE_H 8
 #define win_moscow_WIDTH 160
 #define win_moscow_HEIGHT 144
-#define win_moscow_TILE_COUNT 162
+#define win_moscow_TILE_COUNT 164
 #define win_moscow_MAP_ATTRIBUTES 0
 extern const unsigned char win_moscow_map[360];
 #define win_moscow_map_attributes win_moscow_map
 
 BANKREF_EXTERN(win_moscow)
 
-extern const uint8_t win_moscow_tiles[2592];
+extern const uint8_t win_moscow_tiles[2624];
 
 #endif
