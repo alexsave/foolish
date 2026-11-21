@@ -8,6 +8,7 @@
 # light grey: the rail is background (or window), never a sprite, so light
 # grey is safe there.  No extra tiles: the club's pip tiles are per suit.
 # Run: python3 clubs/stems.py  -> mockups/23_club_stems.png
+#      python3 clubs/stems.py seams  -> mockups/24_club_seams.png (the seams family)
 import os, sys
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
 import glyphs as G
@@ -73,6 +74,82 @@ VARIANTS = {
 }
 
 
+# The seams family (Alex's pick was 3 SEAMS): variations on where the seams
+# sit, how long they run, whether they meet, and what they pair with.
+SEAMS = {
+"S1 NOTCHES": (        # short seams at the upper joins only; the lower notches stay white
+    [".XXX.",
+     ".XXX.",
+     "XoXoX",
+     "XXXXX",
+     "..X..",
+     "XXXXX"],
+    ["..XXX..",
+     "..XXX..",
+     "XXoXoXX",
+     "XXXXXXX",
+     "XX.X.XX",
+     "..XXX..",
+     "XXXXXXX"]),
+"S2 TO CENTRE": (      # the four seams run in and meet at the centre
+    [".XXX.",
+     ".XXX.",
+     "XoXoX",
+     "XXoXX",
+     "..X..",
+     "XXXXX"],
+    ["..XXX..",
+     "..XXX..",
+     "XXoXoXX",
+     "XXXoXXX",
+     "XXoXoXX",
+     "..XXX..",
+     "XXXXXXX"]),
+"S3 STOP SHORT": (     # longer seams parting the top lobe, stopping short of the centre
+    [".XXX.",
+     ".XXX.",
+     "XoXoX",
+     "XoXoX",
+     "..X..",
+     "XXXXX"],
+    ["..XXX..",
+     "..XXX..",
+     "XXoXoXX",
+     "XXoXoXX",
+     "XXXXXXX",
+     "..XXX..",
+     "XXXXXXX"]),
+"S4 SEAMS+CORES": (    # the seams, and a dark core in each lobe
+    [".XXX.",
+     ".XoX.",
+     "XoXoX",
+     "XXXXX",
+     "..X..",
+     "XXXXX"],
+    ["..XXX..",
+     "..XoX..",
+     "XXoXoXX",
+     "XoXXXoX",
+     "XXoXoXX",
+     "..XXX..",
+     "XXXXXXX"]),
+"S5 SEAMS+GLINT": (    # the seams, and a white glint inside each lobe
+    [".XXX.",
+     ".XwX.",
+     "XoXoX",
+     "XXXXX",
+     "..X..",
+     "XXXXX"],
+    ["..XXX..",
+     "..XwX..",
+     "XXoXoXX",
+     "XwXXXwX",
+     "XXoXoXX",
+     "..XXX..",
+     "XXXXXXX"]),
+}
+
+
 def face(rank, small, big):
     keep = (G.SMALL["C"], G.PIP["C"])
     G.SMALL["C"], G.PIP["C"] = small, big
@@ -86,8 +163,12 @@ def rail_icon(small):
     return A.rail_glyph_tile(small, fg=A.W, x=1, y=1)
 
 
-def sheet():
-    rows = [("NOW", G.SMALL["C"], G.PIP["C"])] + [(n, s, b) for n, (s, b) in VARIANTS.items()]
+def sheet(family="stems"):
+    if family == "seams":
+        rows = [("NOW", G.SMALL["C"], G.PIP["C"]), ("3 SEAMS",) + VARIANTS["3 SEAMS"]] + \
+               [(n, s, b) for n, (s, b) in SEAMS.items()]
+    else:
+        rows = [("NOW", G.SMALL["C"], G.PIP["C"])] + [(n, s, b) for n, (s, b) in VARIANTS.items()]
     ui = A.ui_bank()
     W = 4 + 4 * 20 + 8 * 8 + 16 + 64 + 8
     cv = A.Canvas(W, 8 + len(rows) * 40, A.T)
@@ -117,12 +198,14 @@ def sheet():
 
 if __name__ == "__main__":
     from PIL import Image
-    cv = sheet()
+    family = sys.argv[1] if len(sys.argv) > 1 else "stems"
+    cv = sheet(family)
     big = cv.image(4)
     one = cv.image(1)
     out = Image.new("RGB", (big.width + 24 + one.width, big.height), (40, 40, 40))
     out.paste(big, (0, 0))
     out.paste(one, (big.width + 12, 12))
-    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mockups", "23_club_stems.png")
+    name = "24_club_seams.png" if family == "seams" else "23_club_stems.png"
+    p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mockups", name)
     out.save(p)
     print(os.path.normpath(p))
