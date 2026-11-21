@@ -815,16 +815,17 @@ static void draw_dash(uint8_t full) {
 
 // The win screen's fireworks (art wins.py BURSTS and SCHEDULE): per city two
 // or three bursts at points clear of its buildings, each a phase behind the
-// last, in a 4-frame loop of FW_FRAME vsyncs a frame.
+// last, in a 4-frame loop of FW_FRAME vsyncs a frame. The burst centres are
+// the art's export (art_tiles.h ART_WIN_BURSTS_<CITY>, screen pixels), never
+// copied by hand: a hand copy had drifted from the art (README "Fireworks").
 #define FW_FRAME 8
-static const uint8_t fw_n[4] = { 2, 3, 3, 3 };
-static const uint8_t fw_x[4][3] = { { 24, 136, 0 }, { 22, 88, 136 }, { 20, 80, 142 }, { 12, 92, 140 } };
-static const uint8_t fw_y[4][3] = { { 32, 34, 0 }, { 32, 34, 36 }, { 36, 36, 36 }, { 36, 36, 32 } };
+static const uint8_t fw_n[4] = { ART_WIN_BURSTS_MIAMI_N, ART_WIN_BURSTS_NEW_YORK_N, ART_WIN_BURSTS_SEOUL_N, ART_WIN_BURSTS_MOSCOW_N };
+static const uint8_t fw_c[4][6] = { ART_WIN_BURSTS_MIAMI, ART_WIN_BURSTS_NEW_YORK, ART_WIN_BURSTS_SEOUL, ART_WIN_BURSTS_MOSCOW };
 // per loop frame, per burst: 0xFF none, 0xFE a rising shell, else the phase
 static const uint8_t fw_sched[4][3] = {
     { 0, 0xFE, 0xFF }, { 1, 0, 0xFE }, { 2, 1, 0 }, { 0xFF, 2, 1 },
 };
-static uint8_t fw_t;
+uint8_t fw_t;                 // not static: gbrun's win_fireworks.txt pokes the loop frame
 
 static void fireworks(void) {
     uint8_t k;
@@ -832,7 +833,7 @@ static void fireworks(void) {
     gfx_spr_begin();
     for (k = 0; k < fw_n[bot_city]; k++) {
         const uint8_t ph = fw_sched[f][k];
-        const int16_t x = fw_x[bot_city][k], y = fw_y[bot_city][k];
+        const int16_t x = fw_c[bot_city][2u * k], y = fw_c[bot_city][2u * k + 1u];
         if (ph == 0xFF) continue;
         if (ph == 0xFE) { gfx_spr(x - 4, y + 10, T_FW_SHELL, 0); continue; }
         gfx_spr(x - 8, y - 8, (uint8_t)(T_FW_SPARK + ph), 0);
