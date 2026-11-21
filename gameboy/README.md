@@ -185,6 +185,8 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `game_win.txt` | a whole game won by an input loop, the Miami win picture with fireworks, a rematch | `80`, `81` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
+SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
+
 `make rom-mutants` breaks one control at a time in a copy of the ROM (`tests/rom_mutants.txt`) and requires some script to fail, after an unmutated control run passes.
 
 ## Quirks hit
