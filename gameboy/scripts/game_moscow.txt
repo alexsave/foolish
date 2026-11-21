@@ -24,6 +24,10 @@ endrepeat
 +0   expect _G+79 02
 +0   expect _screen 02
 +0   shot shots/moscow_03_end.png 3
+# the stack guard (src/gd_stack.c): after a whole game against Moscow at least 48
+# bytes of the gap between the data and the stack are still untouched
++4   peek _gd_stack_free 2
++0   atleast _gd_stack_free 2 48
 +0   peek _bot_lines_max 4
 +0   peek _bot_lines_sum 4
 +0   peek _bot_moves 2
