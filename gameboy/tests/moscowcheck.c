@@ -13,6 +13,7 @@
 #include <stdio.h>
 #else
 #include <gb/gb.h>
+#include "../src/gd_stack.h"
 #endif
 
 #define SC_SEED  0x4343u
@@ -75,7 +76,9 @@ int main(void) {
 void main(void) {
     *(volatile uint8_t *)0x0000u = 0x0Au;     // the cart's RAM, MBC1 4/32 mode
     *(volatile uint8_t *)0x6000u = 0x01u;
+    CRITICAL { gd_stack_paint(); }     // the guard (gd_stack.h): the script reads gd_stack_free after the run
     run();
+    gd_stack_scan();
     sc_done = 1;
     for (;;) vsync();
 }
