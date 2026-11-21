@@ -6,13 +6,12 @@ import sys
 
 FW, FH = 14, 22
 
-BERRY = [          # 6x6: white body, dark grey shaded underside, black calyx
-".wwww.",
-"wwwwww",
-"wwwwwo",
-"wwwwoo",
-"wwXooo",
-".oooo.",
+BERRY = [          # 5x5: white body, dark grey shaded underside, black calyx
+".www.",
+"wwwww",
+"wwwwo",
+"wwXoo",
+".ooo.",
 ]
 LEAF_DIAG = [      # 8x8, points up-left; the vein runs to the stalk at bottom-right
 "www.....",
@@ -83,23 +82,33 @@ def tendril(cx, cy, mirror=False):
     return [((cx - x) if mirror else (cx + x), cy + y) for (x, y) in pts]
 
 
+def curl(x, y, mx=False, my=False):
+    """A small Khokhloma spiral, 4x4, entered from its open corner."""
+    pts = [(0, 3), (0, 2), (0, 1), (1, 0), (2, 0), (3, 1), (3, 2), (2, 3), (1, 2)]
+    return [(x + (3 - px if mx else px), y + (3 - py if my else py)) for (px, py) in pts]
+
+
 def hanging():
     f = Field()
-    f.stem(tendril(6, 0) + line(7, 3, 7, 11) + line(7, 11, 4, 14) + line(7, 11, 10, 15))
-    f.stamp(0, 3, flip_y(flip_y(LEAF_DIAG)))         # left leaf, up-left
-    f.stamp(6, 3, flip_x(LEAF_DIAG))                 # right leaf, up-right
-    f.stamp(0, 14, BERRY, ring=True)
-    f.stamp(8, 15, BERRY, ring=True)
+    f.stem(tendril(6, 0) + line(7, 3, 7, 13) + line(7, 13, 4, 16) + line(7, 13, 9, 16))
+    f.stamp(0, 3, LEAF_DIAG)
+    f.stamp(6, 3, flip_x(LEAF_DIAG))
+    f.stem([(6, 12), (5, 12)] + curl(1, 11, mx=True))       # curl off the stem, left
+    f.stem([(8, 12), (9, 12)] + curl(10, 11))                # curl off the stem, right
+    f.stamp(1, 16, BERRY, ring=True)
+    f.stamp(8, 16, BERRY, ring=True)
     return f.rows()
 
 
 def diagonal():
     f = Field()
     f.stem(tendril(0, 0) + line(3, 3, 9, 14))
-    f.stamp(6, 1, flip_x(LEAF_DIAG))                 # up-right of the stem
-    f.stamp(0, 7, flip_y(LEAF_DIAG))                 # down-left of the stem
-    f.stamp(8, 13, BERRY, ring=True)
-    f.stamp(3, 15, BERRY, ring=True)
+    f.stamp(6, 1, flip_x(LEAF_DIAG))
+    f.stamp(0, 6, flip_y(LEAF_DIAG))
+    f.stem([(8, 11), (9, 11)] + curl(10, 10))                # curl off the stem, right
+    f.stem(line(6, 15, 3, 17) + curl(0, 17, mx=True))        # curl off the stalk, bottom left
+    f.stamp(8, 14, BERRY, ring=True)
+    f.stamp(5, 17, BERRY, ring=True)
     return f.rows()
 
 
@@ -107,10 +116,12 @@ def arching():
     f = Field()
     arc = [(1, 10), (2, 9), (2, 8), (3, 7), (4, 6), (5, 6), (6, 5), (7, 5), (8, 5), (9, 6), (10, 7), (10, 8), (10, 9), (10, 10), (10, 11), (9, 12)]
     f.stem(tendril(12, 1, mirror=True) + [(12, 4), (11, 5), (10, 6)] + arc)
-    f.stamp(0, 0, LEAF_DIAG)                         # up-left from the arch
-    f.stamp(0, 11, flip_y(LEAF_DIAG))                # down-left from the arch foot
-    f.stamp(7, 12, BERRY, ring=True)
-    f.stamp(6, 16, BERRY, ring=True)
+    f.stamp(0, 0, LEAF_DIAG)
+    f.stamp(0, 10, flip_y(LEAF_DIAG))
+    f.stem([(8, 6), (7, 7)] + curl(5, 8))                    # curl inside the arch
+    f.stem(line(10, 13, 11, 17) + curl(10, 18))              # curl past the berries
+    f.stamp(8, 13, BERRY, ring=True)
+    f.stamp(5, 17, BERRY, ring=True)
     return f.rows()
 
 
