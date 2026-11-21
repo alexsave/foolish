@@ -79,7 +79,7 @@ int main(void) {
 #else
 // The handler's stand-in: it counts its runs and works a buffer on its stack
 // (in cart RAM bank 3, while the solver may have any bank mapped).
-uint16_t sc_ticks;
+uint32_t sc_ticks;
 uint8_t sc_stack_sum;
 static void sc_live(void) {
     uint8_t buf[64], i, sum = 0;

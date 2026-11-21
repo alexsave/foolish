@@ -304,7 +304,9 @@ Now the input timer's interrupt (`src/input.c` `in_tick`, 60.2 a second, which a
 
 What makes it safe:
 - The search is stopped at any instruction, in any ROM bank and any cart RAM bank. `live_tick` saves the ROM bank (`_current_bank`), maps the handler's bank, maps cart RAM bank 3, moves the stack there (the free top of the bank, 0xB400 to 0xBFFF, above the solver's transposition table: `gd_solve.c` fails the build if the table ever grows into it), lets interrupts in again (the VBlank must still copy the sprites and count frames; a tick that comes meanwhile sees the handler busy and only latches the buttons), runs the handler, then puts the stack, the RAM bank and the ROM bank back.
-- Both banks are put back from what the search last asked for, not from a register (MBC1 registers read back nothing): GBDK's banked calls write `_current_bank` before the MBC register (read from GBDK 4.5's `___sdcc_bcall_ehl`), and the solver now writes a shadow, `gd_ram_bank`, before its register, so a tick that lands between the two still restores the bank meant.
+- Both banks are put back from what the search last asked for, not from a register (MBC1 registers read back nothing): GBDK's banked calls write `_current_bank` before the MBC register (read from GBDK 4.5's `___sdcc_bcall_ehl` in the built ROM, both ways: `ldh (cur),a; ld (0x2000),a` on the call and on the return), and the solver writes a shadow, `gd_ram_bank`, before its register, so a tick that lands between the two still restores the bank meant.
+  Every bank switch in the ROM, checked: GBDK's banked-call trampoline (shadow first), `SWITCH_ROM` (`_current_bank = b, rROMB0 = b`, used only by `gfx.c` `from_bank`, which also runs with interrupts off and never while a bot thinks), the solver's `RAM_BANK` (below), and `live_tick` itself (interrupts off). Nothing else writes 0x2000 or 0x4000.
+- The solver's switch is a call (`gd_solve.c` `ram_bank`, two adjacent instructions: the shadow, then the register), not a macro. As the macro `(gd_ram_bank = b, *(0x4000) = gd_ram_bank)` SDCC moved the shadow's store above the reads of the search frame that came before the switch (C lets non-volatile reads move across a volatile store), so a tick in that gap put the table's bank back while those frame reads were still to come from bank 0. `make livestress` found it (below): with the handler on every tick at the game's own 60 Hz, `solvecheck` gave a different sum, and at 256 Hz the ROM ran off the rails. A call is a fence SDCC does not move memory accesses across, either way, which also rules out table reads hoisted above a switch.
 - On the search's stack (work RAM, about 80 bytes to spare) the handler costs only `in_tick`'s call to `live_tick`, 2 bytes; everything else runs on the cart RAM stack.
 - `in_tick` calls `live_tick` only while a think runs, and then only when a key wants it (a press, a step, SELECT going down or up) or every third tick (the dots); outside a think it adds one flag test a tick, so play outside a think keeps its timing.
 - The search reads the rules state `G` (through a `const` pointer) and its own memory. The handler only reads `G` and changes what is the screen's: the hand's order (`mem`, `disp`), the cursor, the selection, the map and the sprites. No bot reads any of them, and the hand order is presentation (the rules keep hands as sets).
@@ -350,6 +352,21 @@ Mutation checked:
 - the ROM bank put back as the handler's instead of the search's: `moscowcheck` never finishes (the search runs on in the wrong bank).
 
 Not covered by a script: TARGET mode during a think (every key dropped) and START during a think (kept for after the move); both are one line each in `live_think`.
+
+The stress test, `make livestress` (`tests/livestress.sh`): `moscowcheck` and `solvecheck` built with `LIVE_STRESS`, which runs the handler's stand-in (a 64-byte buffer worked on its stack in cart RAM bank 3) on every tick of a timer at 1024 Hz, 17 times the game's rate, while Moscow and the solver switch ROM and RAM banks under it; both sums must stay clang's (solvecheck on its first game: under the stress it runs 11 times slower).
+- Measured on the Mac: 530883 handler runs through `moscowcheck` and 854680 through `solvecheck`'s 46 solves, both sums clang's.
+- Mutation checked: the shadow's store taken out of `ram_bank` fails it (`solvecheck` sums a5 e0 for 0c e6); the hoistable macro the PR first had fails it (24 15), and with an empty handler at 60 Hz on every tick, sums 37 c1; at 256 Hz the ROM crashed. `moscowcheck` alone (6 solves) does not see a solver race; `solvecheck` (46 solves) does.
+
+On the Mac, the same 25 decisions (`think_time.txt`): 4.81 s on average and 5.90 s at worst before the live screen, 5.00 s and 6.13 s after (+4%); with keys mid-think (`think_time_keys.txt`) 5.10 s and 6.24 s.
+
+### What the sound merge must respect
+
+Sound will also hook the input timer and share the bots' memory, so:
+- `in_tick` runs `live_tick` last, and during a think the handler runs inside the timer interrupt with interrupts on, on a stack at 0xB400 to 0xBFFF of cart RAM bank 3. Any code the sound adds to `in_tick` runs on that stack when it nests in a think (keep it small), and must not depend on interrupts being off in `in_tick`.
+- A ROM bank switch in sound code must write `_current_bank` before 0x2000 and put the bank back the same way (or run with interrupts off throughout): `live_tick` restores the ROM bank from `_current_bank`.
+- Sound must never switch the cart RAM bank (0x4000). If it ever has to, it goes through `gd_ram_bank` the way `ram_bank` does, and puts back `gd_ram_bank` after.
+- `gd_bot_cand`, `gd_bot_world` and `gd_bot_sim` (`gd_botlib.h`) are the search's own memory for the whole of a think: an overlay of them is safe only while no bot thinks (`bot_thinking` is 0, `live_on` is 0), never from the timer interrupt while a think runs.
+- Cart RAM bank 3 above 0xB400 is the handler's stack; banks 1 to 3 below it are the solver's table, and bank 0 its stack and hash table: no sound data in cart RAM.
 
 ## Rules: foolish's variant, two seats
 
