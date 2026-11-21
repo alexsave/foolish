@@ -416,7 +416,7 @@ static void bot_turn(void) {
         if (m.type == 0xFF) return;
     } else if (bot_city == BOT_SEOUL) {
         // Seoul: Monte Carlo over sampled worlds (gd_bot_seoul.c). It thinks for
-        // seconds, with the screen still, so the rail says so first.
+        // seconds; the rail says so, and the hand stays live (think_begin).
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
         think_begin();
         t0 = line_clock();
@@ -823,6 +823,8 @@ static void think_rail(void) {
 
 static void live_think(void) {
     char t[21];
+    uint16_t now;
+    CRITICAL { now = sys_time; }        // interrupts are on here: no VBlank between its two bytes
     in_update();
     in_give_back(J_START);
     if (!in_target) hand_input();       // TARGET mode waits for the move
@@ -837,7 +839,7 @@ static void live_think(void) {
     dirty_ui = 0;
     if (dirty) { dirty = 0; draw_table(); draw_table_sprites(); }
     // the dots: one tile changes a step, and only the foot row is sent
-    if ((int16_t)(sys_time - think_next) >= 0) {
+    if ((int16_t)(now - think_next) >= 0) {
         think_next += THINK_DOT_TICKS;
         if (++think_dots == THINK_STEPS) think_dots = 0;
         think_text(t);

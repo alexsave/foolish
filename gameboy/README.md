@@ -304,11 +304,11 @@ Think time, on the same decisions. `scripts/think_time.txt` plays Moscow with ev
 
 | 25 decisions, scanline clock | before | after, no key | after, keys mid-think |
 | --- | --- | --- | --- |
-| average a decision | 44275 lines (4.81 s) | 45600 (4.96 s), +3.0% | 46537 (5.06 s), +5.1% |
-| worst | 54294 lines (5.90 s) | 55933 (6.08 s), +3.0% | 56903 (6.19 s), +4.8% |
+| average a decision | 44275 lines (4.81 s) | 45622 (4.96 s), +3.0% | 46558 (5.06 s), +5.2% |
+| worst | 54294 lines (5.90 s) | 55950 (6.08 s), +3.0% | 56926 (6.19 s), +4.8% |
 
-- 3% with no key: right, but only for the second version. The first one cost 7.4%, past the falsifier, so it was taken apart by building variants and timing the same game: the bank and stack switch alone 0.7%, taking the keys 1.7%, and the dots 5.0% (they rebuilt the whole rail and compared the whole map every quarter second). Now `in_tick` runs the handler only when a key wants it or every third tick (0.5%), and the dots step on a `sys_time` deadline instead of a 16-bit division and send only the foot row (`gfx_flush_row`). A flush of only the changed span of the row measured the same, so it was not kept.
-- About 4% with keys: 5.1%, so about right; it depends on how many keys are pressed.
+- 3% with no key: right, but only for the second version. The first one cost 7.4%, past the falsifier, so it was taken apart by building variants and timing the same game: the bank and stack switch alone 0.7%, taking the keys 1.7%, and the dots 5.0% (they rebuilt the whole rail and compared the whole map every quarter second). Now `in_tick` runs the handler only when a key wants it or every third tick (0.5%), and the dots step on a `sys_time` deadline (read with interrupts off, as they are on in the handler) instead of a 16-bit division and send only the foot row (`gfx_flush_row`). A flush of only the changed span of the row measured the same, so it was not kept.
+- About 4% with keys: 5.2%, so about right; it depends on how many keys are pressed (here four a think, two of them board redraws).
 - `scripts/game_moscow.txt` presses UP and DOWN during thinks, which are now dropped instead of played after the move, so it is a different game than before: 34 decisions, 4.66 s on average, 7.40 s at worst (before: 26 decisions, 4.84 s and 6.00 s). Those are not comparable decision for decision; the table above is.
 - The handler's stack: 166 bytes at most (cart RAM bank 3 filled with a pattern through gbrun, which writes the MBC register like the CPU does, then a Moscow game of about 300 rounds of keys pressed through the thinks, including selections and moves of cards). Under 256: right.
 - Work RAM: 14 bytes, not 12. `live.c` 8, the RAM bank shadow 1, `in_tick`'s idle count 1, and 4 in `main.c` (the dots' step, SELECT as drawn, and a 16-bit deadline where I had planned an 8-bit counter). The search's stack: same game, 321 bytes before and 323 after (`think_time.txt`): the 2 bytes predicted. `moscowcheck`, which now ticks the handler all the while, still reaches 400 bytes, as before. (`game_moscow.txt` reaches 356 now, in a different game; it is the search's own frames, written during a think.)
