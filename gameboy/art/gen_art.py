@@ -23,6 +23,10 @@ import os
 from PIL import Image
 
 import glyphs as G
+from sprig import sprig
+
+# The card back's sprig layout (sprig/sprig.py): "hanging", "diagonal" or "arching".
+BACK_LAYOUT = "hanging"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PNG = os.path.join(HERE, "png")
@@ -129,10 +133,10 @@ def card_face(rank, suit):
 
 
 def card_back():
+    """Black lacquer to the border, no frame: the 14x22 field is the sprig's."""
     cv = Canvas(CW, CH, None)
-    card_outline(cv, D)            # the gold frame is the fill's outer ring
-    cv.rect(2, 2, CW - 4, CH - 4, K)
-    cv.glyph(2, 2, G.BACK_FIELD)
+    card_outline(cv, K)
+    cv.glyph(1, 1, sprig.LAYOUTS[BACK_LAYOUT]())
     return cv
 
 

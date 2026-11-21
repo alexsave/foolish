@@ -103,10 +103,11 @@ The card back (`BACK_*`) needs only `_u0` and `_u3` (bot hand overlap, the deck 
 
 ### The back
 
-Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two veined leaves and a bunch of six round berries.
-Each berry is ringed in lacquer, drawn back to front, so the bunch reads as separate fruit.
-Gold and the berries are white (khokhloma's brightest colours), the leaf veins and each berry's shaded underside are dark grey, inside a black border and a dark grey frame.
-An overlapped back still shows the tendril, a leaf and half the bunch.
+Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two veined leaves and a bunch of round berries.
+There is no inner frame: black lacquer runs to the card's border, so the sprig has the whole 14x22 field.
+Each berry has a white body, a dark grey shaded underside and a black calyx, and is ringed in lacquer, drawn back to front, so the bunch reads as separate fruit.
+The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in three layouts (`hanging`, `diagonal`, `arching`); `BACK_LAYOUT` in `gen_art.py` picks one (now `hanging`), and `mockups/06_back_rotations.png` shows all three, alone and overlapped.
+Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
 
 ### The pass slot
 

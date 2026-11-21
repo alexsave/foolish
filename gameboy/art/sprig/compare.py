@@ -1,0 +1,35 @@
+#!/usr/bin/env python3
+# Render the sprig layouts side by side at 4x for Alex to pick:
+# each as a lone back, and as an overlapped stack (the bot hand).
+import os, sys
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+import gen_art as A
+from sprig import sprig
+
+def back(rows):
+    cv = A.Canvas(16, 24, None)
+    A.card_outline(cv, A.K)
+    m = {"w": A.W, "o": A.D, "X": A.K}
+    for j, r in enumerate(rows):
+        for i, ch in enumerate(r):
+            if ch in m:
+                cv.put(1 + i, 1 + j, m[ch])
+    return cv
+
+names = list(sprig.LAYOUTS)
+cw = 16 + 8 + 16 + 5 * 8 + 16
+out = A.Canvas(8 + len(names) * (cw + 8), 52, A.T)
+ui = A.ui_bank()
+for k, n in enumerate(names):
+    rows = sprig.LAYOUTS[n]()
+    x = 8 + k * (cw + 8)
+    out.blit(back(rows), x, 8)
+    for i in range(5):
+        out.blit(back(rows), x + 24 + i * 8, 8)
+    for i, t in enumerate(A.text_tiles("%d %s" % (k + 1, n.upper()), ui)):
+        tc = A.Canvas(8, 8, None)
+        tc.set_tile(0, 0, t)
+        out.blit(tc, x + 8 * i, 38)
+path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mockups", "06_back_rotations.png")
+out.image(4).save(path)
+print(path)
