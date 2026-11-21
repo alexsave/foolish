@@ -3,6 +3,12 @@
 # runner. Nothing in ../foolish is written: its engine is compiled into build/.
 GBDK    ?= /Users/alex/Dev/gb-hello/toolchain/dl/gbdk
 LCC      = $(GBDK)/bin/lcc
+# SDCC 4.5 (SM83) miscompiled a variable-shift bit test, `(byte >> (c & 7)) & 1`
+# through a mask pointer: it shifted the bit index instead of the byte it had
+# addressed, so a card in hand read as absent (README.md "Quirks"). The bit tests
+# go through a table now (gd_rules.h GD_HAS), and `make selfplay` - clang and
+# SDCC must play identical games - is the check that keeps codegen honest.
+LCCFLAGS =
 HOSTCC  ?= clang
 B        = build
 FOOLISH  = ../foolish/c/src
@@ -37,7 +43,7 @@ $(B)/tiles.h: $(B)/gen_tiles
 
 # ---- the ROM ------------------------------------------------------------------
 $(B)/durak.gb: $(ROM_SRC) $(ROM_H) | $(B)
-	$(LCC) -Wa-l -Wl-m -Wl-j -I$(B) -Wm-yn"DURAK" -o $@ $(ROM_SRC)
+	$(LCC) $(LCCFLAGS) -Wa-l -Wl-m -Wl-j -I$(B) -Wm-yn"DURAK" -o $@ $(ROM_SRC)
 
 romusage: $(B)/durak.gb
 	$(GBDK)/bin/romusage $(B)/durak.map -g
@@ -63,3 +69,15 @@ clean:
 	rm -rf $(B)
 
 .PHONY: all test mutants gbrun romusage clean
+
+# ---- the cross-compiler check: clang and SDCC must play the same games --------------
+$(B)/selfplay_host: tests/selfplay.c tests/selfplay_host.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ tests/selfplay.c tests/selfplay_host.c $(CORE)
+
+$(B)/selfplay.gb: tests/selfplay.c tests/selfplay_rom.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)
+	$(LCC) $(LCCFLAGS) -Wl-j -I$(B) -o $@ tests/selfplay.c tests/selfplay_rom.c $(CORE)
+
+selfplay: $(B)/selfplay_host $(B)/selfplay.gb $(B)/gbrun
+	sh tests/selfplay.sh
+
+.PHONY: selfplay

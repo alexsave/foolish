@@ -52,9 +52,14 @@
 
 typedef struct { uint8_t b[5]; } gd_mask;
 
-#define GD_HAS(m, c) (((m).b[(c) >> 3] >> ((c) & 7)) & 1u)
-#define GD_SET(m, c) ((m).b[(c) >> 3] |= (uint8_t)(1u << ((c) & 7)))
-#define GD_CLR(m, c) ((m).b[(c) >> 3] &= (uint8_t)~(1u << ((c) & 7)))
+// Bit tests through a table, not a variable shift: SDCC 4.5 (SM83) has been
+// seen to shift the wrong register in `(byte >> (c & 7)) & 1` (README.md
+// "Quirks"), and a table lookup is also faster on a CPU that shifts one bit
+// per instruction.
+extern const uint8_t gd_bit[8];
+#define GD_HAS(m, c) (((m).b[(c) >> 3] & gd_bit[(c) & 7]) != 0)
+#define GD_SET(m, c) ((m).b[(c) >> 3] |= gd_bit[(c) & 7])
+#define GD_CLR(m, c) ((m).b[(c) >> 3] &= (uint8_t)~gd_bit[(c) & 7])
 
 extern const uint8_t gd_suit_of[GD_NCARDS];
 extern const uint8_t gd_rank_of[GD_NCARDS];

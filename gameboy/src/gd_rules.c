@@ -4,6 +4,8 @@
 #include "gd_rules.h"
 #include "gd_binom.h"
 
+const uint8_t gd_bit[8] = { 0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80 };
+
 const uint8_t gd_suit_of[GD_NCARDS] = {
     0,0,0,0,0,0,0,0,0, 1,1,1,1,1,1,1,1,1, 2,2,2,2,2,2,2,2,2, 3,3,3,3,3,3,3,3,3,
 };

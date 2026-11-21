@@ -9,7 +9,8 @@
 //   # a comment
 //   @N   press KEYS [FRAMES]    hold KEYS (A, B, SELECT, START, UP, DOWN, LEFT,
 //                               RIGHT, joined by +) for FRAMES frames (default 2)
-//   +N   shot PATH              write the screen after frame N as a PNG
+//   +N   shot PATH [SCALE]      write the screen after frame N as a PNG, SCALE
+//                               times larger (nearest neighbour, default 1)
 //   +N   peek SYM [LEN]         print LEN (default 1) bytes at a symbol or 0xADDR
 //   +N   expect SYM HEX...      fail (exit 1) unless those bytes are there
 //   +N   end                    stop after this frame
@@ -91,6 +92,8 @@ static int parse_line(int i, int *now) {
     } else if (!strcmp(cmd, "shot") && n >= 2) {
         e->kind = EV_SHOT;
         snprintf(e->arg, sizeof e->arg, "%s", a1);
+        e->len = n >= 3 ? atoi(a2) : 1;
+        if (e->len < 1 || e->len > 8) { fprintf(stderr, "script line %d: scale 1..8\n", i + 1); exit(2); }
     } else if (!strcmp(cmd, "peek") && n >= 2) {
         e->kind = EV_PEEK;
         snprintf(e->arg, sizeof e->arg, "%s", a1);
@@ -176,12 +179,17 @@ static uint32_t resolve(const char *s) {
 #define GB_W 160
 #define GB_H 144
 
-static void write_png(const char *path, const color_t *px, unsigned stride) {
+static void write_png(const char *path, const color_t *src, unsigned stride, int scale) {
+    static color_t px[GB_W * 8 * GB_H * 8];
+    for (unsigned y = 0; y < GB_H * (unsigned)scale; y++)
+        for (unsigned x = 0; x < GB_W * (unsigned)scale; x++)
+            px[y * GB_W * (unsigned)scale + x] = src[(y / (unsigned)scale) * stride + x / (unsigned)scale];
+    stride = GB_W * (unsigned)scale;
     struct VFile *vf = VFileOpen(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (!vf) { fprintf(stderr, "cannot write %s\n", path); exit(2); }
     png_structp png = PNGWriteOpen(vf);
-    png_infop info = PNGWriteHeader(png, GB_W, GB_H);
-    if (!PNGWritePixels(png, GB_W, GB_H, stride, px)) { fprintf(stderr, "png write failed: %s\n", path); exit(2); }
+    png_infop info = PNGWriteHeader(png, GB_W * (unsigned)scale, GB_H * (unsigned)scale);
+    if (!PNGWritePixels(png, GB_W * (unsigned)scale, GB_H * (unsigned)scale, stride, px)) { fprintf(stderr, "png write failed: %s\n", path); exit(2); }
     PNGWriteClose(png, info);
     vf->close(vf);
 }
@@ -231,7 +239,7 @@ int main(int argc, char **argv) {
         while (ei < nev && evs[ei].frame <= frame) {
             Ev *e = &evs[ei++];
             if (e->kind == EV_SHOT) {
-                write_png(e->arg, video, w);
+                write_png(e->arg, video, w, e->len);
                 printf("frame %d: shot %s\n", frame, e->arg);
             } else if (e->kind == EV_PEEK || e->kind == EV_EXPECT) {
                 uint32_t a = resolve(e->arg);

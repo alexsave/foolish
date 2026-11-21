@@ -1,0 +1,4 @@
+# The home screen, then A: a new deal.
+@60  shot shots/home.png 3
+@100 press A
++30  shot shots/deal.png 3
