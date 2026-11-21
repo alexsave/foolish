@@ -193,7 +193,7 @@ def outcome(win, bot="SEOUL"):
         sub1, sub2 = bot, "IS THE DURAK"
         fan = [("A", "S"), ("A", "H"), ("A", "C"), ("A", "D")]
     else:
-        big = "DURAK!"
+        big = "ДУРАК!"
         sub1, sub2 = "YOU ARE", "THE FOOL"
         fan = None
     scale = 2 if len(big) > 6 else 3

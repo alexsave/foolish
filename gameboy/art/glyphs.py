@@ -109,7 +109,7 @@ XXXXX
 ..X..
 .XXX.
 ..X..
-XX.XX
+XXXXX
 XXXXX
 ..X..
 """),
@@ -146,11 +146,11 @@ XXXXXXX
 """),
 "C": g("""
 ..XXX..
+.XXXXX.
 ..XXX..
-XX.X.XX
+XXXXXXX
 XXXXXXX
 XX.X.XX
-...X...
 ..XXX..
 """),
 "D": g("""
@@ -165,32 +165,32 @@ XXXXXXX
 }
 
 # Card back: pixel khokhloma (the website's back: black lacquer, gold
-# vines, red berries).  Khokhloma's gold is its brightest colour, so in four
-# greys: '.' black lacquer, 'w' white = gold, 'o' dark grey = a red berry
-# (with a white glint).  This is the 12x20 field inside the card's black
-# border and its one-pixel dark grey frame: a rosette on a stem, two curls,
-# a berry in each corner.
+# vines, red berries; the website lays the pattern on its side, so the stem
+# runs across the card).  In four greys: '.' black lacquer, 'w' white = the
+# gold stem and the berry clusters, 'o' dark grey = leaves (and a berry's
+# glint).  This is the 12x20 field inside the card's black border and its
+# one-pixel dark grey frame.
 BACK_FIELD = g("""
-oo........oo
-ow...ww...wo
-....w..w....
-...w.ww.w...
-..w.w..w.w..
-..w.w.oo.w..
-..w..wwo.w..
-...w....w...
-....wwww....
-......w.....
-..ww..w..ww.
-.w..w.w.w..w
-.w.oo.w.oo.w
-..wwo.w.wo..
-......w.....
-.w....w....w
-..w...w...w.
-...ww.w.ww..
-oo...www..oo
-wo...www..ow
+.ww......ww.
+woww..o.wwow
+www..oo..www
+.w..oo....w.
+..w.o..oo.w.
+oo.w..ooo.w.
+ooo.w.w...wo
+.oo..ww..woo
+....w..w.w..
+wwwww...www.
+....w...w..w
+.oo..w.w..oo
+ooo...w..ooo
+oo..w.w..w..
+...w..w...w.
+.w.w..oo..w.
+www..ooo.www
+woww.oo.wwow
+.ww......ww.
+............
 """)
 
 # UI font, 5x7 in an 8x8 tile at x1..5, y0..6.
@@ -539,6 +539,47 @@ XXXXX
 .....
 .....
 .....""",
+# Cyrillic, for the lose screen's ДУРАК (A, K, P are the Latin shapes)
+"Д": """
+..XX.
+.X.X.
+.X.X.
+.X.X.
+.X.X.
+XXXXX
+X...X""",
+"У": """
+X...X
+X...X
+X...X
+.XXXX
+....X
+...X.
+.XX..""",
+"Р": """
+XXXX.
+X...X
+X...X
+XXXX.
+X....
+X....
+X....""",
+"А": """
+.XXX.
+X...X
+X...X
+XXXXX
+X...X
+X...X
+X...X""",
+"К": """
+X...X
+X..X.
+X.X..
+XX...
+X.X..
+X..X.
+X...X""",
 "+": """
 .....
 ..X..

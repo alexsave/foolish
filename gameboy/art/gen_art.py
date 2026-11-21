@@ -137,8 +137,9 @@ def card_back():
 
 
 def pass_slot():
-    """The empty 'pass' space target mode points at: a dashed outline."""
-    cv = Canvas(CW, CH, None)
+    """The empty 'pass' space target mode points at: a dashed outline round
+    a patch of plain table (opaque, so it is the same 6 tiles over any wool)."""
+    cv = Canvas(CW, CH, T)
     for x in range(1, CW - 1):
         if (x // 2) % 2 == 1:
             cv.put(x, 0, K)
@@ -155,24 +156,39 @@ def pass_slot():
 # Its four corner pixels are index 0 so a card's round corner over the
 # wool is the plain variant wherever the card sits.
 # --------------------------------------------------------------------------
+# 16x16 = a 2x2 tile repeat of loose fibres, so the weave has no obvious
+# 8px grid; tile (tx, ty) of the table uses WOOL_[(ty & 1) * 2 + (tx & 1)].
 WOOL = G.g("""
-........
-.w.w....
-..w.....
-........
-........
-.....w.w
-......w.
-........
+................
+..ww......o..w..
+....w..w.....w..
+.o.....w..ww....
+..w..........o..
+.w...ww..w......
+.........w...ww.
+...o.w.......w..
+.w....w..o......
+.w.........ww...
+.....ww.......o.
+..o.....w.w.....
+...w.........w..
+.ww....o..w...w.
+......w...w.....
+................
 """)
 
 
-def wool_tile():
-    cv = Canvas(8, 8, T)
+def wool_tiles():
+    cv = Canvas(16, 16, T)
     cv.glyph(0, 0, WOOL)
-    t = cv.tile(0, 0)
-    assert t[0] == t[7] == t[56] == t[63] == T
-    return t
+    out = [cv.tile(0, 0), cv.tile(1, 0), cv.tile(0, 1), cv.tile(1, 1)]
+    for t in out:      # round card corners over any wool tile = the plain variant
+        assert t[0] == t[7] == t[56] == t[63] == T
+    return out
+
+
+def wool_tile():
+    return wool_tiles()[0]
 
 
 # --------------------------------------------------------------------------
@@ -199,7 +215,8 @@ def rail_glyph_tile(rows, fg=W, bg=D, x=1, y=1):
 def ui_bank():
     """name -> tile, in export order."""
     bank = {}
-    bank["WOOL"] = wool_tile()
+    for k, t in enumerate(wool_tiles()):
+        bank["WOOL_%d" % k] = t
     for ch in FONT_CHARS:
         if ch == " ":
             bank["CH_ "] = tuple([D] * 64)
@@ -255,11 +272,10 @@ def card_bank():
         bank["BACK_BL_u%d" % c] = fill_none(b.tile(0, 2), c)
     bank["BACK_BR"] = fill_none(b.tile(1, 2), T)
     p = pass_slot()
-    wool = wool_tile()
     for name, (tx, ty) in (("TL", (0, 0)), ("TR", (1, 0)), ("ML", (0, 1)),
                            ("MR", (1, 1)), ("BL", (0, 2)), ("BR", (1, 2))):
         t = p.tile(tx, ty)
-        bank["PASS_" + name] = tuple(wool[k] if v is None else v for k, v in enumerate(t))
+        bank["PASS_" + name] = fill_none(t, T)
     # a face is rank tile + five tiles that depend on the suit only
     for (r, s), cv in faces.items():
         for (tx, ty) in ((1, 0), (0, 1), (1, 1), (0, 2), (1, 2)):
@@ -453,14 +469,31 @@ class Screen:
 
 
 # ---- table screen pieces -------------------------------------------------
-ROW_BOTRAIL, ROW_BOTHAND, ROW_STATUS, ROW_HAND, ROW_FOOT = 0, 1, 12, 14, 17
-PAIR_X = (3, 7, 11)               # attack card columns of the three pairs in a row
-PAIR_Y = (4, 8)                   # attack card rows of the two pair rows
-TRUMP_AT, DECK_AT, DISCARD_AT = (0, 5), (1, 5), (17, 8)
+# Rows: 0 top rail (bot, deck, trump) | 1-3 bot hand | 4-11 table |
+#       12 raise row | 13-15 your hand | 16 underline row | 17 foot rail (status)
+ROW_BOTRAIL, ROW_BOTHAND, ROW_HAND, ROW_UNDER, ROW_FOOT = 0, 1, 13, 16, 17
+TRUMP_AT, DECK_AT, DISCARD_AT = (0, 4), (1, 4), (0, 8)
 
 
-def battle_pos(i):
-    return PAIR_X[i % 3], PAIR_Y[i // 3]
+def battle_layout(n):
+    """Attack card positions of n battles, centred on the screen.  Up to
+    three sit in one row centred vertically on the table; four to six use two
+    rows (three on top).  A cover sits one tile right and one down."""
+    if n <= 3:
+        rows = [(n, 6)]
+    else:
+        rows = [(3, 4), (n - 3, 8)]
+    out = []
+    for m, y in rows:
+        x0 = (20 - (4 * m - 1)) // 2
+        out += [(x0 + 4 * k, y) for k in range(m)]
+    return out
+
+
+def pass_pos(n):
+    """The empty space just right of the last attack (the website's pass point)."""
+    x, y = battle_layout(n)[-1]
+    return x + 4, y
 
 
 def text_tiles(s, ui):
@@ -477,30 +510,31 @@ def text_tiles(s, ui):
     return out
 
 
+def put_text(scr, tx, ty, s, ui):
+    for i, t in enumerate(text_tiles(s, ui)):
+        scr.fill_tile(tx + i, ty, t)
+
+
 def rail(scr, row, left, right, ui):
     for tx in range(20):
         scr.fill_tile(tx, row, ui["CH_ "])
-    for i, t in enumerate(text_tiles(left, ui)):
-        scr.fill_tile(i, row, t)
-    r = text_tiles(right, ui)
-    for i, t in enumerate(r):
-        scr.fill_tile(20 - len(r) + i, row, t)
+    put_text(scr, 0, row, left, ui)
+    put_text(scr, 20 - len(text_tiles(right, ui)), row, right, ui)
 
 
 def wool_rows(scr, rows, ui):
     for ty in rows:
         for tx in range(20):
-            scr.fill_tile(tx, ty, ui["WOOL"])
+            scr.fill_tile(tx, ty, ui["WOOL_%d" % ((ty & 1) * 2 + (tx & 1))])
 
 
 def put_card(scr, cv, tx, ty):
     scr.bg.blit(cv, tx * 8, ty * 8)
 
 
-def table_base(name, title, ui, bot="SEOUL", bot_n=6, deck_n=18, trump=("9", "H")):
+def table_base(name, title, ui, bot="SEOUL", bot_n=6, deck_n=18, trump=("9", "H"), discard=0):
     scr = Screen(name, title)
-    wool_rows(scr, range(1, 12), ui)
-    wool_rows(scr, range(13, 17), ui)
+    wool_rows(scr, range(1, 17), ui)
     rail(scr, ROW_BOTRAIL, "%s {MINIBACK}%d" % (bot, bot_n),
          ("{MINIDECK}%d {%s}" % (deck_n, trump[1])) if deck_n else "{%s}" % trump[1], ui)
     rail(scr, ROW_FOOT, "", "", ui)
@@ -512,7 +546,18 @@ def table_base(name, title, ui, bot="SEOUL", bot_n=6, deck_n=18, trump=("9", "H"
         put_card(scr, card_face(*trump), *TRUMP_AT)
         if deck_n > 1:
             put_card(scr, card_back(), *DECK_AT)
+    for i in range(min(discard, 2)):
+        put_card(scr, card_back(), DISCARD_AT[0] + i, DISCARD_AT[1])
     return scr
+
+
+def battles(scr, pairs):
+    pos = battle_layout(len(pairs))
+    for (x, y), (a, c) in zip(pos, pairs):
+        put_card(scr, card_face(*a), x, y)
+        if c:
+            put_card(scr, card_face(*c), x + 1, y + 1)
+    return pos
 
 
 def hand_columns(n):
@@ -538,9 +583,13 @@ def draw_hand(scr, cards, selected=(), first=0, ui=None):
         nxt = cols[k + 1] if k + 1 < len(vis) else 99
         widths[i] = 2 if nxt - tx >= 2 else 1
     if n > 19 and ui is not None:
+        # hidden-card counts: small dark tabs at the ends of the underline row
         left, right = first, n - first - 19
-        rail(scr, ROW_FOOT, ("{LEFT}%d" % left) if left else "",
-             ("%d{RIGHT}" % right) if right else "", ui)
+        if left:
+            put_text(scr, 0, ROW_UNDER, "{LEFT}%d" % left, ui)
+        if right:
+            s = "%d{RIGHT}" % right
+            put_text(scr, 20 - len(text_tiles(s, ui)), ROW_UNDER, s, ui)
     return places, widths
 
 
@@ -556,17 +605,14 @@ def underline(scr, sp, place, width):
 
 def arrow(scr, sp, src, dst, dashed=False):
     """The cover/pass arrow: a line of dot sprites and a head, from the top
-    of the cursor card's visible column to the target's middle."""
+    of the cursor card's visible column to just under the target."""
     (sx, sy), (dx, dy) = src, dst
     L = math.hypot(dx - sx, dy - sy)
     step = 10 if dashed else 6
     n = int((L - 9) // step)
     for k in range(1, n + 1):
         f = k * step / L
-        y = round(sy + (dy - sy) * f) - 2
-        if ROW_STATUS * 8 - 4 <= y < ROW_STATUS * 8 + 8:
-            continue              # the line passes behind the status rail's text
-        scr.spr(round(sx + (dx - sx) * f) - 2, y, sp["SP_DOT"])
+        scr.spr(round(sx + (dx - sx) * f) - 2, round(sy + (dy - sy) * f) - 2, sp["SP_DOT"])
     ang = math.degrees(math.atan2(-(dy - sy), dx - sx))   # 90 = straight up
     hx, hy = dx - 4, dy - 4
     if 67.5 <= ang <= 112.5:
@@ -610,75 +656,61 @@ def screens_table(ui, sp):
     out = []
 
     s = table_base("t1_attack", "You attack", ui, bot_n=6, deck_n=18)
-    x, y = battle_pos(0)
-    put_card(s, card_face("7", "S"), x, y)
-    put_card(s, card_face("10", "S"), x + 1, y + 1)
-    put_card(s, card_face("7", "H"), *battle_pos(1))
-    rail(s, ROW_STATUS, "YOUR ATTACK", "{UP}PLAY", ui)
+    battles(s, [(("7", "S"), ("10", "S")), (("7", "H"), None)])
+    rail(s, ROW_FOOT, "YOUR ATTACK", "{UP}PLAY", ui)
     hand = [("6", "C"), ("7", "D"), ("9", "S"), ("J", "H"), ("Q", "C"), ("K", "D"), ("A", "S")]
     places, widths = draw_hand(s, hand)
     underline(s, sp, places[1], widths[1])
     s.notes.append("Cursor (dark underline) on the 7 of diamonds; UP plays it as another 7.")
     out.append(s)
 
-    s = table_base("t2_bot_defends", "Seoul defends", ui, bot_n=3, deck_n=12, trump=("J", "C"))
-    for i, (a, c) in enumerate([(("8", "D"), ("Q", "D")), (("8", "S"), ("A", "S")), (("Q", "H"), ("6", "C"))]):
-        x, y = battle_pos(i)
-        put_card(s, card_face(*a), x, y)
-        put_card(s, card_face(*c), x + 1, y + 1)
-    put_card(s, card_back(), *DISCARD_AT)
-    put_card(s, card_back(), DISCARD_AT[0] + 1, DISCARD_AT[1])
-    rail(s, ROW_STATUS, "ALL COVERED", "{DOWN}DONE", ui)
-    draw_hand(s, [("6", "H"), ("9", "D"), ("10", "C"), ("K", "S"), ("A", "H")])
-    s.notes.append("No cursor: nothing in the hand can be added, so DOWN (done) is the move.")
+    s = table_base("t2_bot_defends", "Seoul defends", ui, bot_n=3, deck_n=12, trump=("J", "C"), discard=2)
+    battles(s, [(("8", "D"), ("Q", "D")), (("8", "S"), ("A", "S")), (("Q", "H"), ("6", "C")),
+                (("Q", "S"), ("K", "S"))])
+    rail(s, ROW_FOOT, "ALL COVERED", "{DOWN}DONE", ui)
+    draw_hand(s, [("6", "H"), ("9", "D"), ("10", "C"), ("K", "D"), ("A", "H")])
+    s.notes.append("Four battles: two rows, centred. No cursor: nothing can be added, so DOWN (done) is the move.")
     out.append(s)
 
     s = table_base("t3_target_cover", "Target mode: cover", ui, bot_n=4, deck_n=8, trump=("9", "H"))
-    put_card(s, card_face("8", "C"), *battle_pos(0))
-    put_card(s, card_face("8", "S"), *battle_pos(1))
-    rail(s, ROW_STATUS, "{LEFT}{RIGHT}TARGET", "{UP}COVER", ui)
+    pos = battles(s, [(("8", "C"), None), (("8", "S"), None)])
+    rail(s, ROW_FOOT, "{LEFT}{RIGHT}TARGET", "{UP}COVER", ui)
     hand = [("6", "D"), ("10", "C"), ("Q", "H"), ("K", "S"), ("A", "D"), ("7", "C")]
     places, widths = draw_hand(s, hand)
     underline(s, sp, places[2], widths[2])
-    tx, ty = battle_pos(1)
+    tx, ty = pos[1]
     arrow(s, sp, card_top_center(places[2], widths[2]), card_bottom(tx, ty))
     brackets(s, sp, tx, ty)
     s.notes.append("The queen of hearts (trump) covers either 8: the arrow and brackets mark the 8 of spades; left/right moves them.")
     out.append(s)
 
     s = table_base("t3b_target_pass", "Target mode: pass", ui, bot_n=4, deck_n=8, trump=("9", "H"))
-    put_card(s, card_face("8", "C"), *battle_pos(0))
-    put_card(s, card_face("8", "S"), *battle_pos(1))
-    px, py = battle_pos(2)
+    battles(s, [(("8", "C"), None), (("8", "S"), None)])
+    px, py = pass_pos(2)
     put_card(s, pass_slot(), px, py)
-    rail(s, ROW_STATUS, "{LEFT}{RIGHT}TARGET", "{UP}PASS", ui)
+    rail(s, ROW_FOOT, "{LEFT}{RIGHT}TARGET", "{UP}PASS", ui)
     hand = [("6", "D"), ("8", "H"), ("Q", "H"), ("K", "S"), ("A", "D"), ("7", "C")]
     places, widths = draw_hand(s, hand)
     underline(s, sp, places[1], widths[1])
     arrow(s, sp, card_top_center(places[1], widths[1]), card_bottom(px, py), dashed=True)
-    chip(s, ui, (px + 2) * 8 + 2, py * 8 + 8, "PASS")
+    chip(s, ui, px * 8 - 8, py * 8 - 9, "PASS")
     s.notes.append("The 8 of hearts can cover (trump) or pass (an 8): one step right of the last attack, the dashed arrow points at the empty pass space.")
     out.append(s)
 
-    s = table_base("t4_pickup", "Pick up", ui, bot_n=2, deck_n=0, trump=("9", "H"))
-    for i, (a, c) in enumerate([(("K", "C"), ("A", "C")), (("K", "S"), None), (("A", "S"), None)]):
-        x, y = battle_pos(i)
-        put_card(s, card_face(*a), x, y)
-        if c:
-            put_card(s, card_face(*c), x + 1, y + 1)
-    put_card(s, card_back(), *DISCARD_AT)
-    rail(s, ROW_STATUS, "YOU DEFEND", "{DOWN}PICK UP", ui)
+    s = table_base("t4_pickup", "Pick up", ui, bot_n=2, deck_n=0, trump=("9", "H"), discard=1)
+    battles(s, [(("K", "C"), ("A", "C")), (("K", "S"), None), (("A", "S"), None)])
+    rail(s, ROW_FOOT, "YOU DEFEND", "{DOWN}PICK UP", ui)
     draw_hand(s, [("6", "S"), ("7", "D"), ("9", "C"), ("J", "D")])
     s.notes.append("Deck gone: the top rail keeps the trump suit. DOWN picks up the table.")
     out.append(s)
 
-    s = table_base("t5_big_hand", "Big hand, two selected", ui, bot_n=1, deck_n=0, trump=("9", "H"))
+    s = table_base("t5_big_hand", "Big hand, two selected", ui, bot_n=1, deck_n=0, trump=("9", "H"), discard=2)
     hand = [(r, su) for su in G.SUITS for r in ("6", "7", "8", "9", "10", "J")][:22]
     nines = [i for i, c in enumerate(hand) if c[0] == "9"]
     places, widths = draw_hand(s, hand, selected=set(nines[:2]), first=2, ui=ui)
     underline(s, sp, places[nines[2]], widths[nines[2]])
-    rail(s, ROW_STATUS, "2 SELECTED", "{UP}PLAY", ui)
-    s.notes.append("22 cards: 19 show one column each; the foot rail counts the hidden ones each side and the hand scrolls with the cursor.")
+    rail(s, ROW_FOOT, "2 SELECTED", "{UP}PLAY", ui)
+    s.notes.append("22 cards: 19 show one column each; small tabs count the hidden ones each side and the hand scrolls with the cursor.")
     out.append(s)
 
     s = table_base("t6_rearrange", "Rearrange (SELECT held)", ui, bot_n=6, deck_n=18)
@@ -686,10 +718,10 @@ def screens_table(ui, sp):
     places, widths = draw_hand(s, hand)
     p = places[1]
     underline(s, sp, p, widths[1])
-    y = (p[1] + 3) * 8           # beside the underline, in the foot rail
+    y = (p[1] + 3) * 8
     s.spr(p[0] * 8 - 6, y - 1, sp["SP_NUDGE"])
     s.spr(p[0] * 8 + 14, y - 1, sp["SP_NUDGE"], fx=True)
-    rail(s, ROW_STATUS, "SELECT+{LEFT}{RIGHT}", "MOVE CARD", ui)
+    rail(s, ROW_FOOT, "SELECT+{LEFT}{RIGHT}", "MOVE CARD", ui)
     s.notes.append("While SELECT is held the cursor card carries nudge arrows; left/right slides it through the hand.")
     out.append(s)
     return out
@@ -715,33 +747,33 @@ def lerp(a, b, f):
 
 def screens_motion(ui, sp):
     out = []
-    # A card flies from the hand to the table: 4 of its ~12 frames
+    # A card flies from the hand to the table: 4 of its ~12 frames.  The
+    # battles re-centre for the new count when it lands.
     hand = [("6", "C"), ("7", "D"), ("9", "S"), ("J", "H"), ("Q", "C"), ("K", "D"), ("A", "S")]
-    src = None
-    dst = battle_pos(1)
+    first = [(("7", "S"), ("10", "S"))]
+    dst = battle_layout(2)[1]
     for k, f in enumerate((0.0, 0.35, 0.7, 1.0)):
         s = table_base("m1_fly_%d" % k, "Fly frame %d" % k, ui, bot_n=6, deck_n=18)
-        x, y = battle_pos(0)
-        put_card(s, card_face("7", "S"), x, y)
-        put_card(s, card_face("10", "S"), x + 1, y + 1)
-        rail(s, ROW_STATUS, "YOUR ATTACK", "", ui)
+        rail(s, ROW_FOOT, "YOUR ATTACK", "", ui)
         if f < 1.0:
+            battles(s, first)
             cols = hand_columns(len(hand))
             for i, c in enumerate(hand):
                 if i != 1:
                     put_card(s, card_face(*c), cols[i], ROW_HAND)
             sx, sy = cols[1] * 8, (ROW_HAND - 1) * 8
             dx, dy = dst[0] * 8, dst[1] * 8
-            card_sprites(s, card_face("7", "D"), lerp(sx, dx, f), lerp(sy, dy, f) - round(12 * math.sin(math.pi * f)))
+            card_sprites(s, card_face("7", "D"), lerp(sx, dx, f),
+                         lerp(sy, dy, f) - round(12 * math.sin(math.pi * f)))
         else:
-            put_card(s, card_face("7", "D"), *dst)
+            battles(s, first + [(("7", "D"), None)])
             draw_hand(s, hand[:1] + hand[2:])
         out.append(s)
     # The deal: deck -> bot (back), deck -> you (flips in flight)
     frames = [("bot", 0.5), ("you", 0.25), ("you", 0.5), ("you", 0.75)]
     for k, (who, f) in enumerate(frames):
         s = table_base("m2_deal_%d" % k, "Deal frame %d" % k, ui, bot_n=2, deck_n=30)
-        rail(s, ROW_STATUS, "DEALING", "", ui)
+        rail(s, ROW_FOOT, "DEALING", "", ui)
         draw_hand(s, [("8", "H"), ("K", "C")])
         sx, sy = DECK_AT[0] * 8, DECK_AT[1] * 8
         if who == "bot":
