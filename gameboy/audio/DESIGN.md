@@ -47,7 +47,8 @@ H4. ROM: the synthesis tables, three takes a card cue, under 6 KB; PCM of the sa
 Result: the tables are 4,962 bytes (held); the PCM is 45,660 bytes (over by 14%: the windows are longer than I guessed).
 
 H5. RAM: the driver's state under 64 bytes, and overlaid on the search bots' scratch it costs no work RAM.
-Result: held. SDCC puts it at 58 bytes (`_DATA 0x3A` for `snd.c`): 53 of state that can be overlaid and 5 that cannot (below).
+Result: held.
+SDCC puts it at 58 bytes (`_DATA 0x3A` for `snd.c`): 53 of state that can be overlaid and 5 that cannot (below).
 
 H6. CPU: under 150 M-cycles a tick while sounding, nothing during a think; CH3 PCM 8% to 15% of the CPU while it plays.
 Result: the first part falsified, by estimate.
