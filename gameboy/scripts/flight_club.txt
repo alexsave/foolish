@@ -1,0 +1,40 @@
+# A club card in flight over another card: its light grey seams must show light
+# grey, which a sprite can only do on OBP1 (art README "Flying club cards"; on
+# OBP0 the same pixels read dark grey).
+# Miami leads the eights of hearts and clubs (diamonds trump); I cover the
+# eight of clubs with my nine of clubs, which flies from my hand onto it.
+# On its last step (13 frames after take-off, the first five of them the
+# board's redraw) the nine's top left is at (86, 60), and its small suit's
+# seams at (3, 11) and (5, 11) lie on the eight's bottom edge, at (89, 71) and
+# (91, 71), which are black before the nine arrives. The checks read sprite 0's
+# place from the hardware OAM, as the frame drew it. The big pip's seams lie
+# over the wool by then; they are checked too, for the palette.
+# The seed is set by poking sys_time before the first press.
+@99  poke _sys_time 01 00
+@100 press A
++1   until _G+74 02
++0   until _fly_n 00
+# the cursor appears on the first card, then moves to the nine of clubs
++1   press RIGHT
++4   press RIGHT
++4   press RIGHT
++4   expect _cur 02
+# the eight of clubs' bottom edge under where the seams will pass
++0   pixel 89 71 3
++0   pixel 91 71 3
+# UP covers at once: the nine beats only the eight of clubs
++1   press UP
++0   until _fly_n 01
++13  expect 0xFE00 4c 5e
++0   shot shots/flight_club.png 3
++0   pixelspr 0 3 11 1
++0   pixelspr 0 5 11 1
++0   pixelspr 0 4 12 1
++0   pixelspr 0 7 17 1
++0   pixelspr 0 7 19 1
++0   pixelspr 0 9 17 1
++0   pixelspr 0 8 18 1
++0   pixelspr 0 9 19 1
+# landed: the board draws it over the eight
++20  expect _fly_n 00
++0   shot shots/flight_club_landed.png 3

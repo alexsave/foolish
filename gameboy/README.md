@@ -32,11 +32,11 @@ make romusage       # ROM and RAM per bank
 | Bank | Holds | Used |
 | --- | --- | --- |
 | 0 (fixed) | the rules core (`gd_rules.c`), the RNG, the input interrupt, the bots' shared scratch (`gd_botlib.c`), `_HOME` and all of GBDK's library | 11.1 KB |
-| 1 | the UI: `main.c`, `gfx.c`, `gd_play.c` | 13.8 KB |
+| 1 | the UI: `main.c`, `gfx.c` | 13.3 KB |
 | 2 | the table's tile banks, the fonts, the dashboards, the lose picture | 12.6 KB |
 | 3 | the four win pictures | 13.2 KB |
 | 4 | New York (`gd_bot_hw.c`) | 7.0 KB |
-| 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.4 KB |
+| 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu), and the gesture rules (`gd_play.c`, moved out of bank 1 for the card flights) | 11.2 KB |
 | 6 | the rollout engine (`gd_sim.c` on the board rules of `gd_simboard.h`, with its 2.5 KB rank-set table) | 11.3 KB |
 | 7 | Seoul and Moscow (`gd_bot_seoul.c`, `gd_bot_moscow.c`) | 6.9 KB |
 | 8 | the endgame solver (`gd_solve.c`, on its own copy of the board rules and tables) | 12.2 KB |
@@ -45,6 +45,8 @@ make romusage       # ROM and RAM per bank
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
   Measured: 5.5 KB (3.9 KB + 1.6 KB).
   With Moscow: 7.1 KB (3.9 KB + 3.3 KB), 0.7 KB left above the stack; Seoul and Moscow share one world and one candidate list (`gd_botlib.h`), and Moscow ranks candidates by menu index, as a move is 38 bytes.
+  With the sprites built in a staging copy (160 bytes, below): 541 bytes are left between the data and the stack's top at 0xE000.
+  The stack's deepest reach, read from the bytes it left in that gap: 320 bytes over a whole game against Moscow, 400 in `moscowcheck` (100 decisions, 6 solved), so about 80 bytes to spare once the game's own frames are counted.
   The cart's 32 KB of RAM is the solver's: bank 0 its stack (49 states and frames, 640 moves, the hash's table at 0xBF00), banks 1 to 3 its transposition table (3 x 1024 entries of a 32-bit tag and a value).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
   Falsifier: a typical move over one frame (154 lines, 16.7 ms).
@@ -397,15 +399,30 @@ The art is gameboy/art (its README has every layout); this code follows it: the 
 Card corners are chosen by the colour actually under each round corner (read from the tile below, cached at start), which is the art's rule.
 Beyond six battles (the art draws up to six) the table packs six to a row, three columns apart, and a third row past twelve overlaps; the differential test never saw more than seven uncovered attacks.
 
+## Cards in flight
+
+A move that puts cards on the table (attack, throw-in, cover, transfer) flies them from where they were (my hand, or the middle of the bot's) to their places, and a pickup flies the table's cards to the taker: 12 frames on the frame clock (`sys_time`), so a slow redraw does not slow a flight.
+The board leaves a flying card's place empty until it lands.
+At most four cards fly at once: a card is two sprites wide, and four of them with the cursor's two fill the ten sprites a line can show; the rest land at once.
+
+A flying card is six sprites built from the card's own tiles (`gfx_spr_card`).
+Clubs are the exception the art README asks for: light grey is index 0, which a sprite draws as transparent, so the three club tiles with seams have sprite copies (`T_SP_CLUB_SUIT`, `T_SP_CLUB_PIPL`, `T_SP_CLUB_PIPR`) whose seams are index 2, and every sprite of a flying club card is on OBP1 (`ART_OBP1`, set at boot), where index 2 is light grey.
+Every other sprite stays on OBP0.
+`scripts/flight_club.txt` checks the seams pixel by pixel in flight; with the OBP1 bit dropped every one of its eight seam checks fails (they read dark grey).
+
+The sprites of a frame are built in a staging copy and handed to GBDK's shadow OAM in one copy with interrupts off.
+Building them in the shadow OAM itself let the VBlank copy a half-built set: moving the aim in TARGET mode showed the new arrow's first dots beside the old arrowhead for a frame.
+`scripts/target_cover.txt` watches that move frame by frame; with the old in-place build it fails on the torn frame.
+
 ## gbrun, the headless runner
 
-`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, and waits for memory to reach a value, from a plain text script (the format is at the top of the file).
+`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
 Every script in `scripts/` sets the seed by poking `sys_time` just before its first press, so its deal does not depend on how long the ROM takes to start, and waits for the bot with `until` rather than counting frames.
 
 | Script | What it proves | Shots |
 | --- | --- | --- |
 | `deal.txt` | the dashboard, a deal, the cursor appearing, an attack, the bot's answer | `01` to `05` |
-| `target_cover.txt` | TARGET mode over two attacks, moving the aim, DOWN backing out, the cover | `10` to `13` |
+| `target_cover.txt` | TARGET mode over two attacks, moving the aim (watched frame by frame: never the old arrowhead beside the new arrow's dots), DOWN backing out, the cover | `10` to `13` |
 | `cover_or_pass.txt` | TARGET mode with the pass space, passing | `20` to `22` |
 | `single_moves.txt` | UP passes at once with a pass-only card | `30`, `31` |
 | `cover_now.txt` | UP covers at once with a one-way cover | `32`, `33` |
@@ -419,6 +436,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
 | `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
 | `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
+| `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
@@ -443,7 +461,7 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 
 - Moscow's solver runs at 8.2 ms a node, most of it SDCC's code for move generation; assembly there (as for the hash) would buy it bigger endgames, though the measurements above say the worlds matter more at two players.
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
-- Moving the aim in TARGET mode redraws over about 5 frames, and for a frame or two the new arrow's sprites show over the old dotted path (seen frame by frame with gbrun; `shots/12` waits for it to settle): the sprites should move only once the background path is flushed.
-- Motion: cards do not fly, the deal is not animated (the art has the frames).
+- The deal is not animated (the art has the frames); played and picked-up cards fly (below).
+- A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

@@ -10,6 +10,8 @@
 @99  poke _sys_time 01 00
 @100 press A
 +1   until _G+74 02
+# the attack's cards land first (they fly for 12 frames)
++0   until _fly_n 00
 +0   shot shots/10_defend.png 3
 # right then left: the cursor wraps from the first card to the last (the ten)
 +1   press RIGHT
@@ -18,13 +20,16 @@
 +1   press UP
 +4   expect _in_target 01
 +0   expect _tgt_n 02
-+0   shot shots/11_target_cover_first.png 3
-# right: the arrow moves to the other eight
+# the board redraws over a few frames before the arrow shows
++6   shot shots/11_target_cover_first.png 3
+# right: the arrow moves to the other eight. Frame by frame while it moves,
+# never both arrowheads at once (the first eight's at (54, 78), the second's at
+# (86, 78)): the sprites used to be rebuilt in GBDK's shadow OAM in place, and
+# a VBlank copying it mid-build showed half the new arrow over half the old.
 +1   press RIGHT
-+4   expect _tgt_i 01
-# the redraw of a moved aim takes until about frame 6 (frame 4 shows the new
-# arrow's sprites over the old path: README "Not done"), so the shot waits
-+4   shot shots/12_target_cover_second.png 3
++0   notboth 12 54 78 3 94 84 3
++0   expect _tgt_i 01
++0   shot shots/12_target_cover_second.png 3
 # down cancels back to the cards; up again aims at the first eight, up covers it
 +1   press DOWN
 +4   expect _in_target 00

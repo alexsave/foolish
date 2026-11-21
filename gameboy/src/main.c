@@ -160,11 +160,35 @@ static void flash_bot(const char *verb) {
 
 static gd_game before;
 
+// ---- cards in flight ---------------------------------------------------------------------------
+// A move that puts cards on the table (attack, cover, transfer) or takes them
+// off (pick up) flies them, as sprites, from where they were to where they
+// land, over FLY_FRAMES frames; the board leaves their places empty until they
+// land. At most FLY_MAX fly (four cards two sprites wide, and the cursor's
+// two, fill the ten sprites a line can show); the rest land at once.
+#define FLY_MAX    4
+#define FLY_FRAMES 12
+uint8_t fly_n, fly_t;
+static uint16_t fly_t0;         // sys_time at take-off: a flight runs on frames, not on loop passes
+static uint8_t fly_card[FLY_MAX];
+static int16_t fly_x0[FLY_MAX], fly_y0[FLY_MAX], fly_x1[FLY_MAX], fly_y1[FLY_MAX];
+// the first flying card's top left this frame, in screen pixels (gbrun reads it)
+uint8_t fly_pos[2];
+static void fly_from(uint8_t seat, const gd_move *m);
+static void fly_to(uint8_t seat);
+static uint8_t flying(uint8_t c) {
+    uint8_t k;
+    for (k = 0; k < fly_n; k++) if (fly_card[k] == c) return 1;
+    return 0;
+}
+
 // Apply a move for a seat; 1 if it was legal.
 static uint8_t play(uint8_t seat, const gd_move *m) {
     before = G;
-    if (!gd_apply(&G, &R, seat, m)) return 0;
+    fly_from(seat, m);
+    if (!gd_apply(&G, &R, seat, m)) { fly_n = 0; return 0; }
     note_new_cards(&before);
+    fly_to(seat);
     idle = 0;
     dirty = 1;
     // The website's afterMove leaves target mode after my own move. A bot move
@@ -193,6 +217,7 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
 
 static void new_game(void) {
     uint8_t deck[GD_NCARDS], i, j, t;
+    fly_n = 0;
     for (i = 0; i < GD_NCARDS; i++) deck[i] = i;
     for (i = GD_NCARDS - 1u; i > 0; i--) {
         j = (uint8_t)gd_rng_below((uint32_t)i + 1u);
@@ -477,6 +502,71 @@ static void hand_place(uint8_t i, uint8_t *x, uint8_t *y, uint8_t *w) {
     *w = (hand_step == 2 || k + 1u == hand_shown) ? 2 : 1;
 }
 
+// Where a card of my hand is drawn, in screen pixels (the nearest end when it
+// is scrolled out of view).
+static void hand_px(uint8_t c, int16_t *px, int16_t *py) {
+    uint8_t i, x, y, w;
+    hand_layout();
+    for (i = 0; i < disp_n && disp[i] != c; i++) ;
+    if (i < view_off) i = view_off;
+    if (i >= view_off + hand_shown) i = (uint8_t)(view_off + hand_shown - 1u);
+    hand_place(i, &x, &y, &w);
+    *px = (int16_t)(x * 8); *py = (int16_t)(y * 8);
+}
+#define BOT_PX ((int16_t)((SCR_W / 2 - 1) * 8))
+#define BOT_PY ((int16_t)(ROW_BOTHAND * 8))
+
+// Before the move: the cards that will fly, and where they start.
+static void fly_from(uint8_t seat, const gd_move *m) {
+    uint8_t i, x, y;
+    fly_n = 0;
+    fly_t = 0;
+    if (m->type == GD_PICKUP) {
+        for (i = 0; i < G.nb && fly_n < FLY_MAX; i++) {
+            battle_xy(i, G.nb, &x, &y);
+            fly_card[fly_n] = G.att[i]; fly_x0[fly_n] = (int16_t)(x * 8); fly_y0[fly_n] = (int16_t)(y * 8); fly_n++;
+            if (G.def[i] != GD_NONE && fly_n < FLY_MAX) {
+                fly_card[fly_n] = G.def[i]; fly_x0[fly_n] = (int16_t)(x * 8 + 8); fly_y0[fly_n] = (int16_t)(y * 8 + 8); fly_n++;
+            }
+        }
+        return;
+    }
+    if (m->type != GD_ATTACK && m->type != GD_COVER && m->type != GD_PASS) return;
+    for (i = 0; i < m->n && fly_n < FLY_MAX; i++) {
+        fly_card[fly_n] = m->cards[i];
+        if (seat == HUMAN) hand_px(m->cards[i], &fly_x0[fly_n], &fly_y0[fly_n]);
+        else { fly_x0[fly_n] = BOT_PX; fly_y0[fly_n] = BOT_PY; }
+        fly_n++;
+    }
+}
+
+// After it: where each lands; a card that landed nowhere on view (the bout
+// ended under it) does not fly.
+static void fly_to(uint8_t seat) {
+    uint8_t k, j, i, x, y, found;
+    for (k = 0, j = 0; k < fly_n; k++) {
+        const uint8_t c = fly_card[k];
+        found = 0;
+        for (i = 0; i < G.nb && !found; i++) {
+            battle_xy(i, G.nb, &x, &y);
+            if (G.att[i] == c) { fly_x1[k] = (int16_t)(x * 8); fly_y1[k] = (int16_t)(y * 8); found = 1; }
+            else if (G.def[i] == c) { fly_x1[k] = (int16_t)(x * 8 + 8); fly_y1[k] = (int16_t)(y * 8 + 8); found = 1; }
+        }
+        if (!found && GD_HAS(G.hand[seat], c)) {
+            if (seat == HUMAN) hand_px(c, &fly_x1[k], &fly_y1[k]);
+            else { fly_x1[k] = BOT_PX; fly_y1[k] = BOT_PY; }
+            found = 1;
+        }
+        if (!found) continue;
+        fly_card[j] = c;
+        fly_x0[j] = fly_x0[k]; fly_y0[j] = fly_y0[k]; fly_x1[j] = fly_x1[k]; fly_y1[j] = fly_y1[k];
+        j++;
+    }
+    fly_n = j;
+    fly_t = 0;
+    fly_t0 = sys_time;
+}
+
 // Whose move it is, short enough (12 at most) to sit beside any action word.
 static const char *role_text(void) {
     if (G.nb == 0) return G.fa == HUMAN ? "YOUR ATTACK" : "THEIR ATTACK";
@@ -577,15 +667,15 @@ static void draw_table(void) {
     // the table
     for (i = 0; i < G.nb; i++) {
         battle_xy(i, G.nb, &x, &y);
-        gfx_card(x, y, G.att[i]);
-        if (G.def[i] != GD_NONE) gfx_card((uint8_t)(x + 1u), (uint8_t)(y + 1u), G.def[i]);
+        if (!flying(G.att[i])) gfx_card(x, y, G.att[i]);
+        if (G.def[i] != GD_NONE && !flying(G.def[i])) gfx_card((uint8_t)(x + 1u), (uint8_t)(y + 1u), G.def[i]);
     }
     if (in_target && tgt[tgt_i] == TGT_PASS) { pass_xy(G.nb, &x, &y); gfx_pass_slot(x, y); }
     // my hand: unraised cards first, then raised ones over them, left to right
     hand_layout();
     for (i = view_off; i < view_off + hand_shown; i++) {
         hand_place(i, &x, &y, &w);
-        gfx_card(x, y, disp[i]);
+        if (!flying(disp[i])) gfx_card(x, y, disp[i]);
     }
     if (disp_n > HAND_SHOWN) {
         // tabs counting the hidden cards each side
@@ -648,8 +738,15 @@ static void arrow(int16_t sx, int16_t sy, int16_t dx, int16_t dy, uint8_t dashed
 }
 
 static void draw_table_sprites(void) {
-    uint8_t x = 0, y = 0, w = 1, tx, ty;
+    uint8_t x = 0, y = 0, w = 1, tx, ty, k;
     gfx_spr_begin();
+    // cards in flight first: the lower sprites draw on top
+    for (k = 0; k < fly_n; k++) {
+        const int16_t px = (int16_t)(fly_x0[k] + (int16_t)((fly_x1[k] - fly_x0[k]) * (int16_t)fly_t / FLY_FRAMES));
+        const int16_t py = (int16_t)(fly_y0[k] + (int16_t)((fly_y1[k] - fly_y0[k]) * (int16_t)fly_t / FLY_FRAMES));
+        if (!k) { fly_pos[0] = (uint8_t)px; fly_pos[1] = (uint8_t)py; }
+        gfx_spr_card(px, py, fly_card[k]);
+    }
     if (G.status == GD_PLAYING && cur >= 0 && (uint8_t)cur < disp_n) {
         hand_layout();
         hand_place((uint8_t)cur, &x, &y, &w);
@@ -820,6 +917,13 @@ void main(void) {
                 if (screen == SCREEN_TABLE) bot_turn();
             }
             if (in_select_held() != was_select) { was_select = in_select_held(); dirty = 1; }
+        }
+        if (fly_n && screen == SCREEN_TABLE && shown == SCREEN_TABLE) {
+            // a step of the cards in flight (frames since take-off, so a slow
+            // redraw does not slow the flight); landed, the board draws them
+            const uint16_t t = (uint16_t)(sys_time - fly_t0);
+            if (t >= FLY_FRAMES) { fly_n = 0; dirty = 1; }
+            else { fly_t = (uint8_t)t; if (!dirty) draw_table_sprites(); }
         }
         if (screen != shown) dirty = 1;
         if (dirty_ui && !dirty && screen == SCREEN_TABLE) {

@@ -11,6 +11,8 @@
 @99  poke _sys_time 78 00
 @100 press A
 +1   until _G+74 01
+# the attack's cards land first (they fly for 12 frames)
++0   until _fly_n 00
 +1   press RIGHT
 +4   press LEFT
 +4   expect _cur 05

@@ -29,6 +29,7 @@
 #define GD_NCARDS  36
 #define GD_NRANKS  9
 #define GD_NSUITS  4
+#define GD_CLUBS   2            // suit 0 spades, 1 hearts, 2 clubs, 3 diamonds (foolish's order)
 #define GD_ACE     8            // rank of the Ace
 #define GD_HAND    6            // cards dealt, and the draw target
 #define GD_MAXB    18           // a table of b battles holds 2b of 36 cards

@@ -18,22 +18,22 @@
 
 // May this seat end the bout (Done): a table with every attack covered, and
 // good on its menu.
-uint8_t gd_can_say_good(const gd_game *g, uint8_t seat);
+uint8_t gd_can_say_good(const gd_game *g, uint8_t seat) GD_BANKED;
 
 // The battles a cover with exactly these cards could cover, as a bit per battle.
-uint32_t gd_coverable(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n);
+uint32_t gd_coverable(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED;
 
 // The battle the Cover button aims at: the highest attack the selection can
 // beat (every trump above every non-trump), ties to the leftmost; -1 for none.
-int8_t gd_best_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n);
+int8_t gd_best_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED;
 
 // The cover with exactly these cards that covers battle `target`: the first
 // such move in foolish's menu order (which pairs by hand order; this engine's
 // hand order is card id order). 1 and `out` filled, or 0.
 uint8_t gd_resolve_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n,
-                         uint8_t target, gd_move *out);
+                         uint8_t target, gd_move *out) GD_BANKED;
 
 // The buttons the board shows for this selection (foolish play_pills, host 0).
-uint8_t gd_pills(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n);
+uint8_t gd_pills(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED;
 
 #endif

@@ -20,6 +20,15 @@
 //   +N   until SYM HEX...       run on, a frame at a time, until those bytes are
 //                               there (fail after UNTIL_MAX frames); the next
 //                               "+N" counts from the frame it stopped on
+//   +N   pixel X Y SHADE        fail unless the screen pixel at (X, Y) is that
+//                               shade: 0 white, 1 light grey, 2 dark grey, 3 black
+//   +N   pixelspr N DX DY SHADE the same, at (DX, DY) from sprite N's top left as
+//                               the hardware OAM places it (what the frame drew)
+//   +N   notboth F X1 Y1 S1 X2 Y2 S2
+//                               run on F frames, failing if any of them shows
+//                               shade S1 at (X1, Y1) and S2 at (X2, Y2) at once
+//                               (two states that must never share a frame); the
+//                               next "+N" counts from the last of them
 //   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -41,7 +50,7 @@
 
 #define UNTIL_MAX 200000
 
-enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_END };
+enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_END };
 
 typedef struct {
     int absolute, n;        // @n or +n
@@ -114,6 +123,34 @@ static void parse_line(int i) {
         int used;
         while (s->nbytes < 16 && sscanf(p, " %x%n", &v, &used) == 1) { s->bytes[s->nbytes++] = (unsigned char)v; p += used; }
         s->len = s->nbytes;
+    } else if (!strcmp(cmd, "pixel") && n >= 3) {
+        unsigned x, y, shade;
+        s->kind = ST_PIXEL;
+        if (sscanf(l, "%*s %u %u %u", &x, &y, &shade) != 3 || x >= 160 || y >= 144 || shade > 3) {
+            fprintf(stderr, "script line %d: pixel X Y SHADE (0..159, 0..143, 0..3)\n", i + 1);
+            exit(2);
+        }
+        s->bytes[0] = (unsigned char)x; s->bytes[1] = (unsigned char)y; s->bytes[2] = (unsigned char)shade;
+        snprintf(s->arg, sizeof s->arg, "%u %u", x, y);
+    } else if (!strcmp(cmd, "pixelspr") && n >= 3) {
+        unsigned sp, dx, dy, shade;
+        s->kind = ST_PIXSPR;
+        if (sscanf(l, "%*s %u %u %u %u", &sp, &dx, &dy, &shade) != 4 || sp >= 40 || dx >= 16 || dy >= 32 || shade > 3) {
+            fprintf(stderr, "script line %d: pixelspr N DX DY SHADE (0..39, 0..15, 0..31, 0..3)\n", i + 1);
+            exit(2);
+        }
+        s->bytes[0] = (unsigned char)sp; s->bytes[1] = (unsigned char)dx; s->bytes[2] = (unsigned char)dy; s->bytes[3] = (unsigned char)shade;
+        snprintf(s->arg, sizeof s->arg, "%u +%u +%u", sp, dx, dy);
+    } else if (!strcmp(cmd, "notboth") && n >= 3) {
+        unsigned v[7];
+        s->kind = ST_NOTBOTH;
+        if (sscanf(l, "%*s %u %u %u %u %u %u %u", &v[0], &v[1], &v[2], &v[3], &v[4], &v[5], &v[6]) != 7 || !v[0] || v[0] > 255
+            || v[1] >= 160 || v[2] >= 144 || v[3] > 3 || v[4] >= 160 || v[5] >= 144 || v[6] > 3) {
+            fprintf(stderr, "script line %d: notboth FRAMES X1 Y1 S1 X2 Y2 S2\n", i + 1);
+            exit(2);
+        }
+        for (int k = 0; k < 7; k++) s->bytes[k] = (unsigned char)v[k];
+        snprintf(s->arg, sizeof s->arg, "(%u, %u) = %u and (%u, %u) = %u", v[1], v[2], v[3], v[4], v[5], v[6]);
     } else if (!strcmp(cmd, "end")) {
         s->kind = ST_END;
     } else {
@@ -237,6 +274,17 @@ static int mem_is(uint32_t a, const unsigned char *b, int n) {
 }
 
 // Print a step's bytes; ok < 0 for a plain peek.
+// A screen pixel as a DMG shade (0 white .. 3 black), by its brightness: the
+// core's DMG palette is four evenly spaced greys.
+static int shade_at(unsigned x, unsigned y) {
+    const color_t c = video[y * stride + x];
+    unsigned r, g, b;
+    if (sizeof(color_t) == 2) { r = M_R8(c); g = M_G8(c); b = M_B8(c); }
+    else { r = (unsigned)c & 0xFF; g = ((unsigned)c >> 8) & 0xFF; b = ((unsigned)c >> 16) & 0xFF; }
+    const unsigned lum = (r + g + b) / 3;
+    return lum >= 192 ? 0 : lum >= 128 ? 1 : lum >= 64 ? 2 : 3;
+}
+
 static int show(const char *what, int frame, const Step *s, int ok) {
     uint32_t a = resolve(s->arg);
     printf("frame %d: %s %s =", frame, what, s->arg);
@@ -297,6 +345,32 @@ int main(int argc, char **argv) {
         if (s->kind == ST_SHOT) {
             write_png(s->arg, video, stride, s->len);
             printf("frame %d: shot %s\n", f, s->arg);
+        } else if (s->kind == ST_PIXEL) {
+            const int got = shade_at(s->bytes[0], s->bytes[1]);
+            const int ok = got == s->bytes[2];
+            printf("frame %d: pixel %s = %d%s\n", f, s->arg, got, ok ? "  ok" : "  FAILED");
+            if (!ok) fail = 1;
+        } else if (s->kind == ST_NOTBOTH) {
+            int bad = -1;
+            for (int k = 0; k < s->bytes[0]; k++) {
+                if (k) run_frame();
+                if (shade_at(s->bytes[1], s->bytes[2]) == s->bytes[3] && shade_at(s->bytes[4], s->bytes[5]) == s->bytes[6]) {
+                    bad = frame_next - 1;
+                    break;
+                }
+            }
+            now = frame_next - 1;
+            if (bad >= 0) { printf("frame %d: notboth %s  FAILED (both shown)\n", bad, s->arg); fail = 1; }
+            else printf("frame %d: notboth %s over %d frames  ok\n", now, s->arg, s->bytes[0]);
+        } else if (s->kind == ST_PIXSPR) {
+            const uint32_t oam = 0xFE00u + 4u * s->bytes[0];
+            const int sy = (int)(core->busRead8(core, oam) & 0xFF) - 16, sx = (int)(core->busRead8(core, oam + 1) & 0xFF) - 8;
+            const int x = sx + s->bytes[1], y = sy + s->bytes[2];
+            const int ok = x >= 0 && x < 160 && y >= 0 && y < 144;
+            const int got = ok ? shade_at((unsigned)x, (unsigned)y) : -1;
+            const int pass = ok && got == s->bytes[3];
+            printf("frame %d: pixelspr %s at (%d, %d) = %d%s\n", f, s->arg, x, y, got, pass ? "  ok" : "  FAILED");
+            if (!pass) fail = 1;
         } else if (s->kind == ST_PEEK) {
             show("peek", f, s, -1);
         } else if (s->kind == ST_EXPECT) {

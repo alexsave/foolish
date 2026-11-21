@@ -22,7 +22,7 @@ static uint8_t defends_with(const gd_game *g, uint8_t seat, const uint8_t *sel, 
     return 1;
 }
 
-uint8_t gd_can_say_good(const gd_game *g, uint8_t seat) {
+uint8_t gd_can_say_good(const gd_game *g, uint8_t seat) GD_BANKED {
     gd_move m;
     if (g->nb == 0 || gd_uncovered(g) != 0) return 0;
     m.type = GD_GOOD;
@@ -58,7 +58,7 @@ static uint8_t matches_all(uint8_t n, uint8_t skip, uint8_t ban) {
     return 1;
 }
 
-uint32_t gd_coverable(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) {
+uint32_t gd_coverable(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED {
     uint32_t mask = 0;
     uint8_t c, b;
     if (!defends_with(g, seat, sel, n) || n > gd_uncovered(g)) return 0;
@@ -80,7 +80,7 @@ uint32_t gd_coverable(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_
     return mask;
 }
 
-int8_t gd_best_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) {
+int8_t gd_best_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED {
     const uint32_t mask = gd_coverable(g, seat, sel, n);
     int8_t best = -1;
     uint8_t b;
@@ -138,7 +138,7 @@ static uint8_t rs_subset(uint8_t start, uint8_t depth, uint8_t has_target) {
 }
 
 uint8_t gd_resolve_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n,
-                         uint8_t target, gd_move *out) {
+                         uint8_t target, gd_move *out) GD_BANKED {
     uint8_t i, j, c;
     if (!defends_with(g, seat, sel, n) || target >= g->nb || g->def[target] != GD_NONE) return 0;
     rs_g = g;
@@ -160,7 +160,7 @@ uint8_t gd_resolve_cover(const gd_game *g, uint8_t seat, const uint8_t *sel, uin
 
 // ---- the pills ---------------------------------------------------------------
 
-uint8_t gd_pills(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) {
+uint8_t gd_pills(const gd_game *g, uint8_t seat, const uint8_t *sel, uint8_t n) GD_BANKED {
     const uint8_t defender = seat == g->defender;
     const uint8_t out_of_play = (g->out & (1u << seat)) || g->status != GD_PLAYING;
     uint8_t pills = 0, i;

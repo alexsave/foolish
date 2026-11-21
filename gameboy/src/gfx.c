@@ -56,6 +56,7 @@ void gfx_init(void) {
     LCDC_REG |= LCDCF_BG8000;
     BGP_REG = ART_BGP;
     OBP0_REG = ART_OBP0;
+    OBP1_REG = ART_OBP1;            // flying club cards only (gfx_spr_card)
     SPRITES_8x8;
     build_char_table();
     build_corner_table();
@@ -274,21 +275,43 @@ void gfx_flush(void) {
 }
 
 // ---- sprites ---------------------------------------------------------------------------
+// A frame's sprites are built in a staging copy and handed to the shadow OAM
+// in one copy with interrupts off: GBDK's VBlank copies the shadow OAM to the
+// screen's, and building in place let a VBlank land mid-build and show half
+// the new sprites over half the old (the aim's arrow moving in TARGET mode).
 static uint8_t spr_n;
+static uint8_t stage[40][4];          // y, x, tile, flags: OAM's layout
 
 void gfx_spr_begin(void) { spr_n = 0; }
 
 void gfx_spr(int16_t px, int16_t py, uint8_t tile, uint8_t flags) {
     if (spr_n >= 40) return;
-    set_sprite_tile(spr_n, tile);
-    set_sprite_prop(spr_n, flags);
-    move_sprite(spr_n, (uint8_t)(px + 8), (uint8_t)(py + 16));
+    stage[spr_n][0] = (uint8_t)(py + 16);
+    stage[spr_n][1] = (uint8_t)(px + 8);
+    stage[spr_n][2] = tile;
+    stage[spr_n][3] = flags;
     spr_n++;
 }
 
 void gfx_spr_end(void) {
     uint8_t i;
-    for (i = spr_n; i < 40; i++) move_sprite(i, 0, 0);
+    for (i = spr_n; i < 40; i++) { stage[i][0] = 0; stage[i][1] = 0; }
+    CRITICAL { memcpy((void *)shadow_OAM, stage, sizeof stage); }
+}
+
+// A card as six sprites, its top left at screen pixel (px, py). A club's
+// seams are light grey, which a sprite cannot draw as index 0: its three seam
+// tiles have sprite copies that store the seams as index 2, shown light grey
+// by OBP1 (art README "Flying club cards"); every other card stays on OBP0.
+void gfx_spr_card(int16_t px, int16_t py, uint8_t card) {
+    const uint8_t s = gd_suit_of[card], club = s == GD_CLUBS;
+    const uint8_t pal = club ? S_PALETTE : 0;
+    gfx_spr(px, py, (uint8_t)(T_RANK_6_U0 + gd_rank_of[card]), pal);
+    gfx_spr(px + 8, py, T_FACE_TR, pal);
+    gfx_spr(px, py + 8, club ? T_SP_CLUB_SUIT : (uint8_t)(T_SUIT_S + s), pal);
+    gfx_spr(px + 8, py + 8, (uint8_t)(T_PIPT_S + s), pal);
+    gfx_spr(px, py + 16, club ? T_SP_CLUB_PIPL : pipl_tile(s, 0), pal);
+    gfx_spr(px + 8, py + 16, club ? T_SP_CLUB_PIPR : (uint8_t)(T_PIPR_S + s), pal);
 }
 
 void gfx_spr_text(int16_t px, int16_t py, const char *s) {

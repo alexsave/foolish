@@ -19,9 +19,9 @@ CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_s
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
 ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c
-ROM_BANK1 = main gfx gd_play
+ROM_BANK1 = main gfx
 ROM_BANK4 = gd_bot_hw
-ROM_BANK5 = gd_menu
+ROM_BANK5 = gd_menu gd_play
 ROM_BANK6 = gd_sim
 ROM_BANK7 = gd_bot_seoul gd_bot_moscow
 ROM_BANK8 = gd_solve
@@ -133,11 +133,14 @@ clean:
 .PHONY: print-core all test mutants rom-mutants gbrun romusage clean
 
 # ---- the cross-compiler check: clang and SDCC must play the same games --------------
-$(B)/selfplay_host: tests/selfplay.c tests/selfplay_host.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ tests/selfplay.c tests/selfplay_host.c $(CORE)
+# The rules, the gestures and New York: what selfplay plays (the 32 KB ROM-only
+# build has no room for the rollout engine or the solver, and needs neither).
+SELFPLAY_SRC = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c
+$(B)/selfplay_host: tests/selfplay.c tests/selfplay_host.c tests/selfplay.h $(SELFPLAY_SRC) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ tests/selfplay.c tests/selfplay_host.c $(SELFPLAY_SRC)
 
-$(B)/selfplay.gb: tests/selfplay.c tests/selfplay_rom.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)
-	$(LCC) $(LCCFLAGS) -Wl-j -I$(B) -o $@ tests/selfplay.c tests/selfplay_rom.c $(CORE)
+$(B)/selfplay.gb: tests/selfplay.c tests/selfplay_rom.c tests/selfplay.h $(SELFPLAY_SRC) $(CORE_H) | $(B)
+	$(LCC) $(LCCFLAGS) -Wl-j -I$(B) -o $@ tests/selfplay.c tests/selfplay_rom.c $(SELFPLAY_SRC)
 
 selfplay: $(B)/selfplay_host $(B)/selfplay.gb $(B)/gbrun
 	sh tests/selfplay.sh
