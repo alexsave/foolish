@@ -104,21 +104,35 @@ def skyline(cv, base):
     windows(cv, x + 2, base - 12, x + 27, base - 2)
     windows(cv, x + 6, base - 22, x + 23, base - 15)
     windows(cv, x + 9, base - 30, x + 20, base - 25)
-    # Moscow: St Basil's onion domes
-    def onion(cx, top, r, stem):
-        rows = [1, 3, 5, 5, 5, 3, 1] if r == 2 else [1, 3, 5, 7, 7, 7, 5, 3, 1]
-        for j, w in enumerate(rows):
-            cv.rect(cx - w // 2, top + j, w, 1, K)
-        cv.rect(cx - (rows[len(rows) // 2] // 2) + 1, top + len(rows), rows[len(rows) // 2] - 2, stem, K)
-        cv.put(cx, top - 1, K)
-        cv.put(cx, top - 2, K)
+    # Moscow: the Kremlin's Spasskaya tower (tent roof, the star) behind
+    # the wall's swallow-tail battlements
     x = 132
-    cv.rect(x, base - 12, 28, 12, K)
-    onion(x + 14, base - 34, 3, 22)
-    onion(x + 5, base - 24, 2, 12)
-    onion(x + 23, base - 24, 2, 12)
-    for xx in range(x + 2, x + 27, 4):
-        cv.rect(xx, base - 8, 2, 4, T)                       # arches
+    cv.rect(x, base - 10, 28, 10, K)
+    for xx in range(x, x + 28, 4):             # swallow-tail merlons
+        cv.rect(xx, base - 13, 3, 3, K)
+        cv.put(xx + 1, base - 13, T)
+    tx = x + 14
+    cv.rect(tx - 5, base - 26, 10, 16, K)      # tower body
+    cv.rect(tx - 4, base - 31, 8, 5, K)        # clock tier
+    cv.put(tx - 1, base - 29, T)
+    cv.put(tx, base - 29, T)
+    cv.put(tx - 1, base - 28, T)
+    cv.put(tx, base - 28, T)
+    cv.rect(tx - 3, base - 35, 6, 4, K)        # belfry
+    cv.put(tx - 1, base - 34, T)
+    cv.put(tx, base - 33, T)
+    for j in range(7):                         # tent roof
+        w = 6 - j if j < 6 else 1
+        cv.rect(tx - (w + 1) // 2, base - 36 - j, max(w, 1), 1, K)
+    star = G.g("""
+..X..
+XXXXX
+.XXX.
+.X.X.
+""")
+    cv.glyph(tx - 2, base - 46, star)
+    cv.rect(tx, base - 42, 1, 1, K)
+    windows(cv, x + 1, base - 7, x + 27, base - 1, step_x=4, step_y=8)
 
 
 # ---- khokhloma border on black lacquer ------------------------------------

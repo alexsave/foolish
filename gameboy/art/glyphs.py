@@ -166,30 +166,30 @@ XXXXXXX
 
 # Card back: pixel khokhloma (the website's back: black lacquer, gold
 # vines, red berries; the website lays the pattern on its side, so the stem
-# runs across the card).  In four greys: '.' black lacquer, 'w' white = the
-# gold stem and the berry clusters, 'o' dark grey = leaves (and a berry's
-# glint).  This is the 12x20 field inside the card's black border and its
+# runs across the card).  Kept to one simple sprig: in four greys '.' black
+# lacquer, 'w' white = the gold stem and two berry clusters, 'o' dark grey =
+# leaves.  This is the 12x20 field inside the card's black border and its
 # one-pixel dark grey frame.
 BACK_FIELD = g("""
-.ww......ww.
-woww..o.wwow
-www..oo..www
-.w..oo....w.
-..w.o..oo.w.
-oo.w..ooo.w.
-ooo.w.w...wo
-.oo..ww..woo
-....w..w.w..
-wwwww...www.
-....w...w..w
-.oo..w.w..oo
-ooo...w..ooo
-oo..w.w..w..
-...w..w...w.
-.w.w..oo..w.
-www..ooo.www
-woww.oo.wwow
-.ww......ww.
+............
+............
+.ww.........
+wwww....oo..
+wwww...oooo.
+.ww.....oo..
+..w......w..
+..w..oo..w..
+...w.ooo.w..
+....w.o..w..
+.wwwwwwwwwww
+..w..w....w.
+..ww..w...w.
+.oooo..w..w.
+..oo...w.ww.
+.......wwww.
+......wwww..
+.......ww...
+............
 ............
 """)
 

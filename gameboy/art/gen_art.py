@@ -156,39 +156,24 @@ def pass_slot():
 # Its four corner pixels are index 0 so a card's round corner over the
 # wool is the plain variant wherever the card sits.
 # --------------------------------------------------------------------------
-# 16x16 = a 2x2 tile repeat of loose fibres, so the weave has no obvious
-# 8px grid; tile (tx, ty) of the table uses WOOL_[(ty & 1) * 2 + (tx & 1)].
 WOOL = G.g("""
-................
-..ww......o..w..
-....w..w.....w..
-.o.....w..ww....
-..w..........o..
-.w...ww..w......
-.........w...ww.
-...o.w.......w..
-.w....w..o......
-.w.........ww...
-.....ww.......o.
-..o.....w.w.....
-...w.........w..
-.ww....o..w...w.
-......w...w.....
-................
+........
+.w.w....
+..w.....
+........
+........
+.....w.w
+......w.
+........
 """)
 
 
-def wool_tiles():
-    cv = Canvas(16, 16, T)
-    cv.glyph(0, 0, WOOL)
-    out = [cv.tile(0, 0), cv.tile(1, 0), cv.tile(0, 1), cv.tile(1, 1)]
-    for t in out:      # round card corners over any wool tile = the plain variant
-        assert t[0] == t[7] == t[56] == t[63] == T
-    return out
-
-
 def wool_tile():
-    return wool_tiles()[0]
+    cv = Canvas(8, 8, T)
+    cv.glyph(0, 0, WOOL)
+    t = cv.tile(0, 0)
+    assert t[0] == t[7] == t[56] == t[63] == T   # round card corners over wool = plain
+    return t
 
 
 # --------------------------------------------------------------------------
@@ -215,8 +200,7 @@ def rail_glyph_tile(rows, fg=W, bg=D, x=1, y=1):
 def ui_bank():
     """name -> tile, in export order."""
     bank = {}
-    for k, t in enumerate(wool_tiles()):
-        bank["WOOL_%d" % k] = t
+    bank["WOOL"] = wool_tile()
     for ch in FONT_CHARS:
         if ch == " ":
             bank["CH_ "] = tuple([D] * 64)
@@ -525,7 +509,7 @@ def rail(scr, row, left, right, ui):
 def wool_rows(scr, rows, ui):
     for ty in rows:
         for tx in range(20):
-            scr.fill_tile(tx, ty, ui["WOOL_%d" % ((ty & 1) * 2 + (tx & 1))])
+            scr.fill_tile(tx, ty, ui["WOOL"])
 
 
 def put_card(scr, cv, tx, ty):
