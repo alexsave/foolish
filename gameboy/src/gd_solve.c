@@ -993,10 +993,10 @@ done:
 
 #ifdef SOLVE_BENCH
 // The solver's parts, each run `iters` times on the board `s` from the
-// actor's seat, timed by `clock` (the bench ROM's scanline clock): [0] the
+// actor's seat, timed by `now` (the bench ROM's scanline clock): [0] the
 // hash, [1] the two state copies a child costs, [2] generating the moves,
 // [3] applying the first move.
-void gd_solve_bench(const gd_sim *s, uint16_t iters, uint32_t (*clock)(void), uint32_t *out) GD_BANKED {
+void gd_solve_bench(const gd_sim *s, uint16_t iters, uint32_t (*now)(void), uint32_t *out) GD_BANKED {
     uint16_t k;
     uint32_t t;
     uint8_t actor;
@@ -1006,17 +1006,17 @@ void gd_solve_bench(const gd_sim *s, uint16_t iters, uint32_t (*clock)(void), ui
     W = *st;
     actor = should_act(DEF()) ? DEF() : should_act(0) ? 0 : 1;
     mv_top = MV_BASE;
-    t = clock(); for (k = 0; k < iters; k++) hash_w(); out[0] = clock() - t;
-    t = clock(); for (k = 0; k < iters; k++) { W = *st; st[1] = W; } out[1] = clock() - t;
-    t = clock(); for (k = 0; k < iters; k++) { W = *st; gen_moves(actor); } out[2] = clock() - t;
+    t = now(); for (k = 0; k < iters; k++) hash_w(); out[0] = now() - t;
+    t = now(); for (k = 0; k < iters; k++) { W = *st; st[1] = W; } out[1] = now() - t;
+    t = now(); for (k = 0; k < iters; k++) { W = *st; gen_moves(actor); } out[2] = now() - t;
     gen_moves(actor);
-    t = clock(); for (k = 0; k < iters; k++) { W = *st; apply_sol(actor, MV_BASE); } out[3] = clock() - t;
+    t = now(); for (k = 0; k < iters; k++) { W = *st; apply_sol(actor, MV_BASE); } out[3] = now() - t;
     out[4] = gen_n;
     {
         uint8_t u[GD_NCARDS];
-        t = clock(); for (k = 0; k < iters; k++) coverable(actor, u); out[5] = clock() - t;
-        t = clock(); for (k = 0; k < iters; k++) ids_of(&W.hand[actor], u); out[6] = clock() - t;
-        t = clock(); for (k = 0; k < iters; k++) { gen_n = 0; slot(); } out[7] = clock() - t;
+        t = now(); for (k = 0; k < iters; k++) coverable(actor, u); out[5] = now() - t;
+        t = now(); for (k = 0; k < iters; k++) ids_of(&W.hand[actor], u); out[6] = now() - t;
+        t = now(); for (k = 0; k < iters; k++) { gen_n = 0; slot(); } out[7] = now() - t;
         out[8] = actor == DEF() ? 1 : W.nb == 0 ? 2 : 3;
     }
 }

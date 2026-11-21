@@ -8,7 +8,7 @@
 #include <gb/gb.h>
 
 #include "../src/gd_solve.h"
-void gd_solve_bench(const gd_sim *s, uint16_t iters, uint32_t (*clock)(void), uint32_t *out) BANKED;
+void gd_solve_bench(const gd_sim *s, uint16_t iters, uint32_t (*now)(void), uint32_t *out) BANKED;
 
 static uint32_t clock_lines(void) {
     uint16_t t;
