@@ -1,0 +1,252 @@
+# Full-screen pictures: the dashboard (title + bot picker), win and lose.
+# Each one ships as its own png2asset map (tileset + 20x18 map), so the
+# only limit is its unique tile count (checked in gen_art.py, under 256
+# with room left for the sprites).
+
+import glyphs as G
+from gen_art import Canvas, Screen, T, W, D, K, card_face, card_back, flip
+
+# ---- fonts ---------------------------------------------------------------
+
+
+def text(cv, x, y, s, fg, bg=None, icons=None):
+    """Draw text with the 5x7 font, one 8px cell per character."""
+    for i, ch in enumerate(s):
+        if bg is not None:
+            cv.rect(x + 8 * i, y, 8, 8, bg)
+        if ch != " ":
+            cv.glyph(x + 8 * i + 1, y + 1, G.FONT[ch], fg)
+
+
+def big_text(cv, x, y, s, scale=3, fg=K, outline=W, shadow=D):
+    """The title lettering: the 5x7 font at 3x, outlined, with a drop shadow."""
+    layer = Canvas(cv.w, cv.h, None)
+    for i, ch in enumerate(s):
+        rows = G.FONT.get(ch, [])
+        for j, r in enumerate(rows):
+            for k, c in enumerate(r):
+                if c == "X":
+                    layer.rect(x + i * (5 * scale + scale) + k * scale, y + j * scale, scale, scale, fg)
+    ink = [(xx, yy) for yy in range(cv.h) for xx in range(cv.w) if layer.px[yy][xx] == fg]
+    inkset = set(ink)
+    for (xx, yy) in ink:                       # shadow, down-right 2px
+        for dx, dy in ((2, 2), (1, 2), (2, 1)):
+            if (xx + dx, yy + dy) not in inkset:
+                cv.put(xx + dx, yy + dy, shadow)
+    for (xx, yy) in ink:                       # outline
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                if (xx + dx, yy + dy) not in inkset and cv.get(xx + dx, yy + dy) != shadow:
+                    cv.put(xx + dx, yy + dy, outline)
+    for (xx, yy) in ink:
+        cv.put(xx, yy, fg)
+
+
+def big_width(s, scale=3):
+    return len(s) * 6 * scale - scale
+
+
+# ---- the skyline: Miami up to Moscow ------------------------------------
+def windows(cv, x0, y0, x1, y1, step_x=3, step_y=4, c=T):
+    for y in range(y0, y1, step_y):
+        for x in range(x0, x1, step_x):
+            cv.put(x, y, c)
+
+
+def skyline(cv, base):
+    """Five cities left to right, black silhouettes with light windows,
+    standing on y = base.  Miami, New York, Seoul, Warsaw, Moscow."""
+    # Miami: two palms and a low art-deco hotel
+    def palm(x, h):
+        for y in range(base - h, base):
+            cv.put(x + (1 if y < base - h * 2 // 3 else 0), y, K)
+        top = base - h
+        for dx, dy in ((-4, 2), (-3, 1), (-2, 0), (-1, 0), (1, 0), (2, 0), (3, 1), (4, 2),
+                       (-3, -1), (-2, -2), (2, -2), (3, -1), (0, -1), (1, -1), (-1, -1),
+                       (-5, 3), (5, 3), (0, 1), (1, 1), (2, 1)):
+            cv.put(x + 1 + dx, top + dy, K)
+    cv.rect(6, base - 14, 18, 14, K)
+    cv.rect(10, base - 18, 10, 4, K)
+    cv.rect(13, base - 21, 4, 3, K)
+    windows(cv, 8, base - 12, 23, base - 2)
+    palm(2, 20)
+    palm(26, 16)
+    # New York: the Empire State building, stepped, with its mast
+    x = 36
+    cv.rect(x, base - 26, 16, 26, K)
+    cv.rect(x + 2, base - 32, 12, 6, K)
+    cv.rect(x + 4, base - 37, 8, 5, K)
+    cv.rect(x + 6, base - 41, 4, 4, K)
+    cv.rect(x + 7, base - 44, 2, 3, K)
+    windows(cv, x + 2, base - 24, x + 15, base - 2)
+    cv.rect(x + 18, base - 18, 8, 18, K)                     # a neighbour
+    windows(cv, x + 19, base - 16, x + 26, base - 2)
+    # Seoul: N Seoul Tower on its hill
+    x = 70
+    for i in range(24):
+        w = 24 - i
+        cv.rect(x - w // 2 + 6, base - 1 - i // 3, w, 1, K)  # Namsan hill
+    cv.rect(x + 5, base - 40, 2, 34, K)
+    cv.rect(x + 2, base - 38, 8, 5, K)                       # the pod
+    cv.rect(x + 3, base - 40, 6, 2, K)
+    cv.put(x + 3, base - 36, T)
+    cv.put(x + 5, base - 36, T)
+    cv.put(x + 7, base - 36, T)
+    cv.rect(x + 5, base - 43, 2, 3, K)                       # mast
+    # Warsaw: the Palace of Culture and Science, wedding-cake tiers + spire
+    x = 98
+    cv.rect(x, base - 14, 28, 14, K)
+    cv.rect(x + 4, base - 24, 20, 10, K)
+    cv.rect(x + 7, base - 32, 14, 8, K)
+    cv.rect(x + 9, base - 38, 10, 6, K)
+    cv.rect(x + 11, base - 42, 6, 4, K)
+    cv.rect(x + 13, base - 44, 2, 2, K)
+    windows(cv, x + 2, base - 12, x + 27, base - 2)
+    windows(cv, x + 6, base - 22, x + 23, base - 15)
+    windows(cv, x + 9, base - 30, x + 20, base - 25)
+    # Moscow: St Basil's onion domes
+    def onion(cx, top, r, stem):
+        rows = [1, 3, 5, 5, 5, 3, 1] if r == 2 else [1, 3, 5, 7, 7, 7, 5, 3, 1]
+        for j, w in enumerate(rows):
+            cv.rect(cx - w // 2, top + j, w, 1, K)
+        cv.rect(cx - (rows[len(rows) // 2] // 2) + 1, top + len(rows), rows[len(rows) // 2] - 2, stem, K)
+        cv.put(cx, top - 1, K)
+        cv.put(cx, top - 2, K)
+    x = 132
+    cv.rect(x, base - 12, 28, 12, K)
+    onion(x + 14, base - 34, 3, 22)
+    onion(x + 5, base - 24, 2, 12)
+    onion(x + 23, base - 24, 2, 12)
+    for xx in range(x + 2, x + 27, 4):
+        cv.rect(xx, base - 8, 2, 4, T)                       # arches
+
+
+# ---- khokhloma border on black lacquer ------------------------------------
+VINE = G.g("""
+.ww.....ww......
+w..w..ow..w.....
+...ww.oo...ww..o
+..w..w........ww
+""")
+
+
+def lacquer(cv, y0, y1):
+    cv.rect(0, y0, 160, y1 - y0, K)
+    for x in range(0, 160, 16):                 # a gold vine along the top
+        cv.glyph(x, y0 + 2, VINE)
+    cv.rect(0, y0, 160, 1, D)
+
+
+# ---- screens -----------------------------------------------------------------
+CITIES = [("MIAMI", 1), ("NEW YORK", 2), ("SEOUL", 3), ("WARSAW", 4)]
+
+
+def dashboard(sp, cont="SEOUL", cursor=0):
+    s = Screen("d1_dashboard" if cont else "d1b_dashboard_new", "Dashboard")
+    cv = s.bg
+    cv.rect(0, 0, 160, 144, T)
+    # sky: a big pale moon and a few stars
+    for (x, y) in ((8, 6), (30, 12), (60, 4), (118, 8), (150, 14), (140, 30), (20, 30)):
+        cv.put(x, y, W)
+    for j in range(9):
+        for i in range(9):
+            if (i - 4) ** 2 + (j - 4) ** 2 <= 17:
+                cv.put(136 + i, 2 + j, W)
+    title = "DURAK"
+    bx = (160 - big_width(title)) // 2
+    big_text(cv, bx, 4, title)
+    text(cv, (160 - 7 * 8) // 2, 28, "FOOLISH", K)
+    skyline(cv, 80)
+    lacquer(cv, 80, 144)
+    # menu rows sit on the tile grid (rows 11, 13..16) so the code can
+    # print the CONTINUE city with the lacquer font instead of a map per city
+    rows = []
+    if cont:
+        text(cv, 16, 88, "CONTINUE", W)
+        text(cv, 16 + 9 * 8, 88, cont, D)
+        rows.append(88)
+    y = 104
+    for name, level in CITIES:
+        text(cv, 16, y, name, W)
+        if level == 4:
+            text(cv, 160 - 5 * 8, y, "BOSS", W)
+        else:
+            for k in range(level):
+                cv.glyph(160 - 5 * 8 + 1 + k * 8, y + 1, G.SMALL["D"], W)
+        rows.append(y)
+        y += 8
+    s.spr(6, rows[cursor], sp["SP_POINTER"])
+    s.notes.append("START in a game comes back here at once (the website's back button has no confirm); the game stays and CONTINUE resumes it.")
+    return s
+
+
+def outcome(win, bot="SEOUL"):
+    s = Screen("e1_win" if win else "e2_lose", "Win" if win else "Lose")
+    cv = s.bg
+    cv.rect(0, 0, 160, 144, T)
+    lacquer(cv, 0, 144)
+    # khokhloma vine also along the bottom (flipped)
+    for x in range(0, 160, 16):
+        cv.glyph(x, 144 - 6, VINE[::-1])
+    if win:
+        big = "YOU WIN"
+        sub1, sub2 = bot, "IS THE DURAK"
+        fan = [("A", "S"), ("A", "H"), ("A", "C"), ("A", "D")]
+    else:
+        big = "DURAK!"
+        sub1, sub2 = "YOU ARE", "THE FOOL"
+        fan = None
+    scale = 2 if len(big) > 6 else 3
+    big_text(cv, (160 - big_width(big, scale)) // 2, 14, big, scale=scale, fg=W, outline=K, shadow=D)
+    yb = 14 + 7 * scale + 8
+    text(cv, (160 - len(sub1) * 8) // 2, yb, sub1, W)
+    text(cv, (160 - len(sub2) * 8) // 2, yb + 10, sub2, W)
+    if fan:
+        x0 = (160 - (len(fan) * 16 + 8)) // 2
+        for i, c in enumerate(fan):
+            cv.blit(card_face(*c), x0 + i * 20, 80)
+    else:
+        # the fool left holding the cards: a fan of backs, and the cap
+        x0 = (160 - 7 * 8 - 8) // 2
+        for i in range(7):
+            cv.blit(card_back(), x0 + i * 8, 94)
+        fool_cap(cv, 80, 70)
+    yb = 120 if fan is None else 112
+    button(cv, 40, yb, "BTN_A")
+    text(cv, 52, yb, "REMATCH", W)
+    button(cv, 40, yb + 9, "BTN_B")
+    text(cv, 52, yb + 9, "HOME", W)
+    return s
+
+
+def button(cv, x, y, name):
+    """A round A/B button on the lacquer: white ring, white letter."""
+    for j, r in enumerate(G.ICON[name]):
+        for i, ch in enumerate(r):
+            if ch == "X":
+                cv.put(x + i, y + j, W)
+            elif ch == "w":
+                cv.put(x + i, y + j, K)
+
+
+def fool_cap(cv, cx, top):
+    """The durak's jester cap: three points with bells over a band."""
+    base = top + 16
+    for tip_x, tip_y in ((cx - 14, top + 5), (cx, top), (cx + 14, top + 5)):
+        for y in range(tip_y, base):
+            f = (y - tip_y) / (base - tip_y)
+            half = int(1 + f * 6)
+            for x in range(tip_x - half, tip_x + half + 1):
+                edge = x in (tip_x - half, tip_x + half) or y == tip_y
+                if cv.get(x, y) != W or edge:
+                    cv.put(x, y, W if edge else D)
+        for dx, dy in ((0, -2), (-1, -3), (0, -3), (1, -3), (0, -4)):
+            cv.put(tip_x + dx, tip_y + dy, W)      # the bell
+    cv.rect(cx - 19, base, 39, 4, W)
+    for x in range(cx - 17, cx + 18, 4):
+        cv.put(x, base + 1, D)
+        cv.put(x + 1, base + 2, D)
+
+
+def screens_full(sp):
+    return [dashboard(sp, "SEOUL", 0), dashboard(sp, None, 3), outcome(True), outcome(False)]
