@@ -2,7 +2,10 @@
 # has no confirmation); the game stays open and the dashboard offers CONTINUE.
 @99  poke _sys_time 1f 00
 @100 press A
-+20  press RIGHT
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
++1   press RIGHT
 +6   press START
 +1   until _screen 00
 +0   expect _dash_item 00
@@ -22,6 +25,7 @@
 +1   press A
 +1   until _screen 01
 +0   expect _bot_city 01
++0   until _fly_n 00
 +0   shot shots/93_new_york.png 3
 # A quick tap while a screen loads (the LCD is off) is kept, not dropped:
 # START, then at once a two-frame DOWN during the dashboard's load.

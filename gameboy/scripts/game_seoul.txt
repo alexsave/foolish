@@ -8,7 +8,8 @@
 +8   press A
 +1   until _screen 01
 +0   expect _bot_city 02
-+20  shot shots/seoul_01_deal.png 3
++0   until _fly_n 00
++1   shot shots/seoul_01_deal.png 3
 repeat 400
 +12  press RIGHT
 +6   press UP

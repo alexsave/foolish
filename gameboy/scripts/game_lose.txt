@@ -8,6 +8,9 @@
 # and passes through a hand too big for the screen (19 shown, tabs count the rest).
 @99  poke _sys_time 01 00
 @100 press A
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
 repeat 28
 +12  press RIGHT
 +6   press UP

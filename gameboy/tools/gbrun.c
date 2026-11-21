@@ -31,6 +31,8 @@
 //                               next "+N" counts from the last of them
 //   +N   atleast SYM LEN MIN    fail unless the LEN-byte little-endian number at the
 //                               symbol is at least MIN (a headroom, a count)
+//   +N   same PATH              fail unless every screen pixel is the shade of the
+//                               same pixel of the PNG at PATH (a shot, any SCALE)
 //   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -53,7 +55,7 @@
 #define UNTIL_MAX 200000      // frames an until waits; GBRUN_UNTIL_MAX overrides (slow stress runs)
 static long until_max = UNTIL_MAX;
 
-enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_ATLEAST, ST_END };
+enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_ATLEAST, ST_SAME, ST_END };
 
 typedef struct {
     int absolute, n;        // @n or +n
@@ -164,6 +166,9 @@ static void parse_line(int i) {
         snprintf(s->arg, sizeof s->arg, "%s", a1);
         s->len = (int)len;
         s->keys = min;
+    } else if (!strcmp(cmd, "same") && n >= 2) {
+        s->kind = ST_SAME;
+        snprintf(s->arg, sizeof s->arg, "%s", a1);
     } else if (!strcmp(cmd, "end")) {
         s->kind = ST_END;
     } else {
@@ -298,6 +303,31 @@ static int shade_at(unsigned x, unsigned y) {
     return lum >= 192 ? 0 : lum >= 128 ? 1 : lum >= 64 ? 2 : 3;
 }
 
+// The whole screen against a PNG shot of it (scaled by any whole factor), shade
+// by shade: the number of pixels that differ, and the first, in reading order.
+static int same_as(const char *path, int *fx, int *fy) {
+    png_image img;
+    memset(&img, 0, sizeof img);
+    img.version = PNG_IMAGE_VERSION;
+    if (!png_image_begin_read_from_file(&img, path)) { fprintf(stderr, "cannot read %s\n", path); exit(2); }
+    img.format = PNG_FORMAT_RGB;
+    const unsigned sc = img.width / GB_W;
+    if (!sc || img.width != GB_W * sc || img.height != GB_H * sc) { fprintf(stderr, "%s is not a screen shot\n", path); exit(2); }
+    unsigned char *px = malloc(PNG_IMAGE_SIZE(img));
+    if (!px || !png_image_finish_read(&img, NULL, px, 0, NULL)) { fprintf(stderr, "cannot read %s\n", path); exit(2); }
+    int diff = 0;
+    *fx = *fy = -1;
+    for (unsigned y = 0; y < GB_H; y++)
+        for (unsigned x = 0; x < GB_W; x++) {
+            const unsigned char *p = px + 3u * ((y * sc) * img.width + x * sc);
+            const unsigned lum = (p[0] + p[1] + p[2]) / 3u;
+            const int want = lum >= 192 ? 0 : lum >= 128 ? 1 : lum >= 64 ? 2 : 3;
+            if (shade_at(x, y) != want) { if (!diff) { *fx = (int)x; *fy = (int)y; } diff++; }
+        }
+    free(px);
+    return diff;
+}
+
 static int show(const char *what, int frame, const Step *s, int ok) {
     uint32_t a = resolve(s->arg);
     printf("frame %d: %s %s =", frame, what, s->arg);
@@ -376,6 +406,11 @@ int main(int argc, char **argv) {
             now = frame_next - 1;
             if (bad >= 0) { printf("frame %d: notboth %s  FAILED (both shown)\n", bad, s->arg); fail = 1; }
             else printf("frame %d: notboth %s over %d frames  ok\n", now, s->arg, s->bytes[0]);
+        } else if (s->kind == ST_SAME) {
+            int x, y;
+            const int d = same_as(s->arg, &x, &y);
+            if (d) { printf("frame %d: same %s  FAILED (%d pixels differ, the first at (%d, %d))\n", f, s->arg, d, x, y); fail = 1; }
+            else printf("frame %d: same %s  ok\n", f, s->arg);
         } else if (s->kind == ST_PIXSPR) {
             const uint32_t oam = 0xFE00u + 4u * s->bytes[0];
             const int sy = (int)(core->busRead8(core, oam) & 0xFF) - 16, sx = (int)(core->busRead8(core, oam + 1) & 0xFF) - 8;

@@ -173,6 +173,28 @@ static gd_game before;
 uint8_t fly_n, fly_t;
 static uint16_t fly_t0;         // sys_time at take-off: a flight runs on frames, not on loop passes
 static uint8_t fly_card[FLY_MAX];
+// THE DEAL (README "The deal"): the opening deal and every refill from the
+// stock fly one card at a time through this same flight, DEAL_FRAMES frames a
+// card. A card to the bot flies as a back; a card to me flips (back, narrow,
+// edge, face, a quarter of the flight each); the trump is turned up last.
+#define DEAL_FRAMES 8
+// The cards still to leave the deck, a seat; the seat whose cards go first (a
+// refill: the rules' draw order); the seat the card in flight goes to
+// (DL_TRUMP: the trump turning up; DL_NONE: the flight is not a deal's).
+// My hidden cards are always the last dl_n[HUMAN] of the shown hand, as new
+// cards join at the end in draw order.
+uint8_t dl_n[2];
+static uint8_t dl_first, dl_flags;
+uint8_t dl_seat = 0xFFu;
+#define DL_NONE  0xFFu
+#define DL_TRUMP 2u
+#define DL_OPEN  1u     // the opening deal: alternate, the bot first; DEALING on the rail
+#define DL_TURN  2u     // the trump is still to be turned up
+#define DL_TDRAW 4u     // the face-up trump was drawn and has not left (0, 4) yet
+static uint8_t dealing(void) { return dl_seat != DL_NONE || dl_n[HUMAN] || dl_n[BOT] || (dl_flags & DL_TURN); }
+static uint8_t trump_hidden(void) { return (dl_flags & DL_TURN) || dl_seat == DL_TRUMP; }
+static uint8_t bot_shown(void);
+static void deal_next(void);
 static int16_t fly_x0[FLY_MAX], fly_y0[FLY_MAX], fly_x1[FLY_MAX], fly_y1[FLY_MAX];
 // the first flying card's top left this frame, in screen pixels (gbrun reads it)
 uint8_t fly_pos[2];
@@ -185,12 +207,15 @@ static uint8_t flying(uint8_t c) {
 }
 
 // Apply a move for a seat; 1 if it was legal.
+static void deal_refill(void);
 static uint8_t play(uint8_t seat, const gd_move *m) {
     before = G;
     fly_from(seat, m);
     if (!gd_apply(&G, &R, seat, m)) { fly_n = 0; return 0; }
     note_new_cards(&before);
     fly_to(seat);
+    deal_refill();
+    if (!fly_n) deal_next();
     idle = 0;
     dirty = 1;
     // The website's afterMove leaves target mode after my own move. A bot move
@@ -241,6 +266,11 @@ static void new_game(void) {
     end_t = 0;
     dirty = 1;
     rebuild_disp();
+    // the opening deal: six each, alternating, then the trump turned up
+    dl_n[HUMAN] = GD_HAND; dl_n[BOT] = GD_HAND;
+    dl_flags = DL_OPEN | DL_TURN;
+    dl_seat = DL_NONE;
+    deal_next();
 }
 
 // ---- the selection --------------------------------------------------------------
@@ -393,6 +423,8 @@ static void human_input(void) {
         return;
     }
     if (G.status != GD_PLAYING) return;
+    // While cards are dealt, presses are kept for when they have landed.
+    if (dealing()) { in_keep_except(0); return; }
     hand_input();
     // A or SELECT held: up and down are inert, so a held modifier never plays.
     if (in_down(J_A) || in_down(J_SELECT)) return;
@@ -408,7 +440,7 @@ static void think_rail(void);
 static void bot_turn(void) {
     uint32_t n, r, t0;
     gd_move m;
-    if (G.status != GD_PLAYING || idle < BOT_DELAY) return;
+    if (G.status != GD_PLAYING || idle < BOT_DELAY || dealing()) return;
     bot_board = G;
     t0 = line_clock();
     if (bot_city == BOT_NEW_YORK) {
@@ -595,6 +627,89 @@ static void fly_to(uint8_t seat) {
     fly_t0 = sys_time;
 }
 
+// ---- the deal: one card at a time from the deck (README "The deal") -----------------
+#define DECK_PX 8               // the deck's top left, tile (1, 4)
+#define DECK_PY 32
+#define TRUMP_PX 0              // the face-up trump's, tile (0, 4)
+
+// The bot's backs as the board draws them: laid out for its whole hand
+// (ART_BOT_HAND_LAST_COL at most, centred in columns 0..16), of which the
+// first bot_shown() have arrived.
+static uint8_t bot_shown(void) {
+    const uint8_t n = gd_hand_n(&G, BOT), away = (uint8_t)(dl_n[BOT] + (dl_seat == BOT ? 1u : 0u));
+    return n > away ? (uint8_t)(n - away) : 0;
+}
+static uint8_t bot_x0(void) {
+    uint8_t n = gd_hand_n(&G, BOT);
+    if (n > ART_BOT_HAND_LAST_COL) n = ART_BOT_HAND_LAST_COL;
+    return (uint8_t)((ART_BOT_HAND_LAST_COL + 1u - (n + 1u)) / 2u);
+}
+
+// A refill after a move: what the rules drew from the stock (and the face-up
+// trump, drawn last), in the order they drew it: the first seat's cards, then
+// the other's.
+static void deal_refill(void) {
+    const uint8_t drawn = (uint8_t)(before.stock_n - G.stock_n);
+    const uint8_t tdraw = before.has_flipped && !G.has_flipped;
+    uint8_t i, c;
+    if (!drawn && !tdraw) return;
+    for (i = 0; i <= drawn; i++) {
+        if (i == drawn) { if (!tdraw) break; c = before.flipped; }
+        else c = before.stock[i];
+        if (!i) dl_first = GD_HAS(G.hand[HUMAN], c) ? HUMAN : BOT;
+        dl_n[GD_HAS(G.hand[HUMAN], c) ? HUMAN : BOT]++;
+    }
+    if (tdraw) dl_flags |= DL_TDRAW;
+}
+
+// The next card leaves: the bot's and mine alternately in the opening, the
+// first seat's then the other's in a refill; when none is left, the trump
+// turns up (the opening). Called when the last flight has landed.
+static void deal_next(void) {
+    uint8_t seat, c, i, last;
+    const uint8_t was = dl_seat;
+    dl_seat = DL_NONE;
+    if (!dl_n[HUMAN] && !dl_n[BOT]) {
+        if (!(dl_flags & DL_TURN)) {
+            // all landed: the bot's half second starts now
+            if (was != DL_NONE) idle = 0;
+            dl_flags = 0;
+            return;
+        }
+        dl_flags &= (uint8_t)~DL_TURN;
+        dl_seat = DL_TRUMP;
+        fly_card[0] = G.flipped;
+        fly_x0[0] = DECK_PX; fly_y0[0] = DECK_PY; fly_x1[0] = TRUMP_PX; fly_y1[0] = DECK_PY;
+    } else {
+        if (dl_flags & DL_OPEN) seat = (dl_n[BOT] && dl_n[BOT] >= dl_n[HUMAN]) ? BOT : HUMAN;
+        else seat = dl_n[dl_first] ? dl_first : (uint8_t)(1u - dl_first);
+        last = (uint8_t)(dl_n[HUMAN] + dl_n[BOT]) == 1u;
+        dl_n[seat]--;
+        dl_seat = seat;
+        if (seat == HUMAN) {
+            c = disp[(uint8_t)(disp_n - dl_n[HUMAN] - 1u)];
+            hand_px(c, &fly_x1[0], &fly_y1[0]);
+        } else {
+            c = GD_NONE;        // a back: which card it is does not show
+            i = bot_shown();        // the slot after the backs already there
+            if (i > ART_BOT_HAND_LAST_COL - 1u) i = ART_BOT_HAND_LAST_COL - 1u;
+            fly_x1[0] = (int16_t)((bot_x0() + i) * 8u); fly_y1[0] = BOT_PY;
+        }
+        fly_x0[0] = DECK_PX; fly_y0[0] = DECK_PY;
+        if (last && (dl_flags & DL_TDRAW)) {
+            // the face-up trump, the last card the rules drew: it leaves (0, 4) face up
+            dl_flags &= (uint8_t)~DL_TDRAW;
+            c = G.flipped;
+            fly_x0[0] = TRUMP_PX;
+        }
+        fly_card[0] = c;
+    }
+    fly_n = 1;
+    fly_t = 0;
+    fly_t0 = sys_time;
+    dirty = 1;
+}
+
 // Whose move it is, short enough (12 at most) to sit beside any action word.
 static const char *role_text(void) {
     if (G.nb == 0) return G.fa == HUMAN ? "YOUR ATTACK" : "THEIR ATTACK";
@@ -624,7 +739,7 @@ static char rail_buf[21];
 
 static const char *top_left(void) {
     const char *p = bot_names[bot_city];
-    uint8_t n = 0, c = gd_hand_n(&G, BOT);
+    uint8_t n = 0, c = bot_shown();     // the backs that have arrived
     while (*p) rail_buf[n++] = *p++;
     rail_buf[n++] = ' ';
     rail_buf[n++] = IC_BACK[0];
@@ -645,6 +760,8 @@ static void draw_foot(void) {
         const uint8_t r = gd_result(&G);
         gfx_rail(ROW_FOOT, r == GD_RESULT_FOOL1 ? "YOU WIN" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED",
                  r == GD_RESULT_DRAW ? IC_A "AGAIN" : "");
+    } else if (dl_flags & DL_OPEN) {
+        gfx_rail(ROW_FOOT, "DEALING", "");
     } else if (in_target) {
         gfx_rail(ROW_FOOT, IC_LEFT IC_RIGHT "TARGET", tgt[tgt_i] == TGT_PASS ? IC_UP "PASS" : IC_UP "COVER");
     } else if (in_select_held() && cur >= 0) {
@@ -674,7 +791,8 @@ static void draw_table(void) {
     char right[8];
     gfx_clear_table();
     // the top rail: the bot and its count; the deck and the trump suit
-    deck = (uint8_t)(G.stock_n + (G.has_flipped ? 1u : 0u));
+    // the deck counts a dealt card until it leaves
+    deck = (uint8_t)(G.stock_n + (G.has_flipped ? 1u : 0u) + dl_n[HUMAN] + dl_n[BOT]);
     n = 0;
     if (deck) {
         right[n++] = IC_DECK[0];
@@ -682,18 +800,22 @@ static void draw_table(void) {
         right[n++] = (char)('0' + deck % 10);
         right[n++] = ' ';
     }
-    right[n++] = (char)(IC_SUIT0 + G.trump);
+    if (!trump_hidden()) right[n++] = (char)(IC_SUIT0 + G.trump);  // shown once turned up
     right[n] = 0;
     gfx_rail(0, top_left(), right);
     // the bot's hand: backs one column apart, centred in columns 0..16 (the
-    // discard pile has 17..19); 16 at most are shown, the rail has the count
-    n = gd_hand_n(&G, BOT);
+    // discard pile has 17..19); 16 at most are shown, the rail has the count.
+    // Those that have arrived, laid out for the whole hand.
+    n = bot_shown();
     if (n > ART_BOT_HAND_LAST_COL) n = ART_BOT_HAND_LAST_COL;
-    x = (uint8_t)((ART_BOT_HAND_LAST_COL + 1u - (n + 1u)) / 2u);
+    x = bot_x0();
     for (i = 0; i < n; i++) gfx_back((uint8_t)(x + i), ROW_BOTHAND);
-    // the trump card under the deck, and the discard pile
-    if (G.has_flipped) gfx_card(0, 4, G.flipped);
-    if (G.stock_n) gfx_back(1, 4);
+    // the trump card under the deck (until turned up, or until it leaves when
+    // drawn), and the deck while a card is left to leave it
+    if ((G.has_flipped && !trump_hidden()) || (dl_flags & DL_TDRAW)) gfx_card(0, 4, G.flipped);
+    // (lifted while the trump turns over: it is set down on the trump as it lands)
+    if ((G.stock_n || (uint8_t)(dl_n[HUMAN] + dl_n[BOT]) > ((dl_flags & DL_TDRAW) ? 1u : 0u)) && dl_seat != DL_TRUMP)
+        gfx_back(1, 4);
     // the discard pile, top right (nothing while it is empty)
     if (G.discard)
         for (i = 0; i < 9; i++)
@@ -709,7 +831,8 @@ static void draw_table(void) {
     hand_layout();
     for (i = view_off; i < view_off + hand_shown; i++) {
         hand_place(i, &x, &y, &w);
-        if (!flying(disp[i])) gfx_card(x, y, disp[i]);
+        // a card still to be dealt (the last dl_n of the hand) keeps its place empty
+        if (!flying(disp[i]) && i < disp_n - dl_n[HUMAN]) gfx_card(x, y, disp[i]);
     }
     if (disp_n > HAND_SHOWN) {
         // tabs counting the hidden cards each side
@@ -773,15 +896,29 @@ static void arrow(int16_t sx, int16_t sy, int16_t dx, int16_t dy, uint8_t dashed
 
 static void draw_table_sprites(void) {
     uint8_t x = 0, y = 0, w = 1, tx, ty, k;
+    const int16_t frames = dl_seat != DL_NONE ? DEAL_FRAMES : FLY_FRAMES;
     gfx_spr_begin();
     // cards in flight first: the lower sprites draw on top
     for (k = 0; k < fly_n; k++) {
-        const int16_t px = (int16_t)(fly_x0[k] + (int16_t)((fly_x1[k] - fly_x0[k]) * (int16_t)fly_t / FLY_FRAMES));
-        const int16_t py = (int16_t)(fly_y0[k] + (int16_t)((fly_y1[k] - fly_y0[k]) * (int16_t)fly_t / FLY_FRAMES));
+        const int16_t px = (int16_t)(fly_x0[k] + (int16_t)((fly_x1[k] - fly_x0[k]) * (int16_t)fly_t / frames));
+        const int16_t py = (int16_t)(fly_y0[k] + (int16_t)((fly_y1[k] - fly_y0[k]) * (int16_t)fly_t / frames));
         if (!k) { fly_pos[0] = (uint8_t)px; fly_pos[1] = (uint8_t)py; }
-        gfx_spr_card(px, py, fly_card[k]);
+        if (dl_seat == DL_NONE || (fly_card[k] == G.flipped && !G.has_flipped && dl_seat != DL_TRUMP)) {
+            // a played card, or the face-up trump drawn: its face all the way
+            gfx_spr_card(px, py, fly_card[k]);
+        } else if (dl_seat == BOT) {
+            gfx_spr_back(px, py);
+        } else {
+            // dealt to me, or the trump turning up: it flips in flight, a
+            // quarter of it each: back, narrow back, edge, face
+            const uint8_t q = (uint8_t)(fly_t * 4u / DEAL_FRAMES);
+            if (q == 0) gfx_spr_back(px, py);
+            else if (q == 1) gfx_spr_strip(px + 4, py, T_SP_NARROW_T);
+            else if (q == 2) gfx_spr_strip(px + 4, py, T_SP_EDGE_T);
+            else gfx_spr_card(px, py, fly_card[k]);
+        }
     }
-    if (G.status == GD_PLAYING && cur >= 0 && (uint8_t)cur < disp_n) {
+    if (G.status == GD_PLAYING && cur >= 0 && (uint8_t)cur < disp_n && !dealing()) {
         hand_layout();
         hand_place((uint8_t)cur, &x, &y, &w);
         // the underline, 1 px under the card
@@ -1035,7 +1172,14 @@ void main(void) {
             // a step of the cards in flight (frames since take-off, so a slow
             // redraw does not slow the flight); landed, the board draws them
             const uint16_t t = (uint16_t)(sys_time - fly_t0);
-            if (t >= FLY_FRAMES) { fly_n = 0; dirty = 1; }
+            const uint8_t frames = dl_seat != DL_NONE ? DEAL_FRAMES : FLY_FRAMES;
+            if (t >= frames) {
+                // landed: drawn on its place first, so the board's redraw puts
+                // it under its own sprite and never beside one a step short
+                fly_t = frames;
+                draw_table_sprites();
+                fly_n = 0; dirty = 1; deal_next();
+            }
             else { fly_t = (uint8_t)t; if (!dirty) draw_table_sprites(); }
         }
         if (screen != shown) dirty = 1;
@@ -1056,6 +1200,8 @@ void main(void) {
                 if (shown != SCREEN_TABLE) gfx_load_table();
                 draw_table();
                 draw_table_sprites();
+                // a dealt card's flight starts when its first frame is drawn
+                if (fly_n && dl_seat != DL_NONE && !fly_t) fly_t0 = sys_time;
                 draw_lines_last = (uint16_t)lines_since(t0);
                 if (shown == SCREEN_TABLE && draw_lines_last > draw_lines_max) draw_lines_max = draw_lines_last;
             }
