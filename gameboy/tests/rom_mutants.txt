@@ -1,0 +1,8 @@
+# file ~ exact text ~ replacement ~ what the mutant breaks (tests/rom_mutants.sh)
+main.c~    if (nc == 0 && pass_ok) { fire(GD_PASS, &card, 1); return; }~    if (0) { fire(GD_PASS, &card, 1); return; }~UP no longer passes at once with a pass-only card
+main.c~    if (in_pressed(J_DOWN)) { if (in_target) in_target = 0; else take_or_good(); dirty = 1; }~    if (in_pressed(J_DOWN)) { take_or_good(); dirty = 1; }~DOWN in target mode takes instead of backing out
+main.c~    else if (in_a_held()) sweep(step);~    else if (0) sweep(step);~A held + RIGHT moves without selecting
+main.c~    if (in_select_held()) rearrange(step);~    if (0) rearrange(step);~SELECT held + RIGHT does not rearrange
+main.c~    if (pass_ok) tgt[tgt_n++] = TGT_PASS;~    ~target mode has no pass space
+main.c~    if (pills & GD_PILL_PICKUP) fire(GD_PICKUP, 0, 0);~    if (0) fire(GD_PICKUP, 0, 0);~DOWN never picks up
+main.c~        if (dash_item == DASH_CONTINUE) { go_table(); return; }~        if (0) { go_table(); return; }~CONTINUE deals a new game instead
