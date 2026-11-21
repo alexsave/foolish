@@ -252,10 +252,11 @@ $(B)/vscordite: tests/vscordite.c tests/foolish_map.h $(MATCH_SRC) $(CORE_H) src
 $(B)/moscowcheck_host: tests/moscowcheck.c $(MATCH_SRC) $(CORE_H) src/gd_bot_moscow.h | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DMOSCOWCHECK_HOST -I$(B) -o $@ tests/moscowcheck.c $(filter-out tests/match.c,$(MATCH_SRC))
 
-$(B)/rom/moscowcheck.o: tests/moscowcheck.c $(CORE_H) src/gd_bot_moscow.h | $(B)/rom
+$(B)/rom/moscowcheck.o: tests/moscowcheck.c $(CORE_H) src/gd_bot_moscow.h src/input.h src/live.h | $(B)/rom
 	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
 
-MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/moscowcheck.o \
+# input.o and live.o: the live-think handler ticks through the whole check.
+MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/input.o $(B)/rom/live.o $(B)/rom/moscowcheck.o \
          $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_solve.o $(B)/rom/gd_bot_moscow.o
 $(B)/moscowcheck.gb: $(MC_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(MC_OBJ) 2>&1 | tee $(B)/moscowcheck.link

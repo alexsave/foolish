@@ -797,31 +797,32 @@ static void draw_table_sprites(void) {
 // The search reads the rules state G (only read, there and here) and its own
 // memory; what live_think changes (the hand's order, the cursor, the
 // selection, the map and the sprites) is the screen's, which no bot reads.
-#define THINK_DOT_TICKS 15      // a dot every quarter second (frames), three, then none again
-static uint8_t think_dots, think_sel;
+// The dots: a wave of three, one tile changing a step, so no frame can show a
+// half-written step: "", ".", "..", "...", " ..", "  .", again.
+#define THINK_DOT_TICKS 15      // frames a step: a quarter second
+#define THINK_STEPS 6
+static uint8_t think_dots, think_sel;   // the wave's step; SELECT held as last drawn
 static uint16_t think_next;             // sys_time when the dots step next
 
-// "<CITY> THINKS" into t; its length.
-static uint8_t think_text(char *t) {
-    uint8_t n = 0;
+// "<CITY> THINKS" into t, and the dots of step think_dots.
+static void think_text(char *t) {
+    uint8_t n = 0, k;
     const char *p = bot_names[bot_city];
     while (*p) t[n++] = *p++;
     p = " THINKS";
     while (*p) t[n++] = *p++;
-    return n;
+    for (k = 0; k < 3; k++) t[n + k] = (think_dots > k && think_dots <= k + 3u) ? '.' : ' ';
+    t[n + 3] = 0;
 }
 
 static void think_rail(void) {
     char t[21];
-    uint8_t n = think_text(t), k;
-    for (k = 0; k < think_dots; k++) t[n++] = '.';
-    t[n] = 0;
+    think_text(t);
     gfx_rail(ROW_FOOT, t, "");
 }
 
 static void live_think(void) {
     char t[21];
-    uint8_t d;
     in_update();
     in_give_back(J_START);
     if (!in_target) hand_input();       // TARGET mode waits for the move
@@ -835,13 +836,12 @@ static void live_think(void) {
     }
     dirty_ui = 0;
     if (dirty) { dirty = 0; draw_table(); draw_table_sprites(); }
-    // the dots: only their three tiles change, and only the foot row is sent
+    // the dots: one tile changes a step, and only the foot row is sent
     if ((int16_t)(sys_time - think_next) >= 0) {
-        const uint8_t x = think_text(t);
         think_next += THINK_DOT_TICKS;
-        d = think_dots = (uint8_t)((think_dots + 1u) & 3u);
-        t[0] = d > 0 ? '.' : ' '; t[1] = d > 1 ? '.' : ' '; t[2] = d > 2 ? '.' : ' '; t[3] = 0;
-        gfx_text(x, ROW_FOOT, t);
+        if (++think_dots == THINK_STEPS) think_dots = 0;
+        think_text(t);
+        gfx_text(0, ROW_FOOT, t);       // the rest of the rail is blank already
         gfx_flush_row(ROW_FOOT);
     }
 }
