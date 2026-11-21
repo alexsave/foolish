@@ -122,59 +122,75 @@ XXXXX
 """),
 }
 
-# Big pip, 6 wide x 7 tall, centred in the right half of the card (x8..13,
-# with 1px of white to the border).  Pixel (0,0) and (0,6) stay empty, so
-# a card corner laid over the pip never hides ink (see gen_art.py checks).
+# Big pip, 7x7, centred low on the card (card pixels x5..11, y15..21), the
+# way a real card carries its centre pip.  Seven wide is the narrowest a
+# club's three lobes stay apart from a spade's point.
 PIP = {
 "S": g("""
-..XX..
-.XXXX.
-XXXXXX
-XXXXXX
-XXXXXX
-.X..X.
-.XXXX.
+...X...
+..XXX..
+.XXXXX.
+XXXXXXX
+XXXXXXX
+.X.X.X.
+..XXX..
 """),
 "H": g("""
-......
-XX..XX
-XXXXXX
-XXXXXX
-.XXXX.
-..XX..
-......
+.XX.XX.
+XXXXXXX
+XXXXXXX
+XXXXXXX
+.XXXXX.
+..XXX..
+...X...
 """),
 "C": g("""
-..XX..
-.XXXX.
-..XX..
-XXXXXX
-XXXXXX
-.X..X.
-.XXXX.
+..XXX..
+..XXX..
+XX.X.XX
+XXXXXXX
+XX.X.XX
+...X...
+..XXX..
 """),
 "D": g("""
-..XX..
-.XXXX.
-XXXXXX
-XXXXXX
-.XXXX.
-..XX..
-......
+...X...
+..XXX..
+.XXXXX.
+XXXXXXX
+.XXXXX.
+..XXX..
+...X...
 """),
 }
 
-# Star on the card back (the website's Soviet back: red field, gold star).
-STAR = g("""
-....w....
-....w....
-...www...
-wwwwwwwww
-.wwwwwww.
-..wwwww..
-..ww.ww..
-.ww...ww.
-.w.....w.
+# Card back: pixel khokhloma (the website's back: black lacquer, gold
+# vines, red berries).  Khokhloma's gold is its brightest colour, so in four
+# greys: '.' black lacquer, 'w' white = gold, 'o' dark grey = a red berry
+# (with a white glint).  This is the 12x20 field inside the card's black
+# border and its one-pixel dark grey frame: a rosette on a stem, two curls,
+# a berry in each corner.
+BACK_FIELD = g("""
+oo........oo
+ow...ww...wo
+....w..w....
+...w.ww.w...
+..w.w..w.w..
+..w.w.oo.w..
+..w..wwo.w..
+...w....w...
+....wwww....
+......w.....
+..ww..w..ww.
+.w..w.w.w..w
+.w.oo.w.oo.w
+..wwo.w.wo..
+......w.....
+.w....w....w
+..w...w...w.
+...ww.w.ww..
+oo...www..oo
+wo...www..ow
 """)
 
 # UI font, 5x7 in an 8x8 tile at x1..5, y0..6.
@@ -523,6 +539,14 @@ XXXXX
 .....
 .....
 .....""",
+"+": """
+.....
+..X..
+..X..
+XXXXX
+..X..
+..X..
+.....""",
 "/": """
 ....X
 ....X
@@ -619,6 +643,17 @@ XowwwoX.
 XoooooX.
 .XXXXX..
 ........
+"""),
+# the deck: two backs, one on the other
+"MINIDECK": g("""
+..XXXXX.
+.XoooooX
+XXXXXXoX
+XoooooXX
+XowwwoXX
+XowowoX.
+XowwwoX.
+XXXXXXX.
 """),
 # 'x' between an icon and a count
 "TIMES": g("""
