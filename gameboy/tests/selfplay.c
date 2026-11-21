@@ -7,6 +7,7 @@
 #include "selfplay.h"
 #include "../src/gd_play.h"
 #include "../src/gd_rng.h"
+#include "../src/gd_bot_hw.h"
 
 static uint16_t crc;
 // The sum after each of the first SELFPLAY_TRACE moves, to find where two builds part.
@@ -76,6 +77,12 @@ uint16_t selfplay(uint16_t seed, uint8_t games, uint16_t *moves_out) {
                     if (prev != 0xFF) { sel[0] = prev; sel[1] = c; gesture(d, sel, 2); }
                     prev = c;
                 }
+            }
+            // New York's choice for each seat (its draws are part of the stream)
+            for (seat = 0; seat < 2; seat++) {
+                gd_hw_choose(&g, seat, &m);
+                fold(m.type); fold(m.n);
+                for (i = 0; i < m.n && m.type != 0xFF; i++) { fold(m.cards[i]); fold(m.type == GD_COVER ? m.atts[i] : 0); }
             }
             if (n0 + n1 == 0) { fold(0xEE); break; }
             pick = gd_rng_below(n0 + n1);

@@ -14,9 +14,14 @@ B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
 
-CORE     = src/gd_rules.c src/gd_play.c src/gd_rng.c
-CORE_H   = src/gd_rules.h src/gd_play.h src/gd_rng.h $(B)/gd_binom.h
-ROM_SRC  = src/main.c src/gfx.c src/input.c $(CORE)
+CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_bot_hw.c
+CORE_H   = src/gd_bank.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
+# Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
+# the input interrupt, then GBDK's library); each other file names its bank.
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c
+ROM_BANK1 = main gfx gd_play
+ROM_BANK4 = gd_bot_hw
+ROM_BANK5 = gd_menu
 ROM_H    = src/gfx.h src/input.h $(CORE_H) $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
@@ -53,14 +58,16 @@ $(B)/gd_binom.h: $(B)/gen_binom
 $(B)/rom:
 	mkdir -p $@
 
-$(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h | $(B)/rom
-	$(LCC) $(LCCFLAGS) -I$(B) -I$(ART) -c -o $@ $<
+$(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/rom
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) -I$(B) -I$(ART) -c -o $@ $<
+
+bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5)))
 
 $(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -Wf-bo$(if $(filter $*,$(ART_BANK3)),3,2) -c -o $@ $<
 
 $(B)/durak.gb: $(ROM_OBJ)
-	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo4 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo8 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
 	    | tee $(B)/link.log
 	@! grep -i overflow $(B)/link.log || { rm -f $@; echo "the code overflowed its ROM area"; exit 1; }
 	sh tests/home_in_bank0.sh $(B)/durak.map
@@ -69,14 +76,22 @@ romusage: $(B)/durak.gb
 	$(GBDK)/bin/romusage $(B)/durak.map -g
 
 # ---- the differential test -------------------------------------------------------
-$(B)/difftest: tests/difftest.c $(CORE) $(CORE_H) | $(B)
-	$(HOSTCC) $(HOSTFLAGS) $(FOOLISH_DEFS) -I$(B) -I$(FOOLISH) -o $@ tests/difftest.c $(CORE) $(FOOLISH_SRC)
+# foolish's handwritten_prod bot, with its random draws handed over by the test
+# (difftest.c dt_random): the same draws New York made.
+$(B)/hw_prod.o: $(FOOLISH)/handwritten_prod_strategy.c | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -w $(FOOLISH_DEFS) -Drandom_strategy_random=dt_random -I$(FOOLISH) -c -o $@ $<
+
+$(B)/difftest: tests/difftest.c $(CORE) $(CORE_H) $(B)/hw_prod.o | $(B)
+	$(HOSTCC) $(HOSTFLAGS) $(FOOLISH_DEFS) -I$(B) -I$(FOOLISH) -o $@ tests/difftest.c $(CORE) $(FOOLISH_SRC) $(B)/hw_prod.o
 
 test: $(B)/difftest
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1
 
-mutants: $(B)/gd_binom.h
+print-core:
+	@echo $(CORE)
+
+mutants: $(B)/gd_binom.h $(B)/hw_prod.o
 	bash tests/mutants.sh
 
 rom-mutants: $(B)/durak.gb $(B)/gbrun
@@ -91,7 +106,7 @@ gbrun: $(B)/gbrun
 clean:
 	rm -rf $(B)
 
-.PHONY: all test mutants rom-mutants gbrun romusage clean
+.PHONY: print-core all test mutants rom-mutants gbrun romusage clean
 
 # ---- the cross-compiler check: clang and SDCC must play the same games --------------
 $(B)/selfplay_host: tests/selfplay.c tests/selfplay_host.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)

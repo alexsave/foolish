@@ -7,6 +7,9 @@ void gd_rng_seed(uint16_t seed) {
     gd_rng_state = seed ? seed : 0xACE1u;
 }
 
+uint16_t gd_rng_get(void) { return gd_rng_state; }
+void gd_rng_set(uint16_t state) { gd_rng_state = state; }
+
 uint16_t gd_rng_next(void) {
     uint16_t x = gd_rng_state;
     x ^= (uint16_t)(x << 7);

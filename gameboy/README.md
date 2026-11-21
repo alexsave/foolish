@@ -1,8 +1,7 @@
 # Durak for the Game Boy
 
 Two-player Durak (you against one bot) for the original Game Boy (DMG), in C with GBDK-2020.
-The bot is RANDOM: it plays a uniformly random legal move, drawn from the one seedable generator.
-The four bots on the dashboard (Miami, New York, Seoul and Moscow, the boss) all play that random brain for now; the city is the name the board shows.
+Four bots on the dashboard: Miami plays a uniformly random legal move, drawn from the one seedable generator; New York is foolish's handwritten_prod bot, ported (below); Seoul and Moscow (the boss) play Miami's random brain until theirs land.
 
 ```
 make                # build/durak.gb (GBDK= points at GBDK-2020 4.5.0)
@@ -20,8 +19,19 @@ make romusage       # ROM and RAM per bank
   No MBC needed.
   Falsifier: over 28 KB, which would force banking.
   - Measured with placeholder tiles: 26.4 KB, so the hypothesis was wrong by almost 2x (SDCC's SM83 code for the rules is about 2.5 times what I guessed), but it fitted 32 KB.
-  - Measured with the real art: it does not fit 32 KB, so the cart is MBC1, 64 KB: bank 0 15.9 KB, bank 1 14.9 KB (the code and the library, which the CPU always sees), bank 2 12.5 KB (the table's tile banks, the fonts, the dashboards, the lose picture), bank 3 10.7 KB (the four win pictures).
-  - Code alone is 30.7 KB of the 32 KB the CPU sees without switching banks, so the next big piece of code (a search bot) needs banked code.
+  - Measured with the real art: it does not fit 32 KB, so the cart is MBC1.
+  - With New York the code no longer fit the 32 KB the CPU sees at once either, so the code is banked (128 KB cart, `src/gd_bank.h`):
+
+| Bank | Holds | Used |
+| --- | --- | --- |
+| 0 (fixed) | the rules core (`gd_rules.c`), the RNG, the input interrupt, `_HOME` and all of GBDK's library | 10.0 KB |
+| 1 | the UI: `main.c`, `gfx.c`, `gd_play.c` | 13.3 KB |
+| 2 | the table's tile banks, the fonts, the dashboards, the lose picture | 12.6 KB |
+| 3 | the four win pictures | 13.2 KB |
+| 4 | New York (`gd_bot_hw.c`) | 5.4 KB |
+| 5 | the menu count and unrank (`gd_menu.c`, the random bot's) | 7.6 KB |
+
+  - The rule that makes it work: anything a banked brain calls must be in bank 0, so the core and the library are linked first and nothing else is unbanked (the link fails on any overflow); a new brain gets a bank of its own and one `GD_BANKED` entry point.
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
   Measured: 5.5 KB (3.9 KB + 1.6 KB).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
@@ -32,6 +42,29 @@ make romusage       # ROM and RAM per bank
   - It does not show: the bot waits half a second (30 frames) after the board last changed before it moves, by design.
 - Table redraw: the slowest whole-board redraw in those games was 582 scanlines (3.8 frames); moving the cursor redraws only the foot rail and the sprites.
   Buttons are latched by an interrupt, so a slow redraw never loses a press.
+
+## New York: foolish's handwritten_prod
+
+`src/gd_bot_hw.c` ports `foolish/c/src/handwritten_prod_strategy.c` to the Game Boy with integers in place of its doubles, branch for branch:
+- continue attacking with the most non-trump cards (least summed card score); with trumps only, attack with probability p (0.02 while the trump card is under the deck, else 0.65 + 0.35 x discard / cards, held to [0.5, 0.95]), else say done;
+- transfer with one card, a non-trump first;
+- cover only when every attack can be covered, with the cover of least product of card scores;
+- otherwise done (one draw, as foolish makes it), the forced attack, or pick up.
+
+Where foolish breaks ties by its menu's enumeration order, the port reproduces that order analytically for a hand in card id order (the difftest sorts foolish's hands the same way).
+The doubles are replaced exactly:
+- the trump gate is an integer threshold on a 16-bit draw (ceil of 65536 p, from p = (13t + 7d) / 20t), checked against `r / 65536.0 < p` for every draw, discard and card count (92 million cases, all equal);
+- foolish's cover choice multiplies card scores in doubles, which round past 2^53; the port keeps the product exact in 32 bits while it fits and switches to a soft double (53-bit mantissa, round half to even after every multiply) past that, checked against real doubles (1.9 million products and 200000 comparisons, all equal);
+- the cover search walks foolish's order with a bound (a first cover found by augmenting paths, and an exact lower bound: the product so far times each remaining attack's cheapest cover; rounding never decreases), so it returns foolish's first minimum while visiting at most 172 nodes (4.7 on average).
+
+foolish's three random draws (the trump gate, the pick among "other" moves, the final fallback) take this engine's draws: the difftest compiles foolish's bot with `random_strategy_random` redirected to a queue of the port's own 16-bit draws, `u = r / 65536`, and checks both make the same number of draws.
+Two pieces of foolish's code are unreachable in this game and are not ported, with the reason in the code: the early-deck "first non-trump attack, no tie-break" fallback (that point is only reached when no non-trump attack exists) and the final random fallback (a seat with a menu always returns earlier).
+
+Result: 16811546 decisions compared over 90000 games (New York playing one seat in 30000 of them, and asked for both seats' moves on every board of all of them), 16811546 agree: exact agreement, not a rate.
+Its 9 mutants are caught (`tests/mutants.txt` 17 to 25), and `make selfplay` folds its choice for both seats on every board, so SDCC computes what clang does.
+
+Time per decision on the Game Boy, 1044 decisions over 40 scripted games (`scripts/game_new_york.txt`): 262 scanlines on average (28.5 ms, the same as Miami's, most of it applying the move), 1867 at worst (203 ms, a three-attack all-trump cover).
+Before measuring I had not written a hypothesis for New York; the first measurement was 1.28 s at worst, which was the cover search walking every cover with no bound (fixed by the bounds) and then a 32-bit division per multiply (fixed by a table of limits).
 
 ## Rules: foolish's variant, two seats
 
@@ -183,6 +216,8 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `rearrange.txt` | SELECT held + RIGHT moves a card twice, UP with SELECT held does nothing | `60`, `61` |
 | `game_lose.txt` | a whole game by an input loop, a 27-card hand with tabs, the lose picture, home | `70`, `72`, `73` |
 | `game_win.txt` | a whole game won by an input loop, the Miami win picture with fireworks, a rematch | `80`, `81` |
+| `game_new_york.txt` | a whole game against New York, and its time per decision | `nyc_01`, `nyc_02` |
+| `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
@@ -202,7 +237,7 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 
 ## Not done
 
-- The other bots: New York, Seoul and Moscow play the random brain (the plan: handwritten, a cut-down robusta, a cut-down cordite).
+- Seoul and Moscow play the random brain (the plan: a cut-down robusta and a cut-down cordite).
 - Motion: cards do not fly, the deal is not animated (the art has the frames).
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
-- The lose picture shows seven card backs whatever is left in your hand (they are baked into the art).
+- The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

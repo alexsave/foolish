@@ -10,6 +10,7 @@
 #include "gd_rules.h"
 #include "gd_play.h"
 #include "gd_rng.h"
+#include "gd_bot_hw.h"
 #include "gfx.h"
 #include "input.h"
 #include "art_tiles.h"
@@ -63,6 +64,7 @@ uint8_t screen = SCREEN_DASH, dash_item;
 // The ladder: Miami (random), New York, Seoul, Moscow (the boss).
 static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "MOSCOW" };
 uint8_t bot_city;
+#define BOT_NEW_YORK 1
 // The finished table stays up this long before the win or lose picture.
 #define END_DELAY 90
 static uint8_t end_t;
@@ -72,6 +74,9 @@ static char flash_buf[21];
 // count + unrank + apply. Read by tools/gbrun (peek _bot_lines_max).
 uint16_t bot_lines_last, bot_lines_max;
 uint32_t bot_lines_sum;
+// The board the slowest decision was made on (gbrun reads it to replay it on the Mac).
+gd_game bot_slowest;
+static gd_game bot_board;
 uint16_t bot_moves;
 
 // Scanlines since an arbitrary start, for timing: sys_time counts VBlanks,
@@ -349,14 +354,23 @@ static void bot_turn(void) {
     uint16_t t0;
     gd_move m;
     if (G.status != GD_PLAYING || idle < BOT_DELAY) return;
+    bot_board = G;
     t0 = line_clock();
-    n = gd_menu_count(&G, BOT);
-    if (!n) return;
-    r = gd_rng_below(n);
-    gd_menu_move(&G, BOT, r, &m);
+    if (bot_city == BOT_NEW_YORK) {
+        // New York: foolish's handwritten_prod (gd_bot_hw.c)
+        gd_hw_choose(&G, BOT, &m);
+        if (m.type == 0xFF) return;
+    } else {
+        // Miami (and, until their brains land, Seoul and Moscow): a uniformly
+        // random legal move, one draw below the menu's count
+        n = gd_menu_count(&G, BOT);
+        if (!n) return;
+        r = gd_rng_below(n);
+        gd_menu_move(&G, BOT, r, &m);
+    }
     play(BOT, &m);
     bot_lines_last = (uint16_t)(line_clock() - t0);
-    if (bot_lines_last > bot_lines_max) bot_lines_max = bot_lines_last;
+    if (bot_lines_last > bot_lines_max) { bot_lines_max = bot_lines_last; bot_slowest = bot_board; }
     bot_lines_sum += bot_lines_last;
     bot_moves++;
 }

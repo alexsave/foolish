@@ -7,7 +7,7 @@ gd_rules.c~    if (g->nb == 0 || any_covered(g)) return 0xFF;~    return 0xFF;~n
 gd_rules.c~    g->fa = lowest_seat;~    g->fa = (uint8_t)(lowest_seat ^ 1u);~the lowest trump defends instead of leads
 gd_rules.c~if (gd_hand_n(g, seat) == 0 && no_cards_left(g)) g->out |= BIT(seat);~if (gd_hand_n(g, seat) == 0) g->out |= BIT(seat);~an attacker is out while the stock still has cards
 gd_rules.c~    return seen >= 2;~    return seen >= 1;~the repetition draw on the second occurrence
-gd_rules.c~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = cv.T; }~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = 0; }~the cover menu forgets trumps beat other suits
+gd_menu.c~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = cv.T; }~else { cv.own[cv.u] = count_above(h, s, (uint8_t)rr); cv.trc[cv.u] = 0; }~the cover menu forgets trumps beat other suits
 gd_rules.c~        return kind == KIND_DEFENDER && gd_uncovered(g) > 0;~        return kind == KIND_DEFENDER;~pickup on the menu over a covered table
 gd_rules.c~            if (all_good && g->nb > 0 && gd_uncovered(g) == 0) {~            if (all_good && g->nb > 0) {~good ends the bout over an uncovered attack
 gd_rules.c~    g->discard = (uint8_t)(g->discard + 2u * g->nb);~    g->discard = (uint8_t)(g->discard + g->nb);~the discard counts battles, not cards
@@ -15,3 +15,12 @@ gd_rules.c~        if (gd_hand_n(g, d) == 0) {~        if (0) {~covering with th
 gd_play.c~        if (sw > sb) best = (int8_t)b;~        if (sw >= sb) best = (int8_t)b;~Cover aims at the rightmost of equal attacks
 gd_play.c~    if (defender && g->nb > 0 && n == 0 && !out_of_play) pills |= GD_PILL_PICKUP;~    if (defender && gd_uncovered(g) > 0 && n == 0 && !out_of_play) pills |= GD_PILL_PICKUP;~Take only while an attack is uncovered
 gd_play.c~        for (j = 0; j < n; j++) if (sel[j] == c) rs_sel[rs_n++] = c;~        for (j = n; j-- > 0;) rs_sel[rs_n++] = sel[j];~the Cover button pairs in selection order, not hand order
+gd_bot_hw.c~        for (i = 0; i < n && t; i++) if (gd_suit_of[c[i]] != trump && gd_rank_of[c[i]] == v && !take[i]) { take[i] = 1; t--; }~        for (i = n; i-- > 0 && t;) if (gd_suit_of[c[i]] != trump && gd_rank_of[c[i]] == v && !take[i]) { take[i] = 1; t--; }~New York: equal-valued attack cards taken in reverse id order
+gd_bot_hw.c~(pick == 0xFF || (gd_suit_of[pick] == trump && gd_suit_of[c] != trump))~(pick == 0xFF || (gd_suit_of[pick] != trump && gd_suit_of[c] == trump))~New York: passes with a trump before a non-trump
+gd_bot_hw.c~    return (uint16_t)((num + den - 1u) / den);~    return (uint16_t)((num + den) / den);~New York: the trump gate one draw too wide
+gd_bot_hw.c~        gd_dbl_mul(&cv_prod[depth + 1], card_score(c, cv_g->trump));~        gd_dbl_mul(&cv_prod[depth + 1], (uint16_t)(gd_rank_of[c] + 5u));~New York: the cover product ignores trumps
+gd_bot_hw.c~            if (has_good) { out->type = GD_GOOD; return; }~            ;~New York: declining a trump attack does not say done
+gd_bot_hw.c~    if (guard && (sticky || lsb)) {~    if (guard) {~New York: the soft double rounds half up
+gd_bot_hw.c~        (void)draw16();~        ;~New York: no draw before saying done
+gd_bot_hw.c~        if (c < 0 || (c == 0 && !cv_found)) {~        if (c <= 0) {~New York: the last of the cheapest covers, not the first
+gd_bot_hw.c~        if (c > 0 || (c == 0 && cv_found)) return;~        if (c >= 0) return;~New York: the cover search drops ties before it has kept a cover

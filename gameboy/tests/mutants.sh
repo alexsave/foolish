@@ -23,8 +23,11 @@ while IFS='~' read -r file from to what; do
     cp src/*.c src/*.h "$d/src/"
     FROM="$from" TO="$to" perl -0pi -e 'my $n = s/\Q$ENV{FROM}\E/$ENV{TO}/g; die "no match\n" unless $n' "$d/src/$file" \
         || { echo "mutant $i: TEXT NOT FOUND ($what)"; missed=$((missed+1)); continue; }
-    if ! $CC $FLAGS -Ibuild -I$FOOLISH -o "$d/difftest" tests/difftest.c "$d/src/gd_rules.c" "$d/src/gd_play.c" \
-            "$d/src/gd_rng.c" $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c 2>"$d/cc.log"; then
+    # the portable core (the Makefile's CORE), from the mutated copy
+    core=""
+    for c in $(make -s -f Makefile print-core); do core="$core $d/$c"; done
+    if ! $CC $FLAGS -Ibuild -I$FOOLISH -o "$d/difftest" tests/difftest.c $core \
+            build/hw_prod.o $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c 2>"$d/cc.log"; then
         echo "mutant $i: DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue
     fi
     out=$("$d/difftest" "$GAMES" 1 2>&1)

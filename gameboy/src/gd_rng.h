@@ -18,6 +18,10 @@ void gd_rng_seed(uint16_t seed);
 // The raw next output, 1..65535.
 uint16_t gd_rng_next(void);
 
+// The whole state, to save and restore (a test replays a stretch of draws).
+uint16_t gd_rng_get(void);
+void gd_rng_set(uint16_t state);
+
 // A uniform value in [0, n), n >= 1, by rejection (no modulo bias). Values of n
 // above 65535 take two outputs per try.
 uint32_t gd_rng_below(uint32_t n);

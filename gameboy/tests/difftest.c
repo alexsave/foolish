@@ -17,9 +17,12 @@
 #include "../src/gd_rules.h"
 #include "../src/gd_play.h"
 #include "../src/gd_rng.h"
+#include "../src/gd_bot_hw.h"
 
 #include "game.h"
 #include "legal.h"
+#include "strategy.h"
+#include <math.h>
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -35,6 +38,23 @@ static Card f_of(uint8_t id) {
     c.value = (int8_t)(id % 9 + MIN_VALUE_SMALL);
     return c;
 }
+static uint8_t gd_of(Card c);
+
+// ---- New York against foolish's handwritten_prod ---------------------------------
+// foolish's bot file is compiled with random_strategy_random renamed to
+// dt_random (Makefile), which hands it this engine's draws, u = r / 65536.
+static uint16_t dt_queue[8];
+static int dt_n, dt_at, dt_over;
+double dt_random(void) {
+    if (dt_at >= dt_n) { dt_over = 1; return 0.0; }
+    return dt_queue[dt_at++] / 65536.0;
+}
+
+extern uint16_t gd_hw_nodes;
+static unsigned long hw_nodes_max, hw_nodes_sum, hw_covers;
+static unsigned long hw_compared, hw_agree, hw_by_type[5], hw_draws_total;
+
+
 static uint8_t gd_of(Card c) {
     if (c.suit < 0 || c.suit > 3 || c.value < MIN_VALUE_SMALL || c.value > ACE_VALUE) return 0xEE;
     return (uint8_t)(c.suit * 9 + (c.value - MIN_VALUE_SMALL));
@@ -179,6 +199,54 @@ static int f_menu_index(const LegalMoves *lm, const gd_move *m) {
     return -1;
 }
 
+
+// New York's move for `seat` against foolish's handwritten_prod on the same
+// board, fed the same draws. `keep`: the draws count for the game (New York is
+// playing the move); else the RNG is put back as it was. 0 on a mismatch.
+static int hw_compare(const gd_game *g, const Game *f, uint8_t seat, int keep, gd_move *mine) {
+    const uint16_t before = gd_rng_get();
+    gd_hw_choose(g, seat, mine);
+    const uint8_t k = gd_hw_draws;
+    const uint16_t after = gd_rng_get();
+    CHECK(k <= 8, "too many draws");
+    gd_rng_set(before);
+    for (int i = 0; i < k; i++) dt_queue[i] = (uint16_t)gd_rng_below(65536ul);
+    CHECK(gd_rng_get() == after, "draw replay differs");
+    if (!keep) gd_rng_set(before);
+    calculate_legal_moves(f, seat, g_lm);
+    if (g_lm->n == 0) { CHECK(mine->type == 0xFF, "New York moves on an empty menu"); return 1; }
+    if (g_lm->n >= MAX_LEGAL_MOVES) return 1;
+    dt_n = k; dt_at = 0; dt_over = 0;
+    int idx = handwritten_prod_strategy_choose(f, seat, g_lm, NULL);
+    CHECK(!dt_over && dt_at == dt_n, "draws: New York %d, foolish %d%s", k, dt_at, dt_over ? " (ran out)" : "");
+    CHECK(idx >= 0 && idx < g_lm->n, "foolish picked no move");
+    CHECK(mine->type != 0xFF, "New York found no move");
+    Key a, b;
+    key_of_gd(&a, mine);
+    key_of_f(&b, &g_lm->moves[idx]);
+    if (memcmp(&a, &b, sizeof a)) {
+        fprintf(stderr, "  New York type %d n %d:", mine->type, mine->n);
+        for (int i = 0; i < mine->n; i++) fprintf(stderr, " %d/%d", mine->cards[i], mine->atts[i]);
+        fprintf(stderr, "\n  foolish  type %d n %d:", b.k[0], b.k[1]);
+        for (int i = 0; i < b.k[1]; i++) fprintf(stderr, " %d/%d", b.k[2 + 2 * i], b.k[3 + 2 * i]);
+        fprintf(stderr, "\n");
+        CHECK(0, "seat %d: New York and handwritten_prod differ", seat);
+    }
+    if (gd_hw_nodes > 600 && getenv("HW_SHOW")) {
+        fprintf(stderr, "nodes %u trump %d found %s; attacks:", gd_hw_nodes, g->trump, mine->type == GD_COVER ? "cover" : "none");
+        for (int i = 0; i < g->nb; i++) if (g->def[i] == GD_NONE) fprintf(stderr, " %d", g->att[i]);
+        fprintf(stderr, "; hand:");
+        for (int c = 0; c < 36; c++) if (GD_HAS(g->hand[seat], c)) fprintf(stderr, " %d", c);
+        fprintf(stderr, "\n");
+    }
+    if (gd_hw_nodes) { hw_covers++; hw_nodes_sum += gd_hw_nodes; if (gd_hw_nodes > hw_nodes_max) hw_nodes_max = gd_hw_nodes; }
+    hw_compared++;
+    hw_agree++;
+    hw_by_type[mine->type]++;
+    hw_draws_total += k;
+    return 1;
+}
+
 static bool f_apply(Game *f, uint8_t seat, const gd_move *m) {
     Card c[GD_MAXB], a[GD_MAXB];
     for (int i = 0; i < m->n; i++) { c[i] = f_of(m->cards[i]); a[i] = f_of(m->atts[i] < 36 ? m->atts[i] : 0); }
@@ -262,7 +330,7 @@ static int probe_gestures(const gd_game *g, const Game *f, uint8_t seat) {
 }
 
 static Game *g_scratch;
-static int g_cycle_seek;
+static int g_cycle_seek;      // 0 uniform, 1 steered to the repetition draw, 2 New York plays seat 1
 
 static int probe_legal(const gd_game *g, const Game *f) {
     for (int rep = 0; rep < 4; rep++) {
@@ -331,6 +399,72 @@ static void cycle_seek_pick(const gd_game *g, long n0, long n1, uint8_t *seat, g
     }
 }
 
+
+// ---- New York's arithmetic against the doubles it replaces --------------------------
+// The trump threshold against `r / 65536.0 < p` for every draw and every board
+// count, and the soft double against real double products.
+static double hw_p(int flipped, int d, int t) {      // foolish trump_attack_probability
+    if (flipped) return 0.02;
+    if (t < 1) t = 1;
+    double ratio = (double)d / (double)t;
+    if (ratio > 1.0) ratio = 1.0;
+    if (ratio < 0.0) ratio = 0.0;
+    double p = 0.65 + 0.35 * ratio;
+    if (p > 0.95) p = 0.95;
+    if (p < 0.5) p = 0.5;
+    return p;
+}
+
+static int hw_unit_checks(void) {
+    unsigned long n = 0;
+    for (int fl = 0; fl < 2; fl++)
+        for (int t = 1; t <= 36; t++)
+            for (int d = 0; d <= t; d++) {
+                const double p = hw_p(fl, d, t);
+                const uint16_t th = gd_hw_trump_threshold((uint8_t)fl, (uint8_t)d, (uint8_t)t);
+                for (uint32_t r = 0; r < 65536; r++, n++)
+                    if ((r / 65536.0 < p) != (r < th)) {
+                        printf("FAIL threshold flipped %d d %d t %d r %u: double %d, threshold %u\n", fl, d, t, r, r / 65536.0 < p, th);
+                        return 0;
+                    }
+            }
+    gd_rng_seed(4242);
+    static const uint16_t sc[18] = { 5, 6, 7, 8, 9, 10, 11, 12, 13, 1005, 1006, 1007, 1008, 1009, 1010, 1011, 1012, 1013 };
+    unsigned long prods = 0;
+    for (int rep = 0; rep < 200000; rep++) {
+        const int len = 1 + (int)gd_rng_below(18);
+        gd_dbl a;
+        double x = 1.0;
+        gd_dbl_one(&a);
+        for (int i = 0; i < len; i++) {
+            const uint16_t f = sc[gd_rng_below(18)];
+            gd_dbl_mul(&a, f);
+            x *= (double)f;
+            uint64_t m = 0;
+            for (int b = 7; b >= 0; b--) m = m << 8 | a.m[b];
+            const double got = a.big ? ldexp((double)m, a.e) : (double)a.x;
+            if (got != x) {
+                printf("FAIL soft double after %d factors: %.17g vs %.17g\n", i + 1, got, x);
+                return 0;
+            }
+            prods++;
+        }
+    }
+    // and the order of any two, across the 32-bit and the 53-bit forms
+    for (int rep = 0; rep < 200000; rep++) {
+        gd_dbl a, b;
+        double x = 1.0, y = 1.0;
+        gd_dbl_one(&a); gd_dbl_one(&b);
+        const int la = 1 + (int)gd_rng_below(8), lb = 1 + (int)gd_rng_below(8);
+        for (int i = 0; i < la; i++) { const uint16_t f = sc[gd_rng_below(18)]; gd_dbl_mul(&a, f); x *= f; }
+        for (int i = 0; i < lb; i++) { const uint16_t f = sc[gd_rng_below(18)]; gd_dbl_mul(&b, f); y *= f; }
+        const int want = x < y ? -1 : x > y ? 1 : 0;
+        if (gd_dbl_cmp(&a, &b) != want) { printf("FAIL soft double order: %.17g vs %.17g\n", x, y); return 0; }
+    }
+    printf("New York arithmetic: %lu threshold cases and %lu double products agree exactly\n", n, prods);
+    return 1;
+}
+
 // ---- one game --------------------------------------------------------------------------
 #define MOVE_CAP 20000
 
@@ -363,13 +497,18 @@ static int play_game(unsigned long seed, Game *f) {
         if (g.status != GD_PLAYING) break;
         if (!probe_gestures(&g, f, 0) || !probe_gestures(&g, f, 1)) return 0;
         if (!probe_legal(&g, f)) return 0;
+        {
+            gd_move hm;
+            if (!hw_compare(&g, f, 0, 0, &hm) || !hw_compare(&g, f, 1, 0, &hm)) return 0;
+        }
         if (n0 + n1 == 0) { CHECK(0, "nobody can move in a live game"); }
         if (g_move_now >= MOVE_CAP) { st_cap++; break; }
         uint32_t pick = gd_rng_below((uint32_t)(n0 + n1));
         uint8_t seat = pick < (uint32_t)n0 ? 0 : 1;
         gd_move m;
         gd_menu_move(&g, seat, seat ? pick - (uint32_t)n0 : pick, &m);
-        if (g_cycle_seek && gd_rng_below(4) != 0) cycle_seek_pick(&g, n0, n1, &seat, &m);
+        if (g_cycle_seek == 1 && gd_rng_below(4) != 0) cycle_seek_pick(&g, n0, n1, &seat, &m);
+        if (g_cycle_seek == 2 && seat == 1 && !hw_compare(&g, f, 1, 1, &m)) return 0;
         calculate_legal_moves(f, seat, g_lm);
         int fi = f_menu_index(g_lm, &m);
         if (g_lm->n < MAX_LEGAL_MOVES) CHECK(fi >= 0, "picked move not on foolish's menu");
@@ -399,13 +538,15 @@ int main(int argc, char **argv) {
     g_kb = malloc(sizeof(Key) * MAX_LEGAL_MOVES);
     g_wire = malloc(WIRE_CAP);
     if (!f || !g_scratch || !g_lm || !g_ka || !g_kb || !g_wire) return 2;
-    // Uniform random play, then the same number of games again steered toward
-    // the repetition draw (which uniform play almost never reaches).
-    for (g_cycle_seek = 0; g_cycle_seek < 2; g_cycle_seek++)
+    // Uniform random play; the same number of games again steered toward the
+    // repetition draw (which uniform play almost never reaches); and again
+    // with New York playing seat 1.
+    if (!hw_unit_checks()) return 1;
+    for (g_cycle_seek = 0; g_cycle_seek < 3; g_cycle_seek++)
         for (unsigned long s = first; s < first + games; s++) {
             if (!play_game(s, f)) {
                 printf("FAIL after %lu games, %lu moves (%s play)\n", st_games, st_moves,
-                       g_cycle_seek ? "cycle-seeking" : "uniform");
+                       g_cycle_seek == 2 ? "New York on seat 1" : g_cycle_seek ? "cycle-seeking" : "uniform");
                 return 1;
             }
         }
@@ -417,6 +558,9 @@ int main(int argc, char **argv) {
            st_res[GD_RESULT_FOOL0], st_res[GD_RESULT_FOOL1], st_res[GD_RESULT_DRAW], st_cap);
     printf("  largest menu %u, most uncovered attacks %u, largest hand %u, foolish menus truncated %lu\n",
            st_max_menu, st_max_unc, st_max_hand, st_truncated);
+    printf("  New York vs handwritten_prod: %lu decisions compared, %lu agree (attack %lu cover %lu pass %lu pickup %lu good %lu), %lu draws\n",
+           hw_compared, hw_agree, hw_by_type[0], hw_by_type[1], hw_by_type[2], hw_by_type[3], hw_by_type[4], hw_draws_total);
+    printf("  New York's cover search: %lu searches, %.1f nodes on average, %lu at most\n", hw_covers, hw_covers ? (double)hw_nodes_sum / hw_covers : 0.0, hw_nodes_max);
     printf("PASS\n");
     return 0;
 }

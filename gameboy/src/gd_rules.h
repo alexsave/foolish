@@ -24,6 +24,7 @@
 #define GD_RULES_H
 
 #include <stdint.h>
+#include "gd_bank.h"
 
 #define GD_NCARDS  36
 #define GD_NRANKS  9
@@ -116,8 +117,9 @@ void gd_deal(gd_game *g, gd_rep *r, const uint8_t deck[GD_NCARDS], uint8_t fallb
 // every legal move exactly once (tests/difftest.c proves the set equals
 // foolish's). A uniform random move is one draw below the count, which is how
 // the bot plays and why it never builds a list.
-uint32_t gd_menu_count(const gd_game *g, uint8_t seat);
-void     gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m);
+// (gd_menu.c, a bank of its own in the ROM)
+uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED;
+void     gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED;
 // Is `m` on the seat's menu (set equality of the cards).
 uint8_t  gd_in_menu(const gd_game *g, uint8_t seat, const gd_move *m);
 
@@ -129,6 +131,18 @@ uint8_t gd_legal(const gd_game *g, uint8_t seat, const gd_move *m);
 // Apply if gd_legal; returns 1 when applied. Settles the game's end. `r` may be
 // NULL (a clone that plays without the repetition rule).
 uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m);
+
+// ---- what the menu is made of (for bots that reason over it) -----------------
+// Which branch of the menu a seat is on.
+#define GD_KIND_NONE     0
+#define GD_KIND_FIRST    1   // the first attacker on an empty table
+#define GD_KIND_DEFENDER 2
+#define GD_KIND_ATTACKER 3   // a non-defender on a table, who has not said good
+uint8_t  gd_menu_kind(const gd_game *g, uint8_t seat);
+uint16_t gd_table_ranks(const gd_game *g);             // bit per rank on the table
+uint8_t  gd_pass_rank(const gd_game *g);               // the rank a pass needs, or 0xFF for none
+uint8_t  gd_next_seat(const gd_game *g, uint8_t seat);
+uint8_t  gd_can_cover(uint8_t attack, uint8_t card, uint8_t trump);
 
 // ---- reading the board ---------------------------------------------------------
 uint8_t gd_count(const gd_mask *m);
