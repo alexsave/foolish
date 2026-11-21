@@ -22,6 +22,23 @@ uint16_t gd_rng_next(void) {
 // One output, 0..65534 (65535 equally likely values).
 #define GD_RNG_SPAN 65535u
 
+// The bots' 16-bit draw: what the two-output path of gd_rng_below gives for
+// n = 65536, made cheap and kept exact. r = a * 65535 + b, and 65535 = -1
+// (mod 65536), so r mod 65536 = (b - a) mod 65536; the general path rejects
+// only r = 65535^2 - 1 (since 65535^2 mod 65536 = 1), which is a = b = 65534.
+// The two xorshift steps are inline: this is the rollouts' hottest draw.
+uint16_t gd_rng_u16(void) {
+    uint16_t x = gd_rng_state, a, b;
+    do {
+        x ^= (uint16_t)(x << 7); x ^= (uint16_t)(x >> 9); x ^= (uint16_t)(x << 8);
+        a = (uint16_t)(x - 1u);
+        x ^= (uint16_t)(x << 7); x ^= (uint16_t)(x >> 9); x ^= (uint16_t)(x << 8);
+        b = (uint16_t)(x - 1u);
+    } while (a == 65534u && b == 65534u);
+    gd_rng_state = x;
+    return (uint16_t)(b - a);
+}
+
 uint32_t gd_rng_below(uint32_t n) {
     if (n <= 1) return 0;
     if (n <= GD_RNG_SPAN) {
@@ -30,13 +47,7 @@ uint32_t gd_rng_below(uint32_t n) {
         do { r = (uint16_t)(gd_rng_next() - 1u); } while (r >= lim);
         return (uint32_t)(r % (uint16_t)n);
     } else if (n == 65536ul) {
-        // The bots' 16-bit draw, the general path below made cheap and kept
-        // exact: r = a * 65535 + b, and 65535 = -1 (mod 65536), so r mod 65536
-        // = (b - a) mod 65536; the general path rejects only r = 65535^2 - 1
-        // (since 65535^2 mod 65536 = 1), which is a = b = 65534.
-        uint16_t a, b;
-        do { a = (uint16_t)(gd_rng_next() - 1u); b = (uint16_t)(gd_rng_next() - 1u); } while (a == 65534u && b == 65534u);
-        return (uint16_t)(b - a);
+        return gd_rng_u16();
     } else {
         // Two outputs: 65535^2 = 4294836225 equally likely values.
         const uint32_t span = (uint32_t)GD_RNG_SPAN * GD_RNG_SPAN;

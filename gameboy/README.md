@@ -11,6 +11,7 @@ make selfplay       # clang and SDCC must play identical games (the cross-compil
 make scripts        # every gbrun script against the ROM: screenshots in shots/, expects checked
 make rom-mutants    # break each control in a copy of the ROM; some script must catch every one
 make playout        # one random playout timed on the Game Boy
+make simbench       # one rollout-engine playout timed on the Game Boy
 make romusage       # ROM and RAM per bank
 ```
 
@@ -96,6 +97,33 @@ Predictions for the Game Boy, against the lite-menu playout's 2.12 s (20.9 ms a 
 - phase split of a move: the policy about 50%, apply and refill about 35%, the deck draws about 15%.
 
 Falsifiers: an average playout over 150 ms or a worst over 400 ms (the targets) means the masks or the policy are too slow as written; a policy share under 30% would mean the state handling, not the decisions, is the cost.
+
+### Measured (marking the hypothesis)
+
+`make simbench`: 64 fresh deals played out, the ROM checked against the clang build (the plies and a checksum of every final state; mutation checked by breaking only the ROM's assembly AND).
+
+| | predicted | measured |
+| --- | --- | --- |
+| plies a playout | about 100 | 48.4 (78 at most): the rollout policy plays whole groups, so a game is about half as many plies as random play |
+| one ply | about 1.2 ms | 3.33 ms: wrong by almost 3x |
+| one playout, average | about 120 ms | 160.8 ms (target 150: missed by 7%) |
+| one playout, worst | about 300 ms | 245.3 ms (target 400: met) |
+| phase split | policy 50%, apply 35%, draws 15% | policy 48%, apply and refill 35%, draws 18% (a second, marked build) |
+
+So the split was right and the cost per ply was not: the first version took 720 ms a playout, and the way down was measured step by step on the Game Boy, each step kept only when the sim test still agreed exactly:
+- the bots' 16-bit draw without a 32-bit multiply and modulo (720 to 431 ms; the same values, from `(b - a) mod 65536`);
+- the cards of the table's ranks as one lookup (a 512-row table), loops over set bits only, unrolled mask copies (431 to 225 ms);
+- the two hottest mask operations in SM83 assembly, with the C kept for the Mac (225 to 202 ms);
+- one fixed-address working state instead of a state passed by pointer, which SDCC reaches far faster (197 to 165 ms);
+- straight to "good" when the attacker has nothing to add (165 to 161 ms).
+Two tries made it slower and were undone: inlining the 5-byte count and test at every call site (231 to 259 ms), and finding the draw index by repeated addition instead of two small multiplies (161 to 179 ms).
+
+### The proof
+
+`tests/simtest.c` deals with both rule engines, plays a random stretch of uniformly random moves, then turns the board into both rollout states (foolish's stock array put in card order, which is no part of a determinized world) and steps them one ply at a time with `gd_sim_step` and foolish's `cd_sim_one_step`, foolish's `game_random` handed this engine's draws: the same seat must act, the two must draw the same numbers, and every field of the states must agree after every ply, to the end of the game; then whole playouts (`gd_sim_playout`, `cd_sim_playout`) from the same boards must finish the same way.
+Result over 60000 seeds: 47570 boards, 1409978 plies stepped and compared, 95140 playouts compared, all equal (37 of them unfinished at 1000 plies in both, a cycle with no repetition rule).
+The one structural difference: foolish covers the uncovered attacks in table order, this state keeps no order and covers them in card order; the cards used come out the same for these nested cover sets, and the test checks it on every cover.
+9 sim mutants, all caught (`tests/mutants.txt`).
 
 ## Rules: foolish's variant, two seats
 

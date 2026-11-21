@@ -51,10 +51,21 @@ static void deal(void) {
     gd_sim_from_game(&s, &g);
 }
 
+// Every playout's final state and result, folded (both builds must agree).
+// Field by field: clang pads the struct, SDCC does not.
+static uint16_t check;
+static void fold(uint8_t v) { check = (uint16_t)((check << 1 | check >> 15) ^ v); }
+static void fold_mask(const gd_mask *m) { uint8_t i; for (i = 0; i < 5; i++) fold(m->b[i]); }
+static uint8_t last_result;
 static uint16_t plies_of_playout(void) {
-    uint16_t n = 0;
-    while (!gd_sim_done(&s) && n < SIMBENCH_CAP && gd_sim_step(&s) >= 0) n++;
-    return n;
+    last_result = gd_sim_playout(&s, 0, SIMBENCH_CAP);
+    return gd_sim_plies;
+}
+static void fold_playout(void) {
+    fold(last_result);
+    fold_mask(&s.hand[0]); fold_mask(&s.hand[1]); fold_mask(&s.stock); fold_mask(&s.unc); fold_mask(&s.tbl);
+    fold((uint8_t)s.tranks); fold((uint8_t)(s.tranks >> 8));
+    fold(s.nb); fold(s.flipped); fold(s.trump); fold(s.discard); fold(s.flags); fold(s.first_out);
 }
 
 #ifdef SIMBENCH_HOST
@@ -64,15 +75,17 @@ int main(void) {
     for (unsigned r = 0; r < SIMBENCH_RUNS; r++) {
         deal();
         unsigned n = plies_of_playout();
+        fold_playout();
         total += n;
         if (n > mx) mx = n;
     }
-    printf("%02lx %02lx\n", total & 0xFF, total >> 8);
+    printf("%02lx %02lx %02x %02x\n", total & 0xFF, total >> 8, check & 0xFF, check >> 8);
     fprintf(stderr, "clang: %u playouts, %lu plies (%.1f a playout, %lu at most)\n", SIMBENCH_RUNS, total, (double)total / SIMBENCH_RUNS, mx);
     return 0;
 }
 #else
 uint16_t sb_plies;
+uint16_t sb_check;                // follows sb_plies: the expect reads both
 uint32_t sb_lines_sum, sb_lines_max;
 uint8_t sb_done;
 void main(void) {
@@ -84,9 +97,11 @@ void main(void) {
         t0 = clock_lines();
         sb_plies += plies_of_playout();
         d = clock_lines() - t0;
+        fold_playout();
         sb_lines_sum += d;
         if (d > sb_lines_max) sb_lines_max = d;
     }
+    sb_check = check;
     sb_done = 1;
     for (;;) vsync();
 }

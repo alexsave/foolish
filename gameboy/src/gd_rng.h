@@ -22,6 +22,9 @@ uint16_t gd_rng_next(void);
 uint16_t gd_rng_get(void);
 void gd_rng_set(uint16_t state);
 
+// A uniform 16-bit value: exactly gd_rng_below(65536), cheaper.
+uint16_t gd_rng_u16(void);
+
 // A uniform value in [0, n), n >= 1, by rejection (no modulo bias). Values of n
 // above 65535 take two outputs per try.
 uint32_t gd_rng_below(uint32_t n);

@@ -44,6 +44,8 @@ int8_t gd_sim_step(gd_sim *s) GD_BANKED;
 // A whole playout: plies until one seat is left in or `max_turns` pass.
 // Returns `me`'s finish: 1 out first (won), 2 the fool, 0 unfinished.
 uint8_t gd_sim_playout(gd_sim *s, uint8_t me, uint16_t max_turns) GD_BANKED;
+// The plies the last playout played.
+extern uint16_t gd_sim_plies;
 
 // Is the game over (one seat left in)?
 uint8_t gd_sim_done(const gd_sim *s);

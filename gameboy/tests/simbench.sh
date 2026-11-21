@@ -1,6 +1,6 @@
 #!/bin/sh
 # The rollout engine timed on the Game Boy: the ROM must play the clang
-# build's plies; then the time per playout, and (second ROM, with phase marks)
+# build's plies and end every playout in the same state (a checksum); then the time per playout, and (second ROM, with phase marks)
 # how a ply's time splits.
 cd "$(dirname "$0")/.." || exit 2
 want=$(build/simbench_host) || exit 1
@@ -17,7 +17,7 @@ for l in sys.stdin:
         if name == "_sb_phase": v["ph"] = [sum(x << (8 * i) for i, x in enumerate(b[4 * k:4 * k + 4])) for k in range(3)]
         else: v[name] = sum(x << (8 * i) for i, x in enumerate(b))
 runs = 64
-avg = v["_sb_lines_sum"] / runs; plies = v["_sb_plies"] / runs
+avg = v["_sb_lines_sum"] / runs; plies = (v["_sb_plies"] & 0xFFFF) / runs
 print("gb: %d playouts, %.1f plies each, %.0f scanlines each (%.1f ms), the slowest %d (%.1f ms); %.2f ms a ply" % (
     runs, plies, avg, avg * 0.1087, v["_sb_lines_max"], v["_sb_lines_max"] * 0.1087, avg * 0.1087 / plies))
 ph = v["ph"]; t = sum(ph)

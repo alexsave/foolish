@@ -26,11 +26,11 @@ gd_bot_hw.c~        if (c < 0 || (c == 0 && !cv_found)) {~        if (c <= 0) {~
 gd_bot_hw.c~        if (c > 0 || (c == 0 && cv_found)) return;~        if (c >= 0) return;~New York: the cover search drops ties before it has kept a cover
 gd_menu.c~            sc = (uint16_t)(gd_rank_of[c] + 5u + (gd_suit_of[c] == g->trump ? 1000u : 0u));~            sc = (uint16_t)(gd_rank_of[c] + 5u);~the lite menu's greedy cover does not save trumps
 gd_sim.c~        if (eff > best_eff || (eff == best_eff && v < best_v)) { best_eff = eff; best_v = v; }~        if (eff > best_eff || (eff == best_eff && v > best_v)) { best_eff = eff; best_v = v; }~sim: the first attack takes the highest of equal groups
-gd_sim.c~        if (best == GD_NONE && gd_suit_of[a] != s->trump) {~        if (best == GD_NONE) {~sim: a trump attack beaten by a lower trump
+gd_sim.c~        if (best == GD_NONE && gd_suit_of[a] != W.trump) {~        if (best == GD_NONE) {~sim: a trump attack beaten by a lower trump
 gd_sim.c~    return m_low(m_empty(&nt) ? &m : &nt);~    return m_low(&m);~sim: passes with a trump before a non-trump
 gd_sim.c~            if (!first) return MV_GOOD;               // decline: good~            ;~sim: declining a trump attack does not say good
-gd_sim.c~        (void)draw16();~        ;~sim: no draw before good
+gd_sim.c~        if (M_EMPTY(h_tab) || defcap <= 0) { (void)draw16(); return MV_GOOD; }~        if (M_EMPTY(h_tab) || defcap <= 0) { return MV_GOOD; }~sim: no draw before good
 gd_sim.c~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8);~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8); if (k) k--;~sim: draws the card before the one foolish draws
-gd_sim.c~        if (p != DEF(s)) draw_up_to_six(s, p);~        if (p == DEF(s)) draw_up_to_six(s, p);~sim: the defender draws first
-gd_sim.c~    if (!IS_OUT(s, a) && IS_GOOD(s, a) && all_covered(s)) round_transition(s);~    if (!IS_OUT(s, a) && IS_GOOD(s, a)) round_transition(s);~sim: good ends the bout over an uncovered attack
+gd_sim.c~        if (p != DEF()) draw_up_to_six(p);~        if (p == DEF()) draw_up_to_six(p);~sim: the defender draws first
+gd_sim.c~    if (!IS_OUT(a) && IS_GOOD(a) && all_covered()) round_transition();~    if (!IS_OUT(a) && IS_GOOD(a)) round_transition();~sim: good ends the bout over an uncovered attack
 gd_sim.c~    for (r = 0; r < GD_NRANKS && m; r++)~    for (r = GD_NRANKS; r-- > 0 && m;)~sim: a capped throw-in keeps its lowest cards back
