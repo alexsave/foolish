@@ -2,6 +2,7 @@
 # The khokhloma back as stamps: one rowan sprig (tendril, veined leaves,
 # a bunch of ringed berries) laid along a stem path.  Three layouts to pick
 # from; the chosen one is baked into glyphs.BACK_FIELD (14x22, no frame).
+import math
 import sys
 
 FW, FH = 14, 22
@@ -187,6 +188,52 @@ def arching_min():
     f.stem(line(7, 9, 7, 13))
     f.stamp(5, 14, BERRY, ring=True)
     return f.rows()
+
+
+# ---- 2B vine options: the leaf, the diagonal and the berry stay; only the
+# vine changes.  One-pixel lines, never doubled, never touching each other.
+def curve(fn, n=200):
+    """Rasterise a parametric curve t in [0,1] to a clean one-pixel path."""
+    pts = []
+    for k in range(n + 1):
+        p = tuple(int(round(v)) for v in fn(k / n))
+        if not pts or p != pts[-1]:
+            pts.append(p)
+    out = []
+    for p in pts:      # drop corner pixels so diagonal steps stay one pixel wide
+        if len(out) >= 2 and abs(p[0] - out[-2][0]) <= 1 and abs(p[1] - out[-2][1]) <= 1:
+            out[-1] = p
+        else:
+            out.append(p)
+    return out
+
+
+def spiral(cx, cy, r0, turns, start, sign=1):
+    return lambda t: (cx + (r0 * (1 - 0.75 * t)) * math.cos(start + sign * 2 * math.pi * turns * t),
+                      cy + (r0 * (1 - 0.75 * t)) * math.sin(start + sign * 2 * math.pi * turns * t))
+
+
+def vine_option(name):
+    f = Field()
+    f.stamp(6, 3, flip_x(LEAF_FINE))                  # leaf stalk ends at (6, 10)
+    if name == "a":        # one clean curl, then the vine, no branches
+        f.stamp(0, 0, BIG_CURL)
+        f.stem(line(2, 6, 10, 15))
+    elif name == "b":      # a short straight stem with one small curl at its end
+        f.stamp(2, 4, SMALL_CURL)
+        f.stem(line(3, 8, 10, 15))
+    elif name == "c":      # no curl: a straight stem to the berry
+        f.stem(line(1, 1, 10, 15))
+    elif name == "d":      # one S-shaped vine, even weight
+        f.stem(curve(lambda t: (1.5 + 8.5 * t - 2.0 * math.sin(2 * math.pi * t), 1 + 14 * t)))
+    elif name == "e":      # a C-shaped vine bowing into the left strip, a small curl on top
+        f.stem(curve(lambda t: (10 - 4 * t - 7 * math.sin(math.pi * t), 15 - 11 * t)))
+        f.stamp(3, 0, SMALL_CURL)
+    f.stamp(8, 16, BERRY, ring=True)
+    return f.rows()
+
+
+VINE_OPTIONS = {k: (lambda k=k: vine_option(k)) for k in "abcde"}
 
 
 LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching,
