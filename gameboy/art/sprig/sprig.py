@@ -146,11 +146,33 @@ def hanging_min():
     return f.rows()
 
 
+LEAF_FINE = [      # 8x8, points up-left: serrated edge, midrib and side veins
+"ww.w....",
+"wwwwww..",
+"wwowwww.",
+".wwowow.",
+"wwwwowww",
+".wowwow.",
+"..ww.wo.",
+"......wo",
+]
+SMALL_CURL = [".ww.", "w..w", "w.ww", ".w.."]
+
+
 def diagonal_min():
+    """Alex's pick (2B), with finer detail: a serrated, veined leaf; a second
+    fine tendril off the vine and one off the berry stalk, both curling into
+    the card's left strip so an overlapped back still shows the motif; a few
+    accent dots; the berry shaded with its calyx."""
     f = Field()
     f.stamp(0, 0, BIG_CURL)
     f.stem([(1, 6), (2, 7)] + line(2, 7, 9, 15))
-    f.stamp(6, 3, flip_x(LEAF_DIAG))
+    f.stamp(6, 3, flip_x(LEAF_FINE))
+    f.stem([(4, 10), (3, 11), (2, 12), (1, 13), (1, 14)])
+    f.stamp(0, 15, flip_y(SMALL_CURL))
+    f.stem([(7, 15), (6, 16), (5, 17), (5, 18), (4, 19), (3, 19), (3, 18)])
+    for (x, y) in ((5, 2), (11, 12), (2, 20), (12, 9), (6, 13)):
+        f.put(x, y, "o")
     f.stamp(8, 16, BERRY, ring=True)
     return f.rows()
 

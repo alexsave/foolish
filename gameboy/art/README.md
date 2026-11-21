@@ -107,7 +107,7 @@ Pixel khokhloma, after the website's card back (black lacquer, gold, red berries
 There is no inner frame: black lacquer runs to the card's border, so the sprig has the whole 14x22 field.
 Each berry has a white body, a dark grey shaded underside and a black calyx, and is ringed in lacquer, drawn back to front, so the two read as separate fruit.
 The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in three layouts (`hanging`, `diagonal`, `arching`); a minimal version of each (`hanging_min`, `diagonal_min`, `arching_min`: one leaf, one vine ending in a spiral curl, one 5x5 berry) sits beside them.
-`BACK_LAYOUT` in `gen_art.py` picks one (now `hanging`), and `mockups/06_back_rotations.png` shows all six, alone and overlapped (row A the two-berry version, row B the minimal one).
+`BACK_LAYOUT` in `gen_art.py` picks one; it is `diagonal_min` (Alex's pick, 2B), refined with a serrated, veined leaf, a second fine tendril off the vine and one off the berry stalk curling into the card's left strip (so the overlapped backs of the bot hand still show the motif), a few accent dots, and the berry's shaded underside and calyx, and `mockups/06_back_rotations.png` shows all six, alone and overlapped (row A the two-berry version, row B the minimal one).
 Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
 
 ### The pass slot
