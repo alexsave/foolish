@@ -60,7 +60,8 @@ static uint8_t dirty_ui;       // redraw the foot rail and the sprites only
 uint8_t screen = SCREEN_DASH, dash_item;
 // The bots on the dashboard. Only the random brain exists so far, so every
 // city plays it; the city is the name the board shows (README.md "Not done").
-static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "WARSAW" };
+// The ladder: Miami (random), New York, Seoul, Moscow (the boss).
+static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "MOSCOW" };
 uint8_t bot_city;
 // The finished table stays up this long before the win or lose picture.
 #define END_DELAY 90

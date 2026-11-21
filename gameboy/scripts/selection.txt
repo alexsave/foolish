@@ -38,4 +38,4 @@
 +0   shot shots/52_multi_attack.png 3
 # Miami beats two and takes all three (the foot rail says so for a moment)
 +90  expect _G+74 00
-+0   shot shots/53_bot_takes.png 3
++0   shot shots/55_bot_takes.png 3

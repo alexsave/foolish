@@ -77,7 +77,10 @@ test: $(B)/difftest
 	$(B)/difftest 3000 1
 
 mutants: $(B)/gd_binom.h
-	sh tests/mutants.sh
+	bash tests/mutants.sh
+
+rom-mutants: $(B)/durak.gb $(B)/gbrun
+	bash tests/rom_mutants.sh
 
 # ---- the headless runner ------------------------------------------------------------
 $(B)/gbrun: tools/gbrun.c | $(B)
@@ -88,7 +91,7 @@ gbrun: $(B)/gbrun
 clean:
 	rm -rf $(B)
 
-.PHONY: all test mutants gbrun romusage clean
+.PHONY: all test mutants rom-mutants gbrun romusage clean
 
 # ---- the cross-compiler check: clang and SDCC must play the same games --------------
 $(B)/selfplay_host: tests/selfplay.c tests/selfplay_host.c tests/selfplay.h $(CORE) $(CORE_H) | $(B)
