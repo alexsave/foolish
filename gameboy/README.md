@@ -522,5 +522,7 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
 - The deal is not animated (the art has the frames); played and picked-up cards fly (below).
 - A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
+- The row-by-row flush can tear for one frame: picking up shows a frame whose rail and hand row are half old and half new (frame 5 after DOWN in `take.txt`, whose shot waits a frame for it).
+  The fix is double buffering: write the changed rows into the second background map (0x9C00) and flip LCDC bit 3 in the VBlank, diffing against what that map last held.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.
