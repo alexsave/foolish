@@ -1,0 +1,32 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+#
+# A whole game I win, by a fixed input loop: try each card in turn (RIGHT, UP,
+# UP to commit a target), nine times, then DOWN (take or done). Ends
+# with Miami the fool, the win picture with the bot's name, then A: a rematch.
+@99  poke _sys_time 01 00
+@100 press A
+# The loop runs past the end of the game on purpose: the end picture ignores
+# LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.
+repeat 30
+repeat 9
++8   press RIGHT
++5   press UP
++5   press UP
+endrepeat
++6   press DOWN
++30  press RIGHT
+endrepeat
++0   expect _G+79 02
++0   expect _G+78 01
++0   expect _screen 02
++0   shot shots/80_win_screen.png 3
+# A: a rematch, a new deal from the same stream
++1   press A
++20  expect _screen 01
++0   expect _G+79 01
++0   shot shots/81_rematch.png 3
++0   peek _bot_lines_max 2
++0   peek _draw_lines_max 2
++0   peek _bot_lines_sum 4
++0   peek _bot_moves 2

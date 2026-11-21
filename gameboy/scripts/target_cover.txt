@@ -1,29 +1,34 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
 # Every command at frame N acts after frame N ran (gbrun), so an expect and a
 # press on the same frame see the press: steps leave a frame between them.
-# TARGET mode, cover: Miami opens with two kings (spades, clubs); hearts are
-# trumps and my 9 of hearts beats either, so UP enters target mode.
-@105 press A
-+50  shot shots/10_defend.png 3
-+0   expect _G+74 02
-# right, right, right: the cursor to the 9 of hearts (6s Ts 9h ...)
-+5   press RIGHT
-+5   press RIGHT
-+5   press RIGHT
-+5   expect _cur 02
-+0   press UP
-+5   expect _in_target 01
+# The bot acts again 30 frames after the board last changed, so the steps of
+# one bout fit inside that window.
+#
+# TARGET mode, cover: Miami opens with two eights (hearts, clubs); diamonds are
+# trumps and my ten of diamonds beats either. Hand: 7s Kh 9c Tc Ac Td.
+@99  poke _sys_time 01 00
+@100 press A
++42  expect _G+74 02
++0   shot shots/10_defend.png 3
+# right then left: the cursor wraps from the first card to the last (the ten)
++1   press RIGHT
++4   press LEFT
++4   expect _cur 05
++1   press UP
++4   expect _in_target 01
 +0   expect _tgt_n 02
 +0   shot shots/11_target_cover_first.png 3
-# right: the arrow moves to the other king
-+5   press RIGHT
-+5   expect _tgt_i 01
+# right: the arrow moves to the other eight
++1   press RIGHT
++4   expect _tgt_i 01
 +0   shot shots/12_target_cover_second.png 3
-# down cancels back to the cards; up again, and up commits the cover
-+10  press DOWN
-+8   expect _in_target 00
+# down cancels back to the cards; up again aims at the first eight, up covers it
++1   press DOWN
++4   expect _in_target 00
 +1   press UP
-+8   expect _in_target 01
++4   expect _in_target 01
 +1   press UP
-+8   expect _in_target 00
-+0   expect _G+56 0c
++4   expect _in_target 00
++0   expect _G+56 1f ff
 +0   shot shots/13_covered.png 3

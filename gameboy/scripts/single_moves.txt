@@ -1,13 +1,20 @@
-# The moves UP makes at once. Miami leads the queen of clubs (hearts trump);
-# my hand is 8c 9c Tc Ac 9d Qd.
-@126 press A
-+50  expect _G+74 01
-# the queen of diamonds can only pass: UP passes at once
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+# The bot acts again 30 frames after the board last changed, so the steps of
+# one bout fit inside that window.
+#
+# UP passes at once when the card can only pass: Miami leads the six of clubs
+# (diamonds trump); my six of spades passes it on. Hand: 6s Js Ks 7h Jc 9d.
+@99  poke _sys_time 06 00
+@100 press A
++42  expect _G+74 01
 +1   press RIGHT
-+8   press LEFT
-+8   expect _cur 05
++4   expect _cur 00
 +0   shot shots/30_pass_only.png 3
 +1   press UP
-+8   expect _in_target 00
++5   expect _in_target 00
++0   expect _G+74 02
 +0   expect _G+76 01
 +0   shot shots/31_passed_at_once.png 3

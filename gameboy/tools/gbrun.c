@@ -14,6 +14,7 @@
 //   +N   peek SYM [LEN]         print LEN (default 1) bytes at a symbol or 0xADDR,
 //                               either one optionally +OFFSET ("_G+74")
 //   +N   expect SYM HEX...      fail (exit 1) unless those bytes are there
+//   +N   poke SYM HEX...        write those bytes there (after frame N ran)
 //   +N   end                    stop after this frame
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -32,7 +33,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { EV_PRESS, EV_SHOT, EV_PEEK, EV_EXPECT, EV_END };
+enum { EV_PRESS, EV_SHOT, EV_PEEK, EV_EXPECT, EV_POKE, EV_END };
 
 typedef struct {
     int frame, kind, len, order;
@@ -101,8 +102,8 @@ static int parse_line(int i, int *now) {
         e->kind = EV_PEEK;
         snprintf(e->arg, sizeof e->arg, "%s", a1);
         e->len = n >= 3 ? atoi(a2) : 1;
-    } else if (!strcmp(cmd, "expect") && n >= 3) {
-        e->kind = EV_EXPECT;
+    } else if ((!strcmp(cmd, "expect") || !strcmp(cmd, "poke")) && n >= 3) {
+        e->kind = !strcmp(cmd, "poke") ? EV_POKE : EV_EXPECT;
         snprintf(e->arg, sizeof e->arg, "%s", a1);
         char *p = strstr(l, a1) + strlen(a1);
         unsigned v;
@@ -260,6 +261,9 @@ int main(int argc, char **argv) {
             if (e->kind == EV_SHOT) {
                 write_png(e->arg, video, w, e->len);
                 printf("frame %d: shot %s\n", frame, e->arg);
+            } else if (e->kind == EV_POKE) {
+                uint32_t a = resolve(e->arg);
+                for (int k = 0; k < e->len; k++) core->busWrite8(core, a + (uint32_t)k, e->bytes[k]);
             } else if (e->kind == EV_PEEK || e->kind == EV_EXPECT) {
                 uint32_t a = resolve(e->arg);
                 int ok = 1;

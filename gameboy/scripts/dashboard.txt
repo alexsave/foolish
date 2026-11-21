@@ -1,0 +1,24 @@
+# START leaves the table for the dashboard at once (the website's back button
+# has no confirmation); the game stays open and the dashboard offers CONTINUE.
+@99  poke _sys_time 1f 00
+@100 press A
++20  press RIGHT
++6   press START
++10  expect _screen 00
++0   expect _dash_item 00
++0   shot shots/90_dashboard_continue.png 3
+# A on CONTINUE: the same table, the cursor where it was
++1   press A
++10  expect _screen 01
++0   expect _cur 00
++0   shot shots/91_continued.png 3
+# START, DOWN to NEW YORK, A: a new game against New York
++1   press START
++10  press DOWN
++6   press DOWN
++6   expect _dash_item 02
++0   shot shots/92_dashboard_pick.png 3
++1   press A
++10  expect _screen 01
++0   expect _bot_city 01
++0   shot shots/93_new_york.png 3

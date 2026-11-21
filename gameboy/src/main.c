@@ -41,6 +41,7 @@ static uint8_t seeded;
 // every card ever held keeps its slot, so a card that comes back (a pickup)
 // returns to where it was; new cards join at the end in the order they arrive.
 static uint8_t mem[GD_NCARDS], mem_n;
+static gd_mask memm;            // the cards in mem[], as a set
 uint8_t disp[GD_NCARDS], disp_n;
 int8_t  cur = -1;        // the cursor, an index into disp; -1 none
 gd_mask selm;            // the selection (the website's selectedCards)
@@ -69,6 +70,19 @@ static char flash_buf[21];
 // How long the bot's last decision took, in scanlines (1 line = 108.7 us):
 // count + unrank + apply. Read by tools/gbrun (peek _bot_lines_max).
 uint16_t bot_lines_last, bot_lines_max;
+uint32_t bot_lines_sum;
+uint16_t bot_moves;
+
+// Scanlines since an arbitrary start, for timing: sys_time counts VBlanks,
+// which begin at line 144, so the line is counted from there too.
+static uint16_t line_clock(void) {
+    uint16_t t;
+    uint8_t ly;
+    CRITICAL { t = sys_time; ly = LY_REG; }
+    // A VBlank that raised its interrupt but has not run it yet: count it.
+    if (ly >= 144 && (IF_REG & VBL_IFLAG)) t++;
+    return (uint16_t)(t * 154u + (ly >= 144 ? ly - 144u : ly + 10u));
+}
 // The same for one redraw of the table (board, rails, flush and sprites).
 uint16_t draw_lines_last, draw_lines_max;
 
@@ -80,12 +94,6 @@ static void rebuild_disp(void) {
     // The website's clamp: keep the index, pull it back to the last card if
     // what it sat on left the end, and drop it once the hand is empty.
     if (cur >= (int8_t)disp_n) cur = disp_n ? (int8_t)(disp_n - 1u) : -1;
-}
-
-static uint8_t in_mem(uint8_t c) {
-    uint8_t i;
-    for (i = 0; i < mem_n; i++) if (mem[i] == c) return 1;
-    return 0;
 }
 
 // Where a card arrived from, for the order new cards join: the table (in
@@ -105,11 +113,11 @@ static void note_new_cards(const gd_game *b) {
     do {
         any = 0; best = 255; best_c = 0;
         for (c = 0; c < GD_NCARDS; c++)
-            if (GD_HAS(G.hand[HUMAN], c) && !in_mem(c)) {
+            if (GD_HAS(G.hand[HUMAN], c) && !GD_HAS(memm, c)) {
                 const uint8_t a = arrival(b, c);
                 if (!any || a < best) { best = a; best_c = c; any = 1; }
             }
-        if (any) mem[mem_n++] = best_c;
+        if (any) { mem[mem_n++] = best_c; GD_SET(memm, best_c); }
     } while (any);
     rebuild_disp();
 }
@@ -171,7 +179,8 @@ static void new_game(void) {
     t = (uint8_t)gd_rng_below(2);
     gd_deal(&G, &R, deck, t);
     mem_n = 0;
-    for (i = 0; i < GD_NCARDS; i++) if (GD_HAS(G.hand[HUMAN], i)) mem[mem_n++] = i;
+    for (i = 0; i < 5; i++) memm.b[i] = 0;
+    for (i = 0; i < GD_NCARDS; i++) if (GD_HAS(G.hand[HUMAN], i)) { mem[mem_n++] = i; GD_SET(memm, i); }
     for (i = 0; i < 5; i++) selm.b[i] = 0;
     cur = -1;
     in_target = 0;
@@ -331,19 +340,19 @@ static void human_input(void) {
 
 static void bot_turn(void) {
     uint32_t n, r;
-    uint16_t t0, t1;
-    uint8_t ly0, ly1;
+    uint16_t t0;
     gd_move m;
     if (G.status != GD_PLAYING || idle < BOT_DELAY) return;
-    t0 = sys_time; ly0 = LY_REG;
+    t0 = line_clock();
     n = gd_menu_count(&G, BOT);
     if (!n) return;
     r = gd_rng_below(n);
     gd_menu_move(&G, BOT, r, &m);
     play(BOT, &m);
-    t1 = sys_time; ly1 = LY_REG;
-    bot_lines_last = (uint16_t)((uint16_t)(t1 - t0) * 154u + ly1 - ly0);
+    bot_lines_last = (uint16_t)(line_clock() - t0);
     if (bot_lines_last > bot_lines_max) bot_lines_max = bot_lines_last;
+    bot_lines_sum += bot_lines_last;
+    bot_moves++;
 }
 
 // ---- drawing: the table (gameboy/art/README.md "The table screen") ----------------------
@@ -389,8 +398,10 @@ static void hand_layout(void) {
     else { hand_step = 1; hand_shown = HAND_SHOWN; hand_x0 = 0; }
     if (disp_n <= HAND_SHOWN) view_off = 0;
     else {
-        if (cur >= 0 && (uint8_t)cur < view_off) view_off = (uint8_t)cur;
-        if (cur >= 0 && (uint8_t)cur >= view_off + HAND_SHOWN) view_off = (uint8_t)(cur - HAND_SHOWN + 1);
+        // Scroll a card early, so the cursor is never on an end card while
+        // cards hide past it: its underline would sit on that end's tab.
+        if (cur >= 0 && (uint8_t)cur <= view_off) view_off = cur > 0 ? (uint8_t)(cur - 1) : 0;
+        if (cur >= 0 && (uint8_t)cur + 2u >= view_off + HAND_SHOWN) view_off = (uint8_t)(cur + 2 - HAND_SHOWN);
         if (view_off + HAND_SHOWN > disp_n) view_off = (uint8_t)(disp_n - HAND_SHOWN);
     }
 }
@@ -637,8 +648,9 @@ static void draw_end(void) {
     const uint8_t won = gd_result(&G) == GD_RESULT_FOOL1;
     gfx_load_full(won ? FULL_WIN : FULL_LOSE);
     if (won) {
-        // "<CITY> / IS THE DURAK", printed over the picture's sample name
-        for (x = 0; x < SCR_W; x++) { gfx_tile(x, 5, WIN_BLACK); gfx_tile(x, 6, WIN_BLACK); }
+        // "<CITY> / IS THE DURAK", printed over the picture's sample name (rows 4-6),
+        // in the rail font until the art's white-on-black font lands
+        for (x = 0; x < SCR_W; x++) { gfx_tile(x, 4, WIN_BLACK); gfx_tile(x, 5, WIN_BLACK); gfx_tile(x, 6, WIN_BLACK); }
         gfx_text((uint8_t)((SCR_W - gfx_text_len(bot_names[bot_city])) / 2u), 5, bot_names[bot_city]);
         gfx_text(4, 6, "IS THE DURAK");
     }
@@ -714,12 +726,11 @@ void main(void) {
             if (screen == SCREEN_DASH) draw_dash(shown != SCREEN_DASH);
             else if (screen == SCREEN_END) draw_end();
             else {
-                const uint16_t t0 = sys_time;
-                const uint8_t ly0 = LY_REG;
+                const uint16_t t0 = line_clock();
                 if (shown != SCREEN_TABLE) gfx_load_table();
                 draw_table();
                 draw_table_sprites();
-                draw_lines_last = (uint16_t)((uint16_t)(sys_time - t0) * 154u + LY_REG - ly0);
+                draw_lines_last = (uint16_t)(line_clock() - t0);
                 if (shown == SCREEN_TABLE && draw_lines_last > draw_lines_max) draw_lines_max = draw_lines_last;
             }
             shown = screen;

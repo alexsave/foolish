@@ -1,0 +1,21 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+#
+# DOWN says DONE (the attacker), when the foot rail offers it: I lead the six of
+# spades, Miami beats it with the jack of diamonds (trump), and with nothing
+# the cursor card can add the rail reads DONE. Hand: 6s As 6h Qh Kc 6d.
+@99  poke _sys_time 1f 00
+@100 press A
++20  press RIGHT
++6   press UP
++6   expect _G+74 01
++45  expect _G+56 20
++0   expect _cur 00
++0   shot shots/53_all_covered_done.png 3
++1   press DOWN
++6   expect _G+74 00
++0   expect _G+80 02
++0   expect _G+75 01
++0   shot shots/54_done.png 3

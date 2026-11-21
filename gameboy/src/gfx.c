@@ -12,8 +12,9 @@
 #include "win.h"
 #include "lose.h"
 
-// The full-screen pictures live in ROM bank 2 (Makefile ART_BANK); the
-// loader that switches to it runs from bank 0.
+// All the art lives in ROM bank 2 (Makefile ART_BANK): the table's tile
+// banks and the full-screen pictures. The loaders that switch to it run from
+// bank 0.
 #define ART_BANK 2
 // While a full screen is up its tileset takes the low tiles, so the rail font
 // moves here (art README "Dashboard").
@@ -28,12 +29,17 @@ static uint8_t shown[SCR_H * SCR_W];
 static uint8_t shown_valid;
 static uint8_t font_base = ART_UI_BASE;
 
+#define VRAM_TILE(i) ((uint8_t *)(0x8000u + 16u * (uint16_t)(i)))
+static void from_art_bank(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED;
+static void build_char_table(void);
+static void build_corner_table(void);
+
 // ---- loading --------------------------------------------------------------------------
 void gfx_load_table(void) {
-    DISPLAY_OFF;
-    set_bkg_data(ART_CARDS_BASE, ART_CARDS_COUNT, cards_tiles);
-    set_bkg_data(ART_UI_BASE, ART_UI_COUNT, ui_tiles);
-    set_sprite_data(ART_SPRITES_BASE, ART_SPRITES_COUNT, sprites_tiles);
+    DISPLAY_OFF;    // VRAM is free to write while the LCD is off
+    from_art_bank(VRAM_TILE(ART_CARDS_BASE), cards_tiles, 16u * ART_CARDS_COUNT);
+    from_art_bank(VRAM_TILE(ART_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
+    from_art_bank(VRAM_TILE(ART_SPRITES_BASE), sprites_tiles, 16u * ART_SPRITES_COUNT);
     font_base = ART_UI_BASE;
     shown_valid = 0;
     DISPLAY_ON;
@@ -46,6 +52,7 @@ void gfx_init(void) {
     OBP0_REG = ART_OBP0;
     SPRITES_8x8;
     build_char_table();
+    build_corner_table();
     gfx_load_table();
     gfx_spr_begin();
     gfx_spr_end();
@@ -61,6 +68,16 @@ void gfx_init(void) {
 // only this function (in _HOME, which the Makefile places in bank 0) runs.
 static void copy_banked(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
     while (n--) *dst++ = *src++;
+}
+
+// Copy n bytes out of the art bank. Display off when dst is VRAM.
+static void from_art_bank(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
+    const uint8_t save = _current_bank;
+    __asm__("di");
+    SWITCH_ROM(ART_BANK);
+    copy_banked(dst, src, n);
+    SWITCH_ROM(save);
+    __asm__("ei");
 }
 
 static void load_full_banked(uint8_t which) NONBANKED {
@@ -84,8 +101,8 @@ static void load_full_banked(uint8_t which) NONBANKED {
 void gfx_load_full(uint8_t which) {
     DISPLAY_OFF;    // VRAM is free to write while the LCD is off
     load_full_banked(which);
-    set_bkg_data(FULL_UI_BASE, ART_UI_COUNT, ui_tiles);
-    set_sprite_data(FULL_POINTER, 1, sprites_tiles + 16u * (T_SP_POINTER - ART_SPRITES_BASE));
+    from_art_bank(VRAM_TILE(FULL_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
+    from_art_bank(VRAM_TILE(FULL_POINTER), sprites_tiles + 16u * (T_SP_POINTER - ART_SPRITES_BASE), 16u);
     font_base = FULL_UI_BASE;
     shown_valid = 0;
     DISPLAY_ON;
@@ -148,14 +165,28 @@ void gfx_rail(uint8_t row, const char *left, const char *right) {
 }
 
 // ---- cards and the round-corner rule ------------------------------------------------------
-// The colour index of a tile's pixel (0, row): what a card's round corner, drawn
-// over that tile, would let show through.
+// The colour under a card's round corners, cached per table tile at start (the
+// tile data itself lives in ROM bank 2): bits 0-1 the tile's top-left pixel,
+// bits 2-3 its bottom-left pixel.
+#define CORNER_TILES (ART_UI_BASE + ART_UI_COUNT)
+static uint8_t corner[CORNER_TILES];
+
+static uint8_t px_colour(const uint8_t *t, uint8_t row) {
+    return (uint8_t)(((t[2u * row] >> 7) & 1u) | (((t[2u * row + 1u] >> 7) & 1u) << 1));
+}
+
+static void build_corner_table(void) {
+    uint8_t t[16];
+    uint8_t i;
+    for (i = 0; i < CORNER_TILES; i++) {
+        from_art_bank(t, i < ART_CARDS_COUNT ? cards_tiles + 16u * i : ui_tiles + 16u * (i - ART_UI_BASE), 16);
+        corner[i] = (uint8_t)(px_colour(t, 0) | (px_colour(t, 7) << 2));
+    }
+}
+
 static uint8_t left_pixel(uint8_t tile, uint8_t row) {
-    const uint8_t *d;
-    if (tile < ART_CARDS_BASE + ART_CARDS_COUNT) d = cards_tiles + 16u * (tile - ART_CARDS_BASE);
-    else if (tile >= ART_UI_BASE && tile < ART_UI_BASE + ART_UI_COUNT) d = ui_tiles + 16u * (tile - ART_UI_BASE);
-    else return 0;
-    return (uint8_t)(((d[2u * row] >> 7) & 1u) | (((d[2u * row + 1u] >> 7) & 1u) << 1));
+    if (tile >= CORNER_TILES) return 0;
+    return row ? (uint8_t)(corner[tile] >> 2) : (uint8_t)(corner[tile] & 3u);
 }
 
 // Variant offsets by the colour under the corner. Rank tiles: _u0, _u3, _u1

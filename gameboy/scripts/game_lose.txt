@@ -1,0 +1,42 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+#
+# A whole game played by a fixed input loop, then the end screens. Each cycle
+# steps the cursor, plays the cursor card (UP, and UP again to commit if that
+# opened target mode), presses DOWN and steps again. DOWN every cycle
+# means taking far too often as defender, so this game ends with me the fool,
+# and passes through a hand too big for the screen (19 shown, tabs count the rest).
+@99  poke _sys_time 01 00
+@100 press A
+repeat 28
++12  press RIGHT
++6   press UP
++6   press UP
++6   press DOWN
++30  press RIGHT
+endrepeat
++0   shot shots/70_big_hand.png 3
++0   expect _disp_n 1b
+# The loop runs past the end of the game on purpose: the end picture ignores
+# LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.
+repeat 100
++12  press RIGHT
++6   press UP
++6   press UP
++6   press DOWN
++30  press RIGHT
+endrepeat
++0   expect _G+79 02
++0   expect _G+78 02
++0   expect _screen 02
++0   shot shots/72_lose_screen.png 3
+# B: home, where nothing is open to continue
++1   press B
++10  expect _screen 00
++0   shot shots/73_home_after_game.png 3
+# the slowest bot decision and table redraw of the game, in scanlines, and the
+# sum and count of the bot's decisions
++0   peek _bot_lines_max 2
++0   peek _draw_lines_max 2
++0   peek _bot_lines_sum 4
++0   peek _bot_moves 2

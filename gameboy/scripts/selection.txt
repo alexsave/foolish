@@ -1,0 +1,41 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+#
+# The selection: A toggles the cursor card (raised), A held with LEFT/RIGHT
+# sweep-selects (toggling each card the cursor lands on), B clears, and UP
+# plays the selected set. My attack; hand (diamonds trump): 6s As 6h Qh Kc 6d.
+@99  poke _sys_time 1f 00
+@100 press A
++20  press RIGHT
++6   expect _cur 00
+# A raises the six of spades; B clears it again
++1   press A
++6   expect _selm 01 00 00 00 00
++0   shot shots/50_selected_one.png 3
++1   press B
++6   expect _selm 00 00 00 00 00
+# left: the cursor wraps to the six of diamonds; A selects it
++1   press LEFT
++6   press A
++6   expect _selm 00 00 00 08 00
+# right: back to the six of spades. Hold A (it selects the six of spades) and
+# sweep right twice (the ace, the six of hearts), then left once (the ace
+# again, deselected): the three sixes are selected, the cursor on the ace
++1   press RIGHT
++6   press A 40
++6   press A+RIGHT 2
++6   press A+RIGHT 2
++6   press A+LEFT 2
++6   expect _cur 01
++0   expect _selm 01 02 00 08 00
++0   shot shots/51_sweep_selected.png 3
+# UP plays the selected three sixes at once
++20  press UP
++6   expect _G+74 03
++0   expect _selm 00 00 00 00 00
++0   shot shots/52_multi_attack.png 3
+# Miami beats two and takes all three (the foot rail says so for a moment)
++90  expect _G+74 00
++0   shot shots/53_bot_takes.png 3

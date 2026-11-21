@@ -19,9 +19,10 @@ CORE_H   = src/gd_rules.h src/gd_play.h src/gd_rng.h $(B)/gd_binom.h
 ROM_SRC  = src/main.c src/gfx.c src/input.c $(CORE)
 ROM_H    = src/gfx.h src/input.h $(CORE_H) $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
-# The table's tile banks sit with the code; the four full-screen pictures
-# (about 9.5 KB) go to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with them
-# the ROM no longer fits the 32 KB ROM-only cart. _HOME (the library's
+# All the art (the table's tile banks, 2.3 KB, and the four full-screen
+# pictures, 9.5 KB) goes to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with
+# it the ROM does not fit the 32 KB ROM-only cart, and the code alone nearly
+# fills the 32 KB the CPU sees without banking. _HOME (the library's
 # interrupt-safe routines and gfx.c's bank loader) is placed first, in bank 0,
 # because the loader maps bank 2 over 0x4000-0x7FFF while it runs; the check
 # script fails the build if _HOME ever lands past 0x3FFF.
@@ -52,11 +53,13 @@ $(B)/rom:
 $(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h | $(B)/rom
 	$(LCC) $(LCCFLAGS) -I$(B) -I$(ART) -c -o $@ $<
 
-$(B)/rom/%.o: $(ART)/%.c | $(B)/rom
-	$(LCC) $(LCCFLAGS) $(if $(filter $(notdir $<),$(notdir $(ART_FULL))),-Wf-bo2) -c -o $@ $<
+$(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
+	$(LCC) $(LCCFLAGS) -Wf-bo2 -c -o $@ $<
 
 $(B)/durak.gb: $(ROM_OBJ)
-	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo4 -Wm-yn"DURAK" -o $@ $(ROM_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo4 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
+	    | tee $(B)/link.log
+	@! grep -i overflow $(B)/link.log || { rm -f $@; echo "the code overflowed its ROM area"; exit 1; }
 	sh tests/home_in_bank0.sh $(B)/durak.map
 
 romusage: $(B)/durak.gb
@@ -94,4 +97,7 @@ $(B)/selfplay.gb: tests/selfplay.c tests/selfplay_rom.c tests/selfplay.h $(CORE)
 selfplay: $(B)/selfplay_host $(B)/selfplay.gb $(B)/gbrun
 	sh tests/selfplay.sh
 
-.PHONY: selfplay
+scripts: $(B)/durak.gb $(B)/gbrun
+	sh tests/scripts.sh
+
+.PHONY: selfplay scripts

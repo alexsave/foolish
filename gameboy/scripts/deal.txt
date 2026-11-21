@@ -1,6 +1,7 @@
 # The dashboard, then MIAMI and a new deal. The seed is the frame of the first
 # press (src/main.c GD_SEED_FIXED), so the same script always deals the same game.
 @60  shot shots/01_dashboard.png 3
+@99  poke _sys_time 1f 00
 @100 press A
 +30  shot shots/02_deal.png 3
 # right: the cursor appears on the leftmost card; up attacks with it
