@@ -125,7 +125,50 @@ def arching():
     return f.rows()
 
 
-LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching}
+# ---- the minimal version: one leaf, one curling vine, one small berry ----
+BIG_CURL = [       # 6x6 spiral that ends the vine
+"..www.",
+".w...w",
+"w..w.w",
+"w.w..w",
+"w..ww.",
+".w....",
+]
+
+
+def hanging_min():
+    f = Field()
+    f.stamp(4, 0, BIG_CURL)
+    f.stem([(5, 6), (6, 7)] + line(6, 7, 7, 15))
+    f.stamp(0, 7, LEAF_DIAG)                        # stalk meets the vine at (7, 14)
+    f.stem(line(7, 14, 7, 15))
+    f.stamp(5, 16, BERRY, ring=True)
+    return f.rows()
+
+
+def diagonal_min():
+    f = Field()
+    f.stamp(0, 0, BIG_CURL)
+    f.stem([(1, 6), (2, 7)] + line(2, 7, 9, 15))
+    f.stamp(6, 3, flip_x(LEAF_DIAG))
+    f.stamp(8, 16, BERRY, ring=True)
+    return f.rows()
+
+
+def arching_min():
+    f = Field()
+    arc = [(1, 19), (1, 18), (1, 17), (2, 16), (2, 15), (3, 14), (3, 13), (4, 12), (4, 11), (5, 10),
+           (6, 9), (7, 9), (8, 8), (9, 8), (10, 7)]
+    f.stem(arc)
+    f.stamp(8, 1, flip_x(BIG_CURL))                 # the vine ends in its curl, top right
+    f.stamp(0, 2, LEAF_DIAG)
+    f.stem(line(7, 9, 7, 13))
+    f.stamp(5, 14, BERRY, ring=True)
+    return f.rows()
+
+
+LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching,
+           "hanging_min": hanging_min, "diagonal_min": diagonal_min, "arching_min": arching_min}
 
 if __name__ == "__main__":
     for n, fn in LAYOUTS.items():

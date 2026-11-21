@@ -16,20 +16,24 @@ def back(rows):
                 cv.put(1 + i, 1 + j, m[ch])
     return cv
 
-names = list(sprig.LAYOUTS)
+rows_of = [[n for n in sprig.LAYOUTS if not n.endswith('_min')], [n for n in sprig.LAYOUTS if n.endswith('_min')]]
+names = rows_of[0]
 cw = 16 + 8 + 16 + 5 * 8 + 16
-out = A.Canvas(8 + len(names) * (cw + 8), 52, A.T)
+out = A.Canvas(8 + len(names) * (cw + 8), 104, A.T)
 ui = A.ui_bank()
-for k, n in enumerate(names):
-    rows = sprig.LAYOUTS[n]()
-    x = 8 + k * (cw + 8)
-    out.blit(back(rows), x, 8)
-    for i in range(5):
-        out.blit(back(rows), x + 24 + i * 8, 8)
-    for i, t in enumerate(A.text_tiles("%d %s" % (k + 1, n.upper()), ui)):
-        tc = A.Canvas(8, 8, None)
-        tc.set_tile(0, 0, t)
-        out.blit(tc, x + 8 * i, 38)
+for v, names_v in enumerate(rows_of):
+    oy = v * 52
+    for k, n in enumerate(names_v):
+        rows = sprig.LAYOUTS[n]()
+        x = 8 + k * (cw + 8)
+        out.blit(back(rows), x, oy + 8)
+        for i in range(5):
+            out.blit(back(rows), x + 24 + i * 8, oy + 8)
+        label = "%d%s %s" % (k + 1, "B" if v else "A", n.replace("_min", "").upper())
+        for i, t in enumerate(A.text_tiles(label, ui)):
+            tc = A.Canvas(8, 8, None)
+            tc.set_tile(0, 0, t)
+            out.blit(tc, x + 8 * i, oy + 38)
 path = sys.argv[1] if len(sys.argv) > 1 else os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "mockups", "06_back_rotations.png")
 out.image(4).save(path)
 print(path)
