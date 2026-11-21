@@ -10,6 +10,7 @@ make mutants        # break each rule in a copy; the differential test must catc
 make selfplay       # clang and SDCC must play identical games (the cross-compiler check)
 make scripts        # every gbrun script against the ROM: screenshots in shots/, expects checked
 make rom-mutants    # break each control in a copy of the ROM; some script must catch every one
+make playout        # one random playout timed on the Game Boy
 make romusage       # ROM and RAM per bank
 ```
 
@@ -28,8 +29,8 @@ make romusage       # ROM and RAM per bank
 | 1 | the UI: `main.c`, `gfx.c`, `gd_play.c` | 13.3 KB |
 | 2 | the table's tile banks, the fonts, the dashboards, the lose picture | 12.6 KB |
 | 3 | the four win pictures | 13.2 KB |
-| 4 | New York (`gd_bot_hw.c`) | 5.4 KB |
-| 5 | the menu count and unrank (`gd_menu.c`, the random bot's) | 7.6 KB |
+| 4 | New York (`gd_bot_hw.c`) | 7.0 KB |
+| 5 | the menu count and unrank (`gd_menu.c`, the random bot's, and the lite menu) | 8.1 KB |
 
   - The rule that makes it work: anything a banked brain calls must be in bank 0, so the core and the library are linked first and nothing else is unbanked (the link fails on any overflow); a new brain gets a bank of its own and one `GD_BANKED` entry point.
 - RAM: about 4.6 KB of the 8 KB work RAM, most of it the cover-counting table (3.8 KB).
@@ -65,6 +66,23 @@ Its 9 mutants are caught (`tests/mutants.txt` 17 to 25), and `make selfplay` fol
 
 Time per decision on the Game Boy, 1044 decisions over 40 scripted games (`scripts/game_new_york.txt`): 262 scanlines on average (28.5 ms, the same as Miami's, most of it applying the move), 1867 at worst (203 ms, a three-attack all-trump cover).
 Before measuring I had not written a hypothesis for New York; the first measurement was 1.28 s at worst, which was the cover search walking every cover with no bound (fixed by the bounds) and then a 32-bit division per multiply (fixed by a table of limits).
+
+## One random playout (sizing Seoul and Moscow)
+
+`make playout` times what a Monte Carlo bot repeats: a fresh deal, then both seats playing uniformly random moves off the LITE menu (foolish's `calculate_legal_moves_lite`, its rollouts' menu: the covers are one greedy full cover) to the end, with no repetition rule, as foolish's rollout games carry none.
+The lite menu is in `gd_menu.c` and the difftest compares it with foolish's as sets on every board (691928 boards in 1000 games each way, all equal; its mutant is caught).
+The same `tests/playout.c` runs built by clang and inside a test ROM, and the ROM must play the same moves (the move total is compared).
+
+| 64 playouts, seed 0x2468 | |
+| --- | --- |
+| moves a playout | 101.5 on average, 210 at most, none cut at 1000 |
+| one playout on the Game Boy | 19544 scanlines on average (2.12 s), 37642 at worst (4.09 s) |
+| one move | 20.9 ms |
+| a move's time, by phase (a second, marked pass) | the two lite menu counts 41%, the draw 11%, the unrank 29%, the apply 19% |
+
+I wrote no hypothesis before the first playout measurement (a slip against the rule).
+Before the phase split I predicted the counts at about 60% and the unrank at about 10%: the unrank is much dearer than I thought, and the draw (11%) is not free either.
+So a bot that runs even 10 playouts a decision would think for 20 seconds on this engine as it stands; Seoul and Moscow need a rollout engine of their own (a bitboard simulation without the menu, as foolish's `cordite_sim.c` is for cordite), sized from this number.
 
 ## Rules: foolish's variant, two seats
 

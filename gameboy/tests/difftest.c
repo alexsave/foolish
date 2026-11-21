@@ -192,6 +192,30 @@ static long same_menu(const gd_game *g, const Game *f, uint8_t seat) {
     return (long)n;
 }
 
+// The lite menu against foolish's calculate_legal_moves_lite, as sets.
+static unsigned long st_lite;
+static int same_lite_menu(const gd_game *g, const Game *f, uint8_t seat) {
+    uint32_t n = gd_menu_count_lite(g, seat);
+    calculate_legal_moves_lite(f, seat, g_lm);
+    if (g_lm->n >= MAX_LEGAL_MOVES) return 1;
+    CHECK(n == (uint32_t)g_lm->n, "seat %d lite menu count %u vs foolish %d", seat, n, g_lm->n);
+    for (uint32_t i = 0; i < n; i++) {
+        gd_move m;
+        gd_menu_move_lite(g, seat, i, &m);
+        CHECK(gd_legal(g, seat, &m), "lite move %u not legal", i);
+        key_of_gd(&g_ka[i], &m);
+        key_of_f(&g_kb[i], &g_lm->moves[i]);
+    }
+    qsort(g_ka, n, sizeof(Key), key_cmp);
+    qsort(g_kb, n, sizeof(Key), key_cmp);
+    for (uint32_t i = 0; i < n; i++) {
+        CHECK(i == 0 || memcmp(&g_ka[i], &g_ka[i - 1], sizeof(Key)), "seat %d duplicate lite move", seat);
+        CHECK(!memcmp(&g_ka[i], &g_kb[i], sizeof(Key)), "seat %d lite menus differ at %u", seat, i);
+    }
+    st_lite++;
+    return 1;
+}
+
 static int f_menu_index(const LegalMoves *lm, const gd_move *m) {
     Key a, b;
     key_of_gd(&a, m);
@@ -494,6 +518,7 @@ static int play_game(unsigned long seed, Game *f) {
         long n0, n1;
         if ((n0 = same_menu(&g, f, 0)) < 0) return 0;
         if ((n1 = same_menu(&g, f, 1)) < 0) return 0;
+        if (!same_lite_menu(&g, f, 0) || !same_lite_menu(&g, f, 1)) return 0;
         if (g.status != GD_PLAYING) break;
         if (!probe_gestures(&g, f, 0) || !probe_gestures(&g, f, 1)) return 0;
         if (!probe_legal(&g, f)) return 0;
@@ -558,6 +583,7 @@ int main(int argc, char **argv) {
            st_res[GD_RESULT_FOOL0], st_res[GD_RESULT_FOOL1], st_res[GD_RESULT_DRAW], st_cap);
     printf("  largest menu %u, most uncovered attacks %u, largest hand %u, foolish menus truncated %lu\n",
            st_max_menu, st_max_unc, st_max_hand, st_truncated);
+    printf("  lite menus compared %lu\n", st_lite);
     printf("  New York vs handwritten_prod: %lu decisions compared, %lu agree (attack %lu cover %lu pass %lu pickup %lu good %lu), %lu draws\n",
            hw_compared, hw_agree, hw_by_type[0], hw_by_type[1], hw_by_type[2], hw_by_type[3], hw_by_type[4], hw_draws_total);
     printf("  New York's cover search: %lu searches, %.1f nodes on average, %lu at most\n", hw_covers, hw_covers ? (double)hw_nodes_sum / hw_covers : 0.0, hw_nodes_max);

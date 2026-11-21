@@ -122,3 +122,15 @@ scripts: $(B)/durak.gb $(B)/gbrun
 	sh tests/scripts.sh
 
 .PHONY: selfplay scripts
+
+# ---- one random playout, timed on the Game Boy (Seoul and Moscow are sized from it) ----
+$(B)/playout_host: tests/playout.c tests/playout_host.c tests/playout.h $(CORE) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ tests/playout.c tests/playout_host.c src/gd_rules.c src/gd_menu.c src/gd_rng.c
+
+$(B)/playout.gb: tests/playout.c tests/playout_rom.c tests/playout.h $(CORE) $(CORE_H) | $(B)
+	$(LCC) $(LCCFLAGS) -Wl-j -I$(B) -o $@ tests/playout_rom.c src/gd_rules.c src/gd_menu.c src/gd_rng.c
+
+playout: $(B)/playout_host $(B)/playout.gb $(B)/gbrun
+	sh tests/playout.sh
+
+.PHONY: playout

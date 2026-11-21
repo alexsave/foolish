@@ -120,6 +120,10 @@ void gd_deal(gd_game *g, gd_rep *r, const uint8_t deck[GD_NCARDS], uint8_t fallb
 // (gd_menu.c, a bank of its own in the ROM)
 uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED;
 void     gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED;
+// The lite menu (foolish calculate_legal_moves_lite, its rollouts' menu): the
+// covers are one move, the greedy full cover (gd_menu.c).
+uint32_t gd_menu_count_lite(const gd_game *g, uint8_t seat) GD_BANKED;
+void     gd_menu_move_lite(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED;
 // Is `m` on the seat's menu (set equality of the cards).
 uint8_t  gd_in_menu(const gd_game *g, uint8_t seat, const gd_move *m);
 

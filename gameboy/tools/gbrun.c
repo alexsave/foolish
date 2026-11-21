@@ -39,7 +39,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define UNTIL_MAX 3000
+#define UNTIL_MAX 200000
 
 enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_END };
 

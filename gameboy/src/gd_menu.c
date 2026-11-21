@@ -201,7 +201,39 @@ static int16_t pass_setup(const gd_game *g, uint8_t seat) {
     return (int16_t)gd_hand_n(g, gd_next_seat(g, seat)) - (int16_t)g->nb;
 }
 
-uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED {
+// THE LITE MENU (foolish calculate_legal_moves_lite, what its rollouts
+// deliberate over): the same menu, but the covers are one move, the greedy
+// full cover: each uncovered attack in table order takes the cheapest unused
+// card that beats it (card score, a trump 1000 above the rest; ties to the
+// first in hand order). No such move when an attack cannot be covered.
+static uint8_t greedy_cover(const gd_game *g, uint8_t seat, gd_move *m) {
+    gd_mask used;
+    uint8_t i, c, best;
+    uint16_t best_s, sc;
+    for (i = 0; i < 5; i++) used.b[i] = 0;
+    m->type = GD_COVER;
+    m->n = 0;
+    for (i = 0; i < g->nb; i++) {
+        if (g->def[i] != GD_NONE) continue;
+        best = GD_NONE;
+        best_s = 0xFFFF;
+        for (c = 0; c < GD_NCARDS; c++) {
+            if (!GD_HAS(g->hand[seat], c) || GD_HAS(used, c) || !gd_can_cover(g->att[i], c, g->trump)) continue;
+            sc = (uint16_t)(gd_rank_of[c] + 5u + (gd_suit_of[c] == g->trump ? 1000u : 0u));
+            if (sc < best_s) { best_s = sc; best = c; }
+        }
+        if (best == GD_NONE) return 0;
+        GD_SET(used, best);
+        m->cards[m->n] = best;
+        m->atts[m->n] = g->att[i];
+        m->n++;
+    }
+    return m->n > 0;
+}
+
+static gd_move lite_cover;
+
+static uint32_t menu_count(const gd_game *g, uint8_t seat, uint8_t lite) {
     const uint8_t kind = gd_menu_kind(g, seat);
     uint32_t n = 0;
     uint8_t r;
@@ -211,7 +243,11 @@ uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED {
         for (r = 0; r < GD_NRANKS; r++) { list_rank(&g->hand[seat], r); n += subsets_count(lst_n, d); }
     } else if (kind == GD_KIND_DEFENDER) {
         const uint8_t unc = gd_uncovered(g);
-        if (unc) { cover_build(g, seat); n += cdp[0] - 1u; n++; }
+        if (unc) {
+            if (lite) n += greedy_cover(g, seat, &lite_cover);
+            else { cover_build(g, seat); n += cdp[0] - 1u; }
+            n++;
+        }
         cap = pass_setup(g, seat);
         if (cap > 0) n += subsets_count(lst_n, cap);
     } else if (kind == GD_KIND_ATTACKER) {
@@ -222,7 +258,7 @@ uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED {
     return n;
 }
 
-void gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED {
+static void menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m, uint8_t lite) {
     const uint8_t kind = gd_menu_kind(g, seat);
     uint32_t c;
     uint8_t r;
@@ -240,11 +276,16 @@ void gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_B
     } else if (kind == GD_KIND_DEFENDER) {
         int16_t cap;
         if (gd_uncovered(g)) {
-            cover_build(g, seat);
-            c = cdp[0] - 1u;
-            if (idx < c) { cover_unrank(g, seat, idx, m); return; }
+            if (lite) {
+                c = greedy_cover(g, seat, m);
+                if (idx < c) return;
+            } else {
+                cover_build(g, seat);
+                c = cdp[0] - 1u;
+                if (idx < c) { cover_unrank(g, seat, idx, m); return; }
+            }
             idx -= c;
-            if (idx == 0) { m->type = GD_PICKUP; return; }
+            if (idx == 0) { m->n = 0; m->type = GD_PICKUP; return; }
             idx--;
         }
         cap = pass_setup(g, seat);
@@ -259,3 +300,7 @@ void gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_B
     }
 }
 
+uint32_t gd_menu_count(const gd_game *g, uint8_t seat) GD_BANKED { return menu_count(g, seat, 0); }
+void gd_menu_move(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED { menu_move(g, seat, idx, m, 0); }
+uint32_t gd_menu_count_lite(const gd_game *g, uint8_t seat) GD_BANKED { return menu_count(g, seat, 1); }
+void gd_menu_move_lite(const gd_game *g, uint8_t seat, uint32_t idx, gd_move *m) GD_BANKED { menu_move(g, seat, idx, m, 1); }
