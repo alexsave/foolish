@@ -76,13 +76,20 @@ static void copy_banked(uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED 
     while (n--) *dst++ = *src++;
 }
 
+// In pieces of COPY_CHUNK bytes, with interrupts on between them (and the
+// game's bank mapped again), so the input timer keeps ticking through a load.
+#define COPY_CHUNK 256u
 static void from_bank(uint8_t bank, uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED {
     const uint8_t save = _current_bank;
-    __asm__("di");
-    SWITCH_ROM(bank);
-    copy_banked(dst, src, n);
-    SWITCH_ROM(save);
-    __asm__("ei");
+    while (n) {
+        const uint16_t k = n < COPY_CHUNK ? n : COPY_CHUNK;
+        __asm__("di");
+        SWITCH_ROM(bank);
+        copy_banked(dst, src, k);
+        SWITCH_ROM(save);
+        __asm__("ei");
+        dst += k; src += k; n -= k;
+    }
 }
 
 // A full-screen picture: its tileset from tile 0, its map into RAM.

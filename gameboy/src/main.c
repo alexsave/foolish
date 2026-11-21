@@ -321,7 +321,12 @@ static void lr_step(int8_t step) {
 
 static void human_input(void) {
     int8_t steps = in_lr_steps();
-    if (in_pressed(J_START)) { screen = SCREEN_DASH; dash_item = 0; dirty = 1; return; }
+    if (in_pressed(J_START)) {
+        screen = SCREEN_DASH; dash_item = 0; dirty = 1;
+        // presses latched with START belong to the dashboard
+        in_keep_except(J_START);
+        return;
+    }
     if (G.status != GD_PLAYING) return;
     // A is the website's Shift press: toggle the cursor card in or out of the selection.
     if (in_pressed(J_A) && cur >= 0 && !in_target && (uint8_t)cur < disp_n) { toggle(disp[(uint8_t)cur]); dirty = 1; }
@@ -704,7 +709,7 @@ static void go_table(void) {
 static void dash_input(void) {
     const uint8_t first = can_continue() ? DASH_CONTINUE : 1u;
     if (in_any_pressed() && !seeded) {
-        gd_rng_seed(GD_SEED_FIXED ? (uint16_t)GD_SEED_FIXED : sys_time);
+        gd_rng_seed(GD_SEED_FIXED ? (uint16_t)GD_SEED_FIXED : in_first_press_time());
         seeded = 1;
     }
     if (dash_item < first) dash_item = first;

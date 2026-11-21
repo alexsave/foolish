@@ -6,3 +6,5 @@ main.c~    if (in_select_held()) rearrange(step);~    if (0) rearrange(step);~SE
 main.c~    if (pass_ok) tgt[tgt_n++] = TGT_PASS;~    ~target mode has no pass space
 main.c~    if (pills & GD_PILL_PICKUP) fire(GD_PICKUP, 0, 0);~    if (0) fire(GD_PICKUP, 0, 0);~DOWN never picks up
 main.c~        if (dash_item == DASH_CONTINUE) { go_table(); return; }~        if (0) { go_table(); return; }~CONTINUE deals a new game instead
+main.c~        in_keep_except(J_START);~        ;~presses latched with START are dropped
+input.c~        add_TIM(in_tick);~        add_VBL(in_tick);~buttons read on VBlank (none while the LCD is off)
