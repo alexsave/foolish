@@ -178,6 +178,15 @@
 #define T_FW_FADE 254u
 #define T_FW_SHELL 255u
 #define ART_LACQUER_WIN_COUNT 27u  /* a win screen loads only space and A..Z of lacquer.c */
+/* firework burst centres per win screen, screen pixels {cx, cy, ...}; see the README for the sprite placement */
+#define ART_WIN_BURSTS_MIAMI_N 2u
+#define ART_WIN_BURSTS_MIAMI {24, 28, 136, 28}
+#define ART_WIN_BURSTS_NEW_YORK_N 2u
+#define ART_WIN_BURSTS_NEW_YORK {16, 36, 146, 36}
+#define ART_WIN_BURSTS_SEOUL_N 3u
+#define ART_WIN_BURSTS_SEOUL {20, 36, 90, 36, 146, 36}
+#define ART_WIN_BURSTS_MOSCOW_N 3u
+#define ART_WIN_BURSTS_MOSCOW {14, 28, 96, 34, 140, 28}
 #define ART_TRAIN_BASE 240u  /* train.c: the New York subway sprites */
 #define T_TRAIN_CAR 240u
 #define T_TRAIN_NOSE 241u

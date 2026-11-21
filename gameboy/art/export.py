@@ -207,6 +207,11 @@ def main():
     for k, name in enumerate(fw):
         h.append("#define T_%s %du" % (name, wins.FW_BASE + k))
     h.append("#define ART_LACQUER_WIN_COUNT %du  /* a win screen loads only space and A..Z of lacquer.c */" % wins.LACQUER_WIN_COUNT)
+    h.append("/* firework burst centres per win screen, screen pixels {cx, cy, ...}; see the README for the sprite placement */")
+    for city, pts in wins.BURSTS.items():
+        key = city.replace(" ", "_")
+        h.append("#define ART_WIN_BURSTS_%s_N %du" % (key, len(pts)))
+        h.append("#define ART_WIN_BURSTS_%s {%s}" % (key, ", ".join("%d, %d" % p for p in pts)))
     h.append("#define ART_TRAIN_BASE %du  /* train.c: the New York subway sprites */" % wins.TRAIN_BASE)
     for k, name in enumerate(tr):
         h.append("#define T_%s %du" % (name, wins.TRAIN_BASE + k))

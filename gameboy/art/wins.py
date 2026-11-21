@@ -728,11 +728,11 @@ def firework_bank():
 
 # where the bursts go (centre x, centre y) and when: a 4-frame loop, each
 # burst one phase behind the last; -1 = a rising shell under it
-BURSTS = {                 # burst centres per city, found clear of every building
-    "MIAMI": ((24, 32), (136, 34)),
-    "NEW YORK": ((20, 36), (102, 32), (144, 36)),
-    "SEOUL": ((20, 36), (80, 36), (142, 36)),
-    "MOSCOW": ((12, 36), (92, 36), (140, 32)),
+BURSTS = {                 # burst centres per city: each burst's whole box and shell
+    "MIAMI": ((24, 28), (136, 28)),          # stay BURST_MARGIN px clear of the picture
+    "NEW YORK": ((16, 36), (146, 36)),
+    "SEOUL": ((20, 36), (90, 36), (146, 36)),
+    "MOSCOW": ((14, 28), (96, 34), (140, 28)),
 }
 SCHEDULE = (            # frame -> phase per burst (None = not shown, "S" = shell)
     (0, "S", None),
@@ -769,6 +769,34 @@ def check_sky(s):
                         "%s: a firework sprite covers the picture at (%d, %d)" % (s.name, x + i, y + j)
 
 
+BURST_MARGIN = 4      # clear sky kept round every burst's whole box and its shell
+
+
+def burst_box(cx, cy, margin=BURST_MARGIN):
+    """Every pixel a burst can ever cover, on any frame: its 16x16 box and its
+    rising shell under it, grown by `margin` so a slip of a few pixels in the
+    game still lands on sky."""
+    box = set()
+    for y in range(cy - 8 - margin, cy + 8 + margin):
+        for x in range(cx - 8 - margin, cx + 8 + margin):
+            box.add((x, y))
+    for y in range(cy + 10 - margin, cy + 18 + margin):
+        for x in range(cx - 4 - margin, cx + 4 + margin):
+            box.add((x, y))
+    return box
+
+
+def check_burst_boxes(s, city):
+    """The whole box of every burst, not just the pixels a frame lights, must
+    be black sky or a star: nothing of the picture may be within the margin."""
+    for (cx, cy) in BURSTS[city]:
+        for (x, y) in burst_box(cx, cy):
+            assert 0 <= x < 160 and 0 <= y < 144, "%s: burst (%d, %d) runs off the screen" % (s.name, cx, cy)
+            v = s.bg.get(x, y)
+            assert v == K or (x, y) in STARS, \
+                "%s: burst (%d, %d) comes within %d px of the picture at (%d, %d)" % (s.name, cx, cy, BURST_MARGIN, x, y)
+
+
 def win_screen(city, frame=2, bake=True):
     s = Screen("w_%s" % city.lower().replace(" ", "_"), "Win over %s" % city)
     cv = s.bg
@@ -793,6 +821,7 @@ def win_screen(city, frame=2, bake=True):
     text(cv, 104, 136, "HOME", W)
     fireworks(s, firework_bank(), frame, city)
     check_sky(s)                       # the fireworks only; the train rides the bridge
+    check_burst_boxes(s, city)
     if city == "NEW YORK":
         train(s, frame)
     return s

@@ -261,7 +261,10 @@ After the blind designer's departures board, in our style (`travel.py`; `mockups
 ### Fireworks on the win screens (`mockups/09_fireworks_frames.png`)
 
 Sprites, loaded from `fireworks.c` at `ART_FW_BASE` (252): `T_FW_SPARK`, `T_FW_BURST`, `T_FW_FADE` are the top-left quarter of a 16x16 burst (draw it four times with X and Y flips), `T_FW_SHELL` is a rising shell.
-Bursts at fixed points per city (`wins.BURSTS`, found clear of every building: two over Miami, whose sky is full of condos, three elsewhere), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
+Bursts at fixed points per city (`wins.BURSTS`, found clear of every building: two over Miami and New York, whose skies are full, three over Seoul and Moscow), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
+Placement of a burst centred at (cx, cy) (`ART_WIN_BURSTS_<CITY>` in `art_tiles.h`, screen pixels): its four quarter sprites sit at screen (cx - 8, cy - 8) top left, (cx, cy - 8) top right with X flip, (cx - 8, cy) bottom left with Y flip, (cx, cy) bottom right with X and Y flip; the rising shell at (cx - 4, cy + 10).
+GBDK's `move_sprite(n, x, y)` takes OAM coordinates (screen x + 8, screen y + 16), so the top-left quarter is `move_sprite(n, cx, cy + 8)`.
+Every burst's whole 16x16 box and its shell keep `wins.BURST_MARGIN` (4) px of clear sky from the picture (`wins.check_burst_boxes`, run on every frame of every city; mutation checked: New York's old burst at (144, 36), which the game drew onto 270 Park, fails it at the tower's tier).
 At most 12 sprites on screen and 6 on one line.
 `gen_art.py` renders every frame of every city and fails if any firework pixel lands on anything but black sky or a star (mutation checked: a burst moved onto N Seoul Tower fails at the first covered pixel).
 
