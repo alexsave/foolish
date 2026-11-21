@@ -15,6 +15,7 @@
 #include "gd_bot_moscow.h"
 #include "gfx.h"
 #include "input.h"
+#include "gd_stack.h"
 #include "art_tiles.h"
 
 // THE GAME'S ONE ENTROPY SOURCE: the frame count when a button is first
@@ -877,6 +878,7 @@ static void draw_end(void) {
         gfx_load_full(FULL_LOSE);
     }
     gfx_flush();
+    gd_stack_scan();                   // the stack's deepest reach so far (scripts check it)
     fw_t = 0;
     gfx_spr_begin();
     gfx_spr_end();
@@ -911,6 +913,7 @@ static void end_input(void) {
 
 void main(void) {
     uint8_t shown = 0xFF, was_select = 0;
+    CRITICAL { gd_stack_paint(); }     // the canary (gd_stack.h), before anything below uses the stack
     // the cart's 32 KB of RAM (Moscow's solver): enabled, and MBC1's 4/32 mode
     // so the 0x4000 register picks the RAM bank
     *(volatile uint8_t *)0x0000u = 0x0Au;

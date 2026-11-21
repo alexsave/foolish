@@ -75,6 +75,7 @@ Stack guard (a canary over the gap between the end of the data and the stack, pa
 - The same after `moscowcheck` (100 decisions, 6 solved): 100 to 170 (hand reading: 400 of 541). Falsifier: under 48 or over 250.
 - Cost: 2 bytes of RAM, under 90 bytes of bank 0 ROM, painting under 0.1 frame at boot and the read-back under 0.15 frame once per game. Falsifier: any of those over double.
 - The check fails when fewer than 48 bytes are untouched; mutation checked with a grown stack frame and with a threshold above the measured headroom.
+- Cheap win, if the headroom is thin: `gfx.c`'s `char_off[128]` (a character-to-tile table built at boot) becomes a function, 128 bytes of RAM back. Prediction: RAM down by exactly 128 bytes (`s__HEAP_END`), ROM up by under 120 bytes, every screenshot of every script pixel-identical, a rail redraw costing under 0.1 frame more. Falsifier: any screenshot differing, or the rail redraw over 0.25 frame more.
 
 ## New York: foolish's handwritten_prod
 
