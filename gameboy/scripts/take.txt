@@ -14,5 +14,7 @@
 +0   shot shots/40_before_take.png 3
 +1   press DOWN
 +5   expect _G+74 00
-# one frame on: the flush of the new rail and hand runs on into a frame (set_bkg_tiles a row at a time), and a shot inside it shows the tear
-+1   shot shots/41_take.png 3
+# the shot once the cards have landed and the board has redrawn: at a fixed
+# frame it caught a redraw half sent (any change in the loop's timing moves it)
++0   until _fly_n 00
++8   shot shots/41_take.png 3

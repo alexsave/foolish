@@ -1,0 +1,44 @@
+# think_time.txt's game, with keys pressed while Moscow thinks: RIGHT then
+# LEFT, A then A (a cursor move each way, a selection made and unmade, each
+# drawn), which leave the hand as it was, so it stays the same game and the
+# time a think takes with keys pressed compares decision for decision with
+# think_time.txt (README "The screen while a bot thinks"). The presses that
+# play still come only in the 20 frames after a move. The seed is poked into
+# sys_time.
+@99  poke _sys_time 07 00
+@100 press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
+# the first think has no cursor yet; then 24 rounds with keys mid-think
++0   until _bot_thinking 01
++0   until _bot_thinking 00
++1   press RIGHT
++5   press UP
++5   press UP
++5   press DOWN
+repeat 24
++0   until _bot_thinking 01
++4   press RIGHT
++6   press LEFT
++6   press A
++6   press A
++0   until _bot_thinking 00
++1   press RIGHT
++5   press UP
++5   press UP
++5   press DOWN
+endrepeat
++0   peek _bot_lines_max 4
++0   peek _bot_lines_sum 4
++0   peek _bot_moves 2
++0   peek _moscow_playouts_sum 4
++0   peek _moscow_plies_sum 4
++0   peek _moscow_thinks 2
++0   peek _G+79 1
+# the same game in any ROM: these do not depend on how long a think takes
++0   expect _bot_moves 19 00
++0   expect _moscow_playouts_sum 7a 03 00 00
++0   expect _moscow_plies_sum 24 81 00 00
++0   expect _G+79 02
