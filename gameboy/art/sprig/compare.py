@@ -17,7 +17,7 @@ def back(rows):
     return cv
 
 def main():
-    rows_of = [[n for n in sprig.LAYOUTS if not n.endswith('_min')], [n for n in sprig.LAYOUTS if n.endswith('_min')]]
+    rows_of = [[n for n in sprig.LAYOUTS if not n.endswith('_min') and n != 'final_2b'], [n for n in sprig.LAYOUTS if n.endswith('_min')]]
     names = rows_of[0]
     cw = 16 + 8 + 16 + 5 * 8 + 16
     out = A.Canvas(8 + len(names) * (cw + 8), 104, A.T)

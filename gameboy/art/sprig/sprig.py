@@ -278,7 +278,33 @@ def combo(corner):
 COMBO_OPTIONS = {k: (lambda k=k: combo(k)) for k in ("leaf", "bud", "curl")}
 
 
+LEAF_CORNER = [    # 6x7, points down-left: serrated edge, midrib and side veins
+"..w.w.",
+".wwwow",
+"w.wowo",
+"wwowww",
+"wowow.",
+"ww.w..",
+"o.....",
+]
+
+
+def final_2b():
+    """The back (Alex's picks): A's curl, D's uneven vine, the serrated main
+    leaf, the berry, and an intricate small leaf in the bottom-left corner."""
+    f = Field()
+    f.stamp(6, 3, flip_x(LEAF_FINE))
+    f.stamp(0, 0, BIG_CURL)
+    f.stem(curve(lambda t: (1.8 + 8.4 * t + 1.7 * math.sin(9.5 * t + 0.3) * (1 - 0.6 * t) + 0.6 * math.sin(23 * t),
+                            6 + 9 * t)))
+    f.stem([(5, 11), (4, 12)])
+    f.stamp(0, 13, LEAF_CORNER)
+    f.stamp(8, 16, BERRY, ring=True)
+    return f.rows()
+
+
 LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching,
+           "final_2b": final_2b,
            "hanging_min": hanging_min, "diagonal_min": diagonal_min, "arching_min": arching_min}
 
 if __name__ == "__main__":

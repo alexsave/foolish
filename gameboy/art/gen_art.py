@@ -26,7 +26,7 @@ import glyphs as G
 from sprig import sprig
 
 # The card back's sprig layout (sprig/sprig.py): "hanging", "diagonal" or "arching".
-BACK_LAYOUT = "diagonal_min"     # Alex picked 2B
+BACK_LAYOUT = "final_2b"     # Alex picked 2B, then its curl, vine and corner leaf
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PNG = os.path.join(HERE, "png")
