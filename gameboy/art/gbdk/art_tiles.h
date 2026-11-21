@@ -13,6 +13,8 @@
 #define ART_UI_COUNT 61u
 #define ART_SPRITES_BASE 140u
 #define ART_SPRITES_COUNT 18u
+#define ART_PILE_BASE 160u
+#define ART_PILE_COUNT 9u
 
 #define T_RANK_6_U0 0u
 #define T_RANK_7_U0 1u
@@ -167,6 +169,23 @@
 #define T_SP_CLUB_SUIT 155u
 #define T_SP_CLUB_PIPL 156u
 #define T_SP_CLUB_PIPR 157u
+
+#define T_PILE_00 160u
+#define T_PILE_10 161u
+#define T_PILE_20 162u
+#define T_PILE_01 163u
+#define T_PILE_11 164u
+#define T_PILE_21 165u
+#define T_PILE_02 166u
+#define T_PILE_12 167u
+#define T_PILE_22 168u
+
+/* the discard pile: a 3x3 tile box at (ART_DISCARD_X, ART_DISCARD_Y), tiles ART_PILE_BASE + row-major */
+#define ART_DISCARD_X 17u
+#define ART_DISCARD_Y 1u
+#define ART_DISCARD_LAND_PX 143u  /* a swept card's flight ends with its top left here (pixels) */
+#define ART_DISCARD_LAND_PY 8u
+#define ART_BOT_HAND_LAST_COL 16u  /* the bot's backs keep to columns 0..this */
 
 /* the rail font: character c is at ART_UI_BASE + ART_FONT_FIRST + index of c in ART_FONT_CHARS */
 #define ART_LACQUER_COUNT 46u  /* lacquer.c: the same characters, white on black */
