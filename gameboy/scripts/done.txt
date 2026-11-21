@@ -18,7 +18,18 @@
 +0   expect _cur 00
 +0   shot shots/53_all_covered_done.png 3
 +1   press DOWN
-+6   expect _G+74 00
+# the bout ends; the refill flies as the rules draw (README "The deal"): I
+# attacked, so my card leaves the deck first while the bot's still waits
+# (dl_n: mine 0, the bot's 1), then the bot's; each lands where the board
+# draws it (mine at column 14 of row 13, the bot's back at column 11 of row 1)
++1   until _dl_seat 00
++0   expect _dl_n 00 01
++0   until _dl_seat 01
++0   expect _fly_pos 70 68
++0   until _dl_seat ff
++0   expect _fly_pos 58 08
++0   until _fly_n 00
++4   expect _G+74 00
 +0   expect _G+80 02
 +0   expect _G+75 01
 +0   shot shots/54_done.png 3
