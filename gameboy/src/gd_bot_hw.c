@@ -2,6 +2,7 @@
 // handwritten_prod_strategy_choose it ports.
 #include "gd_bot_hw.h"
 #include "gd_rng.h"
+#include "gd_botlib.h"
 
 #define TRUMP_SCORE 1000u            // cardScore: value + 1000 for a trump
 
@@ -108,21 +109,6 @@ int8_t gd_dbl_cmp(const gd_dbl *a, const gd_dbl *b) {
     if (a->e != b->e) return a->e < b->e ? -1 : 1;
     for (i = 7; i >= 0; i--) if (a->m[(uint8_t)i] != b->m[(uint8_t)i]) return a->m[(uint8_t)i] < b->m[(uint8_t)i] ? -1 : 1;
     return 0;
-}
-
-// ---- getTrumpAttackProbability, as a threshold on a 16-bit draw ----------------------------
-// p = 0.02 while the trump card is under the deck; else 0.65 + 0.35 * discard /
-// total, held to [0.5, 0.95]. As a fraction, p = (13t + 7d) / (20t), and the
-// count of r in [0, 65536) with r / 65536 < p is ceil(65536 p).
-uint16_t gd_hw_trump_threshold(uint8_t has_flipped, uint8_t discard, uint8_t total) {
-    uint32_t num, den;
-    if (has_flipped) return 1311;                    // ceil(65536 * 0.02)
-    if (total < 1) total = 1;
-    if (discard > total) discard = total;
-    if (7u * discard >= 6u * total) return 62260;    // held at 0.95: ceil(62259.2)
-    num = 16384ul * (13ul * total + 7ul * discard);  // 65536 (13t + 7d) / (20t)
-    den = 5ul * total;
-    return (uint16_t)((num + den - 1u) / den);
 }
 
 // ---- the random draws -----------------------------------------------------------------------
@@ -382,7 +368,7 @@ void gd_hw_choose(const gd_game *g, uint8_t seat, gd_move *out) GD_BANKED {
             uint8_t total = (uint8_t)(g->stock_n + g->discard + gd_hand_n(g, 0) + gd_hand_n(g, 1) + (g->has_flipped ? 1u : 0u));
             uint16_t t;
             for (i = 0; i < g->nb; i++) total = (uint8_t)(total + 1u + (g->def[i] != GD_NONE ? 1u : 0u));
-            t = gd_hw_trump_threshold(g->has_flipped, g->discard, total);
+            t = gd_trump_threshold(g->has_flipped, g->discard, total);
             if (draw16() < t) { pick_attack(g, seat, CLS_TRUMP, out); return; }
             // decline: good if there is one (no wait in this menu), else fall through
             if (has_good) { out->type = GD_GOOD; return; }

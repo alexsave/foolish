@@ -16,11 +16,6 @@ void gd_hw_choose(const gd_game *g, uint8_t seat, gd_move *out) GD_BANKED;
 // How many draws (gd_rng_below(65536)) the last gd_hw_choose made.
 extern uint8_t gd_hw_draws;
 
-// The trump-attack gate as an integer: an attack with trumps goes ahead when
-// the 16-bit draw r is below this. Exactly `r / 65536.0 < p` for foolish's
-// double p (tests/hwtest.c checks every case). Exposed for that check.
-uint16_t gd_hw_trump_threshold(uint8_t has_flipped, uint8_t discard, uint8_t total);
-
 // The soft double: JS / IEEE double multiplication of positive integers,
 // rounded to 53 bits (round half to even) after every multiply, as foolish's
 // cover choice computes its products. Exposed for its check.

@@ -14,11 +14,11 @@ B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
 
-CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_bot_hw.c
-CORE_H   = src/gd_bank.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
+CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c
+CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c
 ROM_BANK1 = main gfx gd_play
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu
@@ -55,6 +55,12 @@ $(B)/gen_binom: tools/gen_binom.c | $(B)
 $(B)/gd_binom.h: $(B)/gen_binom
 	$(B)/gen_binom > $@
 
+$(B)/gen_simtab: tools/gen_simtab.c | $(B)
+	$(HOSTCC) -O2 -o $@ $<
+
+$(B)/gd_simtab.h: $(B)/gen_simtab
+	$(B)/gen_simtab > $@
+
 $(B)/rom:
 	mkdir -p $@
 
@@ -84,14 +90,24 @@ $(B)/hw_prod.o: $(FOOLISH)/handwritten_prod_strategy.c | $(B)
 $(B)/difftest: tests/difftest.c $(CORE) $(CORE_H) $(B)/hw_prod.o | $(B)
 	$(HOSTCC) $(HOSTFLAGS) $(FOOLISH_DEFS) -I$(B) -I$(FOOLISH) -o $@ tests/difftest.c $(CORE) $(FOOLISH_SRC) $(B)/hw_prod.o
 
-test: $(B)/difftest
+# The rollout engine against foolish's cordite_sim, with foolish's default
+# caps (its sim refuses the production menu cap) and its draws handed over.
+SIM_FOOLISH = $(FOOLISH)/game.c $(FOOLISH)/legal.c $(FOOLISH)/card.c $(SHARED)/deal_rng.c
+$(B)/cordite_sim.o: $(FOOLISH)/cordite_sim.c | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -w -DMAX_LOGS=64 -Dgame_random=dt_sim_random -I$(FOOLISH) -c -o $@ $<
+
+$(B)/simtest: tests/simtest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/simtest.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_sim.c $(SIM_FOOLISH) $(B)/cordite_sim.o
+
+test: $(B)/difftest $(B)/simtest
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1
+	$(B)/simtest 20000 1
 
 print-core:
 	@echo $(CORE)
 
-mutants: $(B)/gd_binom.h $(B)/hw_prod.o
+mutants: $(B)/gd_binom.h $(B)/gd_simtab.h $(B)/hw_prod.o $(B)/cordite_sim.o
 	bash tests/mutants.sh
 
 rom-mutants: $(B)/durak.gb $(B)/gbrun
@@ -134,3 +150,19 @@ playout: $(B)/playout_host $(B)/playout.gb $(B)/gbrun
 	sh tests/playout.sh
 
 .PHONY: playout
+
+# ---- the rollout engine timed on the Game Boy -----------------------------------------
+SIMBENCH_DEPS = tests/simbench.c src/gd_sim.c $(CORE_H)
+$(B)/simbench_host: $(SIMBENCH_DEPS) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DSIMBENCH_HOST -I$(B) -o $@ tests/simbench.c src/gd_rules.c src/gd_rng.c src/gd_botlib.c
+
+$(B)/simbench.gb: $(SIMBENCH_DEPS) | $(B)
+	$(LCC) $(LCCFLAGS) -Wl-j -I$(B) -o $@ tests/simbench.c src/gd_rules.c src/gd_rng.c src/gd_botlib.c
+
+$(B)/simprof.gb: $(SIMBENCH_DEPS) | $(B)
+	$(LCC) $(LCCFLAGS) -Wl-j -DSIM_PROF -I$(B) -o $@ tests/simbench.c src/gd_rules.c src/gd_rng.c src/gd_botlib.c
+
+simbench: $(B)/simbench_host $(B)/simbench.gb $(B)/simprof.gb $(B)/gbrun
+	sh tests/simbench.sh
+
+.PHONY: simbench

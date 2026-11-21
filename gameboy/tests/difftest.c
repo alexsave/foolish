@@ -18,27 +18,19 @@
 #include "../src/gd_play.h"
 #include "../src/gd_rng.h"
 #include "../src/gd_bot_hw.h"
+#include "../src/gd_botlib.h"
 
 #include "game.h"
 #include "legal.h"
 #include "strategy.h"
 #include <math.h>
+#include "foolish_map.h"
 
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-// ---- the two card encodings, mapped explicitly ----------------------------------
-// gd: id = suit * 9 + rank, rank 0..8 = 6..A.
-// foolish: Card {suit 0..3, value 5..13 = 6..A} (36-card deck, min value 5);
-// foolish suits are the same 0..3 (spades, hearts, clubs, diamonds).
-static Card f_of(uint8_t id) {
-    Card c;
-    c.suit = (int8_t)(id / 9);
-    c.value = (int8_t)(id % 9 + MIN_VALUE_SMALL);
-    return c;
-}
-static uint8_t gd_of(Card c);
+// The two card encodings are mapped explicitly in foolish_map.h.
 
 // ---- New York against foolish's handwritten_prod ---------------------------------
 // foolish's bot file is compiled with random_strategy_random renamed to
@@ -55,10 +47,6 @@ static unsigned long hw_nodes_max, hw_nodes_sum, hw_covers;
 static unsigned long hw_compared, hw_agree, hw_by_type[5], hw_draws_total;
 
 
-static uint8_t gd_of(Card c) {
-    if (c.suit < 0 || c.suit > 3 || c.value < MIN_VALUE_SMALL || c.value > ACE_VALUE) return 0xEE;
-    return (uint8_t)(c.suit * 9 + (c.value - MIN_VALUE_SMALL));
-}
 
 // ---- failure reporting ----------------------------------------------------------
 static unsigned long g_seed_now, g_move_now;
@@ -271,18 +259,6 @@ static int hw_compare(const gd_game *g, const Game *f, uint8_t seat, int keep, g
     return 1;
 }
 
-static bool f_apply(Game *f, uint8_t seat, const gd_move *m) {
-    Card c[GD_MAXB], a[GD_MAXB];
-    for (int i = 0; i < m->n; i++) { c[i] = f_of(m->cards[i]); a[i] = f_of(m->atts[i] < 36 ? m->atts[i] : 0); }
-    switch (m->type) {
-    case GD_ATTACK: return handle_attack(f, seat, c, m->n);
-    case GD_COVER:  return handle_cover(f, seat, c, a, m->n);
-    case GD_PASS:   return handle_pass(f, seat, c, m->n);
-    case GD_PICKUP: return handle_pickup(f, seat);
-    case GD_GOOD:   return handle_good(f, seat);
-    }
-    return false;
-}
 
 // ---- probes ------------------------------------------------------------------------
 static uint8_t rnd(uint32_t n) { return (uint8_t)gd_rng_below(n); }
@@ -445,7 +421,7 @@ static int hw_unit_checks(void) {
         for (int t = 1; t <= 36; t++)
             for (int d = 0; d <= t; d++) {
                 const double p = hw_p(fl, d, t);
-                const uint16_t th = gd_hw_trump_threshold((uint8_t)fl, (uint8_t)d, (uint8_t)t);
+                const uint16_t th = gd_trump_threshold((uint8_t)fl, (uint8_t)d, (uint8_t)t);
                 for (uint32_t r = 0; r < 65536; r++, n++)
                     if ((r / 65536.0 < p) != (r < th)) {
                         printf("FAIL threshold flipped %d d %d t %d r %u: double %d, threshold %u\n", fl, d, t, r, r / 65536.0 < p, th);
