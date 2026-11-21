@@ -30,8 +30,14 @@ while IFS='~' read -r file from to what; do
             build/hw_prod.o $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c 2>"$d/cc.log"; then
         echo "mutant $i: DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue
     fi
-    # the sim's mutants are proven by the sim test, the rest by the difftest
-    if [ "$file" = gd_sim.c ]; then
+    # the solver's mutants are proven by the solver test, the rest of the sim's
+    # by the sim test, the rest by the difftest
+    if [ "${what#solve:}" != "$what" ]; then
+        $CC -std=c11 -O2 -w -DMAX_LOGS=64 -Ibuild -I$FOOLISH -o "$d/solvetest" tests/solvetest.c $core \
+            $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c \
+            build/cordite_sim.o 2>>"$d/cc.log" || { echo "mutant $i: SOLVETEST DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue; }
+        out=$("$d/solvetest" "${SOLVE_GAMES:-60}" 1 20000 2>&1)
+    elif [ "$file" = gd_sim.c ]; then
         $CC -std=c11 -O2 -w -DMAX_LOGS=64 -Ibuild -I$FOOLISH -o "$d/simtest" tests/simtest.c "$d/src/gd_rules.c" "$d/src/gd_menu.c" \
             "$d/src/gd_rng.c" "$d/src/gd_botlib.c" "$d/src/gd_sim.c" $FOOLISH/game.c $FOOLISH/legal.c $FOOLISH/card.c $SHARED/deal_rng.c \
             build/cordite_sim.o 2>>"$d/cc.log" || { echo "mutant $i: SIMTEST DOES NOT COMPILE ($what)"; missed=$((missed+1)); continue; }
@@ -46,6 +52,6 @@ while IFS='~' read -r file from to what; do
     else
         echo "mutant $i: MISSED - $what"; missed=$((missed+1))
     fi
-done < <(grep -v "^#" tests/mutants.txt)
+done < <(grep -v "^#" tests/mutants.txt | grep -F -- "${ONLY:-}")
 echo "mutants: $caught caught, $missed missed"
 [ "$missed" -eq 0 ]

@@ -105,10 +105,11 @@ $(B)/simtest: tests/simtest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite
 $(B)/solvetest: tests/solvetest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/solvetest.c $(CORE) $(SIM_FOOLISH) $(B)/cordite_sim.o
 
-test: $(B)/difftest $(B)/simtest
+test: $(B)/difftest $(B)/simtest $(B)/solvetest
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1
 	$(B)/simtest 20000 1
+	$(B)/solvetest 60 1 20000
 
 print-core:
 	@echo $(CORE)
