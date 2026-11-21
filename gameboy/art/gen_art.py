@@ -205,6 +205,8 @@ def rail_glyph_tile(rows, fg=W, bg=D, x=1, y=1):
                 cv.put(x + i, y + j, T)   # second tone on the rail: light grey
             elif ch == "w":
                 cv.put(x + i, y + j, bg)  # cut-outs show the rail
+            elif ch == "t":
+                cv.put(x + i, y + j, T)   # light grey (the club's seams on the white icon)
     return cv.tile(0, 0)
 
 
@@ -407,6 +409,23 @@ def edge_card():
     return cv
 
 
+def club_sprite_tiles():
+    """Sprite copies of the club tiles that carry its light grey seams: the
+    seam pixels stored as index 2, so that with OBP1 = 0xD0 (index 1 white,
+    2 light grey, 3 black) a flying club card shows them opaque.  The round
+    corners stay index 0 (transparent).  A club card has no dark grey
+    anywhere, so OBP1 changes nothing else on it; its other tiles (rank,
+    FACE_TR, PIPT_C) are used as they are."""
+    cv = card_face("6", "C")
+    out = {}
+    for name, (tx, ty) in (("SP_CLUB_SUIT", (0, 1)), ("SP_CLUB_PIPL", (0, 2)), ("SP_CLUB_PIPR", (1, 2))):
+        t = cv.tile(tx, ty)
+        out[name] = tuple(T if v is None else (D if v == T else v) for v in t)
+        assert D in out[name], name               # each copy carries seam pixels
+    assert T not in cv.tile(1, 1)                  # PIPT_C has no seam: no copy needed
+    return out
+
+
 def sprite_bank():
     bank = {}
     for name, art in SPRITES.items():
@@ -416,6 +435,7 @@ def sprite_bank():
     for name, cv in (("NARROW", narrow_back()), ("EDGE", edge_card())):
         for ty, part in enumerate(("T", "M", "B")):
             bank["SP_%s_%s" % (name, part)] = fill_none(cv.tile(0, ty), T)
+    bank.update(club_sprite_tiles())
     return bank
 
 

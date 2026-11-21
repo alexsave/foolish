@@ -189,7 +189,8 @@ def main():
          "/* VRAM tile indices of every art tile (0x8000 addressing, LCDC bit 4 = 1). */",
          "#ifndef ART_TILES_H", "#define ART_TILES_H", "",
          "#define ART_BGP  0xE1u  /* index 0 table->light, 1 paper->white, 2->dark, 3->black */",
-         "#define ART_OBP0 0xE1u  /* same mapping; sprite index 0 is transparent */", ""]
+         "#define ART_OBP0 0xE1u  /* same mapping; sprite index 0 is transparent */",
+         "#define ART_OBP1 0xD0u  /* flying club cards: index 1 white, 2 light grey (the seams), 3 black */", ""]
     for b, bank in banks.items():
         h.append("#define ART_%s_BASE %du" % (b.upper(), BASE[b]))
         h.append("#define ART_%s_COUNT %du" % (b.upper(), len(bank)))

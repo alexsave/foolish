@@ -5,13 +5,14 @@
 
 #define ART_BGP  0xE1u  /* index 0 table->light, 1 paper->white, 2->dark, 3->black */
 #define ART_OBP0 0xE1u  /* same mapping; sprite index 0 is transparent */
+#define ART_OBP1 0xD0u  /* flying club cards: index 1 white, 2 light grey (the seams), 3 black */
 
 #define ART_CARDS_BASE 0u
 #define ART_CARDS_COUNT 72u
 #define ART_UI_BASE 72u
 #define ART_UI_COUNT 61u
 #define ART_SPRITES_BASE 140u
-#define ART_SPRITES_COUNT 15u
+#define ART_SPRITES_COUNT 18u
 
 #define T_RANK_6_U0 0u
 #define T_RANK_7_U0 1u
@@ -163,6 +164,9 @@
 #define T_SP_EDGE_T 152u
 #define T_SP_EDGE_M 153u
 #define T_SP_EDGE_B 154u
+#define T_SP_CLUB_SUIT 155u
+#define T_SP_CLUB_PIPL 156u
+#define T_SP_CLUB_PIPR 157u
 
 /* the rail font: character c is at ART_UI_BASE + ART_FONT_FIRST + index of c in ART_FONT_CHARS */
 #define ART_LACQUER_COUNT 46u  /* lacquer.c: the same characters, white on black */

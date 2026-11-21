@@ -34,7 +34,7 @@ One mapping for every layer: index 0 = table (light grey), 1 = paper (white), 2 
 
 - `BGP = 0xE1` (background and window: the window shares BGP).
 - `OBP0 = 0xE1` (all sprites).
-- `OBP1` is unused.
+- `OBP1 = 0xD0` (`ART_OBP1`): flying club cards only (index 1 white, 2 light grey, 3 black); see "Flying club cards" below.
 
 Why 0 is the table and not white: sprite colour 0 is always transparent, and a card's round corner pixels are index 0.
 So the same card tiles work on the background (the corner shows the table grey) and as sprites (the corner is see-through), with no second copy.
@@ -51,7 +51,7 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 | --- | --- | --- | --- |
 | 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
 | 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
-| 140..154 | `sprites` | 15 | underline, arrow, brackets, nudge, pointer, deal flip |
+| 140..157 | `sprites` | 18 | underline, arrow, brackets, nudge, pointer, deal flip, the club's sprite copies |
 
 That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
@@ -112,6 +112,33 @@ The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in th
 `BACK_LAYOUT` in `gen_art.py` picks one; it is `final_2b_framed` (Alex's picks: the diagonal minimal sprig 2B with option a's curl, option d's uneven one-pixel vine, the serrated veined leaf, the small shaded berry with its calyx, and an intricate small leaf with midrib, side veins and a serrated edge in the bottom-left corner, inside two rings, dark grey outermost and black inside, the motif grown into the freed pixel all round (the big curl, the full corner leaf); the grey edge gives the bot's overlapped backs their dividing line; `mockups/12_back_framed.png`, alone and overlapped).
 The options that led there are kept as sheets: `06_back_rotations.png`, `07_back_vine_options.png`, `10_back_combo.png`.
 Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
+
+### The club
+
+The wide-foot club (Alex's pick) with light grey seams that run in to the centre, so its three stems read (`glyphs.SMALL["C"]`, `glyphs.PIP["C"]`; the seams are the `t` pixels).
+On the background light grey is palette index 0 under `BGP = 0xE1`, so the card tiles (`SUIT_C`, `PIPL_C_u*`, `PIPR_C`) carry the seams as they are; the status bar's club icon (`IC_C`) shows the same joins in light grey on its white body.
+
+### Flying club cards (OBP1): what the game code must do
+
+Light grey is index 0, and a sprite always draws index 0 as transparent, so a club card flying as sprites would show holes at its seams.
+The art ships sprite copies of the three club tiles that carry seams, with each seam pixel stored as index 2, and a second object palette that shows index 2 as light grey:
+
+| Card part (tile at x, y in the card) | Background tile | Sprite tile for a flying club card |
+| --- | --- | --- |
+| rank, top left (0, 0) | `T_RANK_<r>_U0` | the same: `T_RANK_<r>_U0` |
+| top right (1, 0) | `T_FACE_TR` | the same: `T_FACE_TR` |
+| small suit (0, 1) | `T_SUIT_C` | `T_SP_CLUB_SUIT` |
+| pip top row, right (1, 1) | `T_PIPT_C` | the same: `T_PIPT_C` (it has no seam) |
+| pip left, bottom left (0, 2) | `T_PIPL_C_U0` | `T_SP_CLUB_PIPL` |
+| pip right (1, 2) | `T_PIPR_C` | `T_SP_CLUB_PIPR` |
+
+1. At boot: `OBP1_REG = ART_OBP1;` (0xD0: index 1 white, 2 light grey, 3 black; index 0 stays transparent).
+2. When a club card flies (deal, play, pick up), build its six sprites from the right-hand column above and set the OBP1 attribute bit on every one of them: `set_sprite_prop(n, S_PALETTE)` (OAM attribute bit 4), plus any flip bits you use.
+3. Every other sprite (other suits' cards, card backs, cursor, arrow, fireworks, train, plane) stays on OBP0 (`ART_OBP0`).
+
+Why it is safe: a club card has no dark grey anywhere (black rank and pips, white body), so OBP1's index 2 means only the seams; the round corners stay index 0 and transparent.
+Cost: 3 sprite tiles (155..157) and the OBP1 slot.
+`mockups/26_club_s2b_before_after.png` shows the club before and after, the status bar, and a flying K of clubs built from exactly these tiles under OBP1.
 
 ### The pass slot
 
