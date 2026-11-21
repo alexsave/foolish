@@ -2,10 +2,13 @@
 # has no confirmation); the game stays open and the dashboard offers CONTINUE.
 @99  poke _sys_time 1f 00
 @100 press A
-# the deal lands (README "The deal") before the first move
+# RIGHT during the deal (README "The deal") is kept, not dropped and not
+# acted on: no cursor until the last card has landed, then the cursor
 +1   until _fly_n 01
++20  press RIGHT
++6   expect _cur ff
 +0   until _fly_n 00
-+1   press RIGHT
++4   expect _cur 00
 +6   press START
 +1   until _screen 00
 +0   expect _dash_item 00
