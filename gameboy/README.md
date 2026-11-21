@@ -20,6 +20,8 @@ make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
 
+On Linux the runner needs `apt-get install libmgba-dev libpng-dev` and `make MGBA_CFLAGS= MGBA_LIBS= ...` (the Homebrew paths are the default); `make scripts PYTHON=python3` needs Pillow for `tests/fwcheck.py`.
+
 ## Hypotheses (written before measuring) and measurements
 
 - ROM: about 14 KB of the 32 KB ROM-only cart (code about 10 KB, as SDCC pulls in its 32-bit multiply and divide helpers; the binomial table 2.8 KB; tiles about 1.3 KB).
@@ -47,6 +49,7 @@ make romusage       # ROM and RAM per bank
   With Moscow: 7.1 KB (3.9 KB + 3.3 KB), 0.7 KB left above the stack; Seoul and Moscow share one world and one candidate list (`gd_botlib.h`), and Moscow ranks candidates by menu index, as a move is 38 bytes.
   With the sprites built in a staging copy (160 bytes, below): 541 bytes are left between the data and the stack's top at 0xE000.
   The stack's deepest reach, read from the bytes it left in that gap: 320 bytes over a whole game against Moscow, 400 in `moscowcheck` (100 decisions, 6 solved), so about 80 bytes to spare once the game's own frames are counted.
+  Now measured by a canary (`src/gd_stack.c`, the section below): 665 bytes are free between the data and the stack (the character table went to ROM), 346 untouched after a whole game against Moscow, and `game_moscow.txt`, `game_moscow_endgame.txt` and `moscowcheck` fail if fewer than 48 are.
   The cart's 32 KB of RAM is the solver's: bank 0 its stack (49 states and frames, 640 moves, the hash's table at 0xBF00), banks 1 to 3 its transposition table (3 x 1024 entries of a 32-bit tag and a value).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
   Falsifier: a typical move over one frame (154 lines, 16.7 ms).
@@ -59,23 +62,26 @@ make romusage       # ROM and RAM per bank
 
 ### Win-screen fireworks from the art's export, and the stack guard (gb-fireworks-stack)
 
-Written before any of it was measured; each line is marked right or wrong after.
+Predictions written before the change was measured, each marked right or wrong after (the fireworks prediction was written after the old table's first screenshot but before the new code ran).
 
 Fireworks:
 - The game drew bursts from a hand-copied table (`fw_x`, `fw_y` in `main.c`). Prediction: it matches the art in at most a few of the 16 frames (4 cities x 4 frames) and fails the art comparison in the burst boxes in the rest; with `ART_WIN_BURSTS_<CITY>` in its place every frame matches the art's own render pixel for pixel, in the boxes and on the whole screen.
   Falsifier: the old table already matching in most frames, or any pixel differing after the change.
-  Right on both counts: the old table failed 16 of 16 frames (47 to 217 differing pixels per frame), the export passes 16 of 16 with 0 differing pixels.
-- Where the 8 px came from: not from the drawing code. `gfx_spr` adds the OAM's (8, 16) once and the four quarters and the shell use the art's formula, so a burst centred on the same point is drawn on the same pixels (the comparison proves it). The table was a hand copy of an old art revision (the commit that added per-city bursts), and the art moved its bursts afterwards: New York's right burst went from (136, 36) to (144, 36) to (146, 36), the one the game drew onto 270 Park's crown at 8 px off the art's, and every city's other bursts moved too (Miami's y from 32 and 34 to 28 and 28, New York lost its middle burst, and so on). Nothing tied the two together; now `art_tiles.h` is the only source.
-- Cost: ROM about the same (the table is the same size), RAM none (`fw_t` stays one byte; it lost `static` so `scripts/win_fireworks.txt` can set the loop frame by `poke _fw_t`).
-- Mutation: the burst centre shifted 8 px left in the game fails `tests/fwcheck.py` on all 16 frames.
+  Right: the old table failed 16 of 16 frames (4 to 217 differing pixels per frame in the boxes), the export passes 16 of 16 with 0 differing pixels, in the boxes and over the whole 160 x 144 screen (New York's train deck rows, the one sprite the game does not draw, are skipped).
+- Where the 8 px came from: not the drawing code. `gfx_spr` adds the OAM's (8, 16) once and the four quarters and the shell use the art's formula, so a burst centred on the same point lands on the same pixels (the comparison proves it). The table was a hand copy of an older art revision (`wins.BURSTS` as of the Moscow commit: New York (22, 32), (88, 34), (136, 36)), and the art moved its bursts afterwards: New York's right burst went from (136, 36) to (144, 36) (8 px right) and then (146, 36), the middle one went, and Miami's, Seoul's and Moscow's moved too. Nothing tied the two together; `art_tiles.h` is the only source now.
+- Cost: RAM none (`fw_t` stays one byte; it lost `static` so `scripts/win_fireworks.txt` can set the loop frame with `poke _fw_t`).
+- `scripts/win_fireworks.txt` sets the loop frame, saves each city's four frames to `build/fw/`, and `tests/fwcheck.py` (run by `tests/scripts.sh`; `PYTHON=` picks the interpreter, it needs Pillow) renders the same frames with the art's own code and compares. Mutation: the burst centre x shifted 8 px left in the game fails it on all 16 frames (first differing pixel reported).
 
-Stack guard (a canary over the gap between the end of the data and the stack, painted at boot, read back at the end of a game):
-- The gap at boot is `0xE000 - s__HEAP_END`, 539 bytes before the guard and 537 with its 2-byte result. Falsifier: a different number in `build/durak.map`.
-- The untouched bytes left after a whole game against Moscow (`game_moscow.txt`): 130 to 200 (the stack's reach read by hand was 320 of 541, and the guard also counts the interrupt handler's pushes). Falsifier: under 48 (the threshold) or over 250.
-- The same after `moscowcheck` (100 decisions, 6 solved): 100 to 170 (hand reading: 400 of 541). Falsifier: under 48 or over 250.
-- Cost: 2 bytes of RAM, under 90 bytes of bank 0 ROM, painting under 0.1 frame at boot and the read-back under 0.15 frame once per game. Falsifier: any of those over double.
-- The check fails when fewer than 48 bytes are untouched; mutation checked with a grown stack frame and with a threshold above the measured headroom.
-- Cheap win, if the headroom is thin: `gfx.c`'s `char_off[128]` (a character-to-tile table built at boot) becomes a function, 128 bytes of RAM back. Prediction: RAM down by exactly 128 bytes (`s__HEAP_END`), ROM up by under 120 bytes, every screenshot of every script pixel-identical, a rail redraw costing under 0.1 frame more. Falsifier: any screenshot differing, or the rail redraw over 0.25 frame more.
+Stack guard (`src/gd_stack.c`: a canary painted over the gap between the end of the data, the linker's `s__HEAP_END`, and the stack pointer at boot; read back at the end screen as `gd_stack_free`, the untouched run from the bottom up):
+- The gap at boot is `0xE000 - s__HEAP_END`, 539 bytes before the guard and 537 with its 2-byte result. Right: `s__HEAP_END` was 0xDDE5, then 0xDDE7.
+- Untouched bytes after a whole game against Moscow (`game_moscow.txt`): predicted 130 to 200. Wrong, a little high: 215 (the stack's reach was 322 of 537, the same as the 320 read by hand; I had guessed the interrupt handler's pushes would add more).
+- After `moscowcheck` (100 decisions, 6 solved): predicted 100 to 170 in the game's gap. Right: the stack reaches 400 bytes there, so 537 - 400 = 137 in the game's gap (that ROM's own data ends lower, so the check compares against the game's gap: `tests/moscowcheck.sh` asks for 48 plus the difference of the two `s__HEAP_END`s). The same reach with no solves at all (`MOSCOW_SOLVE_CARDS=0`) is also 400: the deepest path is Moscow's sampling and playouts, not the solver, whose stack is in the cart's RAM.
+- In the game with the solver running (`game_moscow_endgame.txt`, a game poked into a 4 v 4 endgame, 3 solves): reach 345 of 665 (after the cheap win below), 320 untouched.
+- Measured minimum headroom: 137 bytes in the game's gap before the cheap win (the moscowcheck reach; that ROM's call chain is shorter than the game's by a few frames I could not separate, so the game's real worst case is a little under that), 265 after it. The game's own runs left 215 (Moscow, no solve), 193 (endgame, 3 solves) before, 346 and 320 after.
+- Cost: predicted 2 bytes of RAM (right), under 90 bytes of bank 0 ROM (right: 57 bytes of code), painting under 0.1 frame at boot and the read-back under 0.15 frame once per game (both wrong: measured with the scanline clock, 70 scanlines (0.45 frame) to paint and 75 (0.49 frame) to read back, about 36 and 84 T-cycles a byte; one half frame at boot and at the end screen, nothing in play).
+- The check fails when fewer than 48 bytes are untouched. Mutation checked: a 330-byte local (written) in `gd_moscow_choose` fails `game_moscow.txt` (13 untouched, 346 before) and `moscowcheck` (1791 untouched, 1905 wanted); the threshold raised to 400 fails `game_moscow.txt` (346 untouched); `game_moscow_endgame.txt` with its poke removed fails on `_moscow_solves` (0, not at least 1).
+- The cheap win: `gfx.c`'s `char_off[128]`, a character-to-tile table built at boot, is a function now (`icon_off`, arithmetic for a space, A..Z and 0..9, a search of `ART_FONT_CHARS` for the rest; `tests/fontorder.c`, in `make test`, fails the build if the font stops being in that order). Prediction: RAM down by exactly 128 bytes, ROM up by under 120 bytes, every screenshot of every script pixel-identical, the slowest redraw under 0.25 frame longer. Right on RAM (`s__HEAP_END` 0xDDE7 to 0xDD67), ROM (wrong direction: bank 1 shrank by 83 bytes, the table builder is gone), the screenshots (all 55 identical; `take.txt`'s second shot moved one frame later, because the 8 scanlines it added to the slowest redraw (662 to 670, 0.05 frame) pushed a row-by-row flush across a frame boundary, and the old shot caught the tear) and the redraw (right, +0.05 frame).
+  I chose it over overlaying `bot_board`/`bot_slowest` (216 bytes of profiling copies of the board in `main.c`) because those two are live across a decision, when the bots' scratch is in use, so they cannot share it; and over a table in ROM because a 128-byte table would duplicate `ART_FONT_CHARS`.
 
 ## New York: foolish's handwritten_prod
 
@@ -465,7 +471,7 @@ Timings on this VM are indicative only; the Mac re-measures.
 
 ## gbrun, the headless runner
 
-`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
+`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels and counts (`atleast SYM LEN MIN`: a little-endian number at least MIN, the stack guard's headroom; `pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
 Every script in `scripts/` sets the seed by poking `sys_time` just before its first press, so its deal does not depend on how long the ROM takes to start, and waits for the bot with `until` rather than counting frames.
 
 | Script | What it proves | Shots |
@@ -485,6 +491,8 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
 | `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
 | `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
+| `game_moscow_endgame.txt` | Moscow's solver inside the real game (a poked 4 v 4 endgame, 3 solves) and the stack guard's 48 bytes | |
+| `win_fireworks.txt` | the four firework frames of each city, saved for `tests/fwcheck.py`, which compares them with the art's own render pixel by pixel | `build/fw/` |
 | `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
 | `sweep.txt` | the discard pile absent at first, then the bout's cards flying to it, pinned mid-flight and landing, the table empty, the pile drawn | `sweep_01` to `sweep_05` |
 | `pile_busy.txt` | 32 cards in the bot's hand beside the pile: 16 backs in columns 0-16, the pile whole | `pile_busy` |

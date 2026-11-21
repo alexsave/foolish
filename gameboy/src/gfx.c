@@ -29,12 +29,11 @@ static uint8_t map[SCR_H * SCR_W];
 // long drops short button presses.
 static uint8_t shown[SCR_H * SCR_W];
 static uint8_t shown_valid;
-// The tile of character code c is font_base + char_off[c] (see char_tile).
+// The tile of character code c is font_base + char_off(c) (see char_tile).
 static uint8_t font_base = ART_UI_BASE;
 
 #define VRAM_TILE(i) ((uint8_t *)(0x8000u + 16u * (uint16_t)(i)))
 static void from_bank(uint8_t bank, uint8_t *dst, const uint8_t *src, uint16_t n) NONBANKED;
-static void build_char_table(void);
 static void build_corner_table(void);
 
 // ---- loading --------------------------------------------------------------------------
@@ -60,7 +59,6 @@ void gfx_init(void) {
     OBP0_REG = ART_OBP0;
     OBP1_REG = ART_OBP1;            // flying club cards only (gfx_spr_card)
     SPRITES_8x8;
-    build_char_table();
     build_corner_table();
     gfx_load_table();
     gfx_spr_begin();
@@ -151,27 +149,33 @@ void gfx_clear_table(void) {
     gfx_rail(SCR_H - 1, "", "");
 }
 
-// Character code -> tile offset from the font base, built once (gfx_init):
-// the rail font and the icons in ART_FONT_CHARS order.
-static uint8_t char_off[128];
+// Character code -> tile offset from the font base: the rail font in
+// ART_FONT_CHARS order, the icons (gfx.h IC_*, codes 1 to 12, in the order of
+// icon_off), and anything else a space. Computed, not tabled: a 128-byte RAM
+// table for this was the cheapest RAM in the program to give back (README
+// "stack guard").
+static const uint8_t icon_off[12] = {
+    T_IC_UP - ART_UI_BASE, T_IC_DOWN - ART_UI_BASE, T_IC_LEFT - ART_UI_BASE, T_IC_RIGHT - ART_UI_BASE,
+    T_IC_BTN_A - ART_UI_BASE, T_IC_BTN_B - ART_UI_BASE, T_IC_MINIBACK - ART_UI_BASE, T_IC_MINIDECK - ART_UI_BASE,
+    T_IC_S - ART_UI_BASE, T_IC_H - ART_UI_BASE, T_IC_C - ART_UI_BASE, T_IC_D - ART_UI_BASE,
+};
 
-static void build_char_table(void) {
+// (tests/fontorder.c, in make test, fails the build if ART_FONT_CHARS stops being that order)
+static uint8_t char_off(uint8_t c) {
     const char *f = ART_FONT_CHARS;
     uint8_t i;
-    for (i = 0; i < 128; i++) char_off[i] = ART_FONT_FIRST;      // unknown: a space
-    for (i = 0; f[i]; i++) char_off[(uint8_t)f[i]] = (uint8_t)(ART_FONT_FIRST + i);
-    char_off[(uint8_t)IC_UP[0]] = T_IC_UP - ART_UI_BASE;
-    char_off[(uint8_t)IC_DOWN[0]] = T_IC_DOWN - ART_UI_BASE;
-    char_off[(uint8_t)IC_LEFT[0]] = T_IC_LEFT - ART_UI_BASE;
-    char_off[(uint8_t)IC_RIGHT[0]] = T_IC_RIGHT - ART_UI_BASE;
-    char_off[(uint8_t)IC_A[0]] = T_IC_BTN_A - ART_UI_BASE;
-    char_off[(uint8_t)IC_B[0]] = T_IC_BTN_B - ART_UI_BASE;
-    char_off[(uint8_t)IC_BACK[0]] = T_IC_MINIBACK - ART_UI_BASE;
-    char_off[(uint8_t)IC_DECK[0]] = T_IC_MINIDECK - ART_UI_BASE;
-    for (i = 0; i < 4; i++) char_off[IC_SUIT0 + i] = (uint8_t)(T_IC_S - ART_UI_BASE + i);
+    c &= 127u;
+    if (c >= 1u && c <= 12u) return icon_off[c - 1u];
+    // the common characters by arithmetic (the order of ART_FONT_CHARS: a space, A..Z, 0..9); the search is for the rest
+    if (c == ' ') return ART_FONT_FIRST;
+    if (c >= 'A' && c <= 'Z') return (uint8_t)(ART_FONT_FIRST + 1u + (c - 'A'));
+    if (c >= '0' && c <= '9') return (uint8_t)(ART_FONT_FIRST + 27u + (c - '0'));
+    for (i = 0; c && f[i]; i++)
+        if ((uint8_t)f[i] == c) return (uint8_t)(ART_FONT_FIRST + i);
+    return ART_FONT_FIRST;                      // unknown: a space
 }
 
-static uint8_t char_tile(char c) { return (uint8_t)(font_base + char_off[(uint8_t)c & 127u]); }
+static uint8_t char_tile(char c) { return (uint8_t)(font_base + char_off((uint8_t)c)); }
 
 uint8_t gfx_text_len(const char *s) { return (uint8_t)strlen(s); }
 

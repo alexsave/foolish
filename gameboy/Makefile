@@ -110,7 +110,10 @@ $(B)/simtest: tests/simtest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite
 $(B)/solvetest: tests/solvetest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/solvetest.c $(CORE) $(SIM_FOOLISH) $(B)/cordite_sim.o
 
-test: $(B)/difftest $(B)/simtest $(B)/solvetest
+$(B)/fontorder: tests/fontorder.c $(ART)/art_tiles.h | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(ART) -o $@ tests/fontorder.c
+
+test: $(B)/difftest $(B)/simtest $(B)/solvetest $(B)/fontorder
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1
 	$(B)/simtest 20000 1
@@ -260,7 +263,7 @@ $(B)/moscowcheck.gb: $(MC_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(MC_OBJ) 2>&1 | tee $(B)/moscowcheck.link
 	! grep -qi overflow $(B)/moscowcheck.link
 
-moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun
+moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun $(B)/durak.gb
 	sh tests/moscowcheck.sh
 
 .PHONY: moscowcheck
