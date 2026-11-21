@@ -101,6 +101,10 @@ $(B)/cordite_sim.o: $(FOOLISH)/cordite_sim.c | $(B)
 $(B)/simtest: tests/simtest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/simtest.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_sim.c $(SIM_FOOLISH) $(B)/cordite_sim.o
 
+# The endgame solver against foolish's cd_sim_solve.
+$(B)/solvetest: tests/solvetest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/solvetest.c $(CORE) $(SIM_FOOLISH) $(B)/cordite_sim.o
+
 test: $(B)/difftest $(B)/simtest
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1

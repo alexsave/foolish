@@ -39,5 +39,29 @@ int main(void) {
         printf("    { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X },\n", b[0], b[1], b[2], b[3], b[4]);
     }
     printf("};\n");
+    // the endgame solver's hash (src/gd_sim.c, Pearson's: a lane is
+    // h = T[h ^ byte]) needs a fixed permutation of the bytes; this one is a
+    // Fisher-Yates walk driven by a fixed xorshift, a constant like any other
+    // table here (nothing at run time draws from it)
+    {
+        uint8_t t[256];
+        uint32_t x = 0x9E3779B9u;
+        for (int i = 0; i < 256; i++) t[i] = (uint8_t)i;
+        for (int i = 255; i > 0; i--) {
+            x ^= x << 13; x ^= x >> 17; x ^= x << 5;
+            int j = (int)(x % (uint32_t)(i + 1));
+            uint8_t s = t[i]; t[i] = t[j]; t[j] = s;
+        }
+        printf("static const uint8_t SIM_PEARSON[256] = {");
+        for (int i = 0; i < 256; i++) printf("%s%d", i ? "," : "", t[i]);
+        printf("};\n");
+    }
+    printf("static const uint8_t SIM_MOD3[256] = {");
+    for (int i = 0; i < 256; i++) printf("%s%d", i ? "," : "", i % 3);
+    printf("};\n");
+    // 2 to the k, for subset counters without a variable shift
+    printf("static const uint16_t SIM_POW2[16] = {");
+    for (int i = 0; i < 16; i++) printf("%s%u", i ? "," : "", 1u << i);
+    printf("};\n");
     return 0;
 }
