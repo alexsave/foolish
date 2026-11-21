@@ -1,0 +1,29 @@
+# Moscow's endgame solver inside the real game, for the stack guard: game_moscow.txt
+# never reaches a solve, so here the dealt game is poked into an endgame (the stock
+# gone, the trump card taken, 4 cards in each hand: G = hand[0], hand[1] as masks,
+# stock_n at G+34, has_flipped at G+36) and played on by the input loop of
+# game_lose.txt until it ends. Moscow solves; the stack must still leave 48 bytes
+# of the gap untouched. (The poke leaves 28 cards nowhere: legal for the rules'
+# code, which only reads the hands, the table and the stock.)
+@99  poke _sys_time 07 00
+@100 press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 03
++60  poke _G 0f 00 00 00 00 f0 00 00 00 00
++0   poke _G+34 00
++0   poke _G+36 00
+repeat 300
++12  press RIGHT
++6   press UP
++6   press UP
++6   press DOWN
++30  press RIGHT
+endrepeat
++0   expect _screen 02
++4   atleast _moscow_solves 2 1
++0   peek _moscow_solves 2
++0   peek _gd_stack_free 2
++0   atleast _gd_stack_free 2 48
