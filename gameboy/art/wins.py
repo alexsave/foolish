@@ -145,8 +145,7 @@ def miami(cv):
                                  (152, st - 36, "curve", 2)):
         condo(cv, x, top, kind, seed, st)
     # the art deco hotels on Ocean Drive, in front of the condos
-    def deco(x, w, h, s):
-        cv.rect(x - 1, st - h - 10, w + 2, h + 10, K)          # a lacquer gap: in front
+    def deco(cv, x, w, h, s):
         cv.rect(x, st - h, w, h, D)
         cv.rect(x + w // 2 - 2, st - h - 6, 4, 6, D)           # the fin
         cv.rect(x + w // 2 - 1, st - h - 9, 2, 3, D)
@@ -154,35 +153,36 @@ def miami(cv):
         for wx in range(x + 2, x + w - 2, 3):                 # eyebrow windows
             for wy in range(st - h + 5, st - 2, 4):
                 cv.put(wx, wy, T if (wx + wy + s) % 4 else W)
-    deco(2, 18, 16, 0)
-    deco(116, 16, 12, 1)
-    deco(138, 20, 18, 2)
+    for args in ((2, 18, 16, 0), (116, 16, 12, 1), (138, 20, 18, 2)):
+        in_front(cv, lambda c, a=args: deco(c, *a))
     # the Freedom Tower in front: an arcaded base, a tiered tower with corner
     # piers, a belfry, an octagonal domed cupola, a lantern and a finial
     cx = 70
-    cv.rect(cx - 19, st - 13, 39, 13, K)
-    cv.rect(cx - 9, st - 64, 19, 52, K)
-    cv.rect(cx - 18, st - 12, 37, 12, D)
-    for ax in range(cx - 16, cx + 17, 5):
-        cv.rect(ax, st - 7, 3, 5, K)
-        cv.put(ax + 1, st - 8, K)
-    cv.rect(cx - 7, st - 42, 15, 30, D)
-    for k, y in enumerate(range(st - 40, st - 14, 7)):
-        cv.rect(cx - 8, y + 5, 17, 1, D)
-        for wx in (cx - 4, cx, cx + 4):
-            cv.rect(wx, y, 1, 3, T if (k + wx) % 3 else W)
-    cv.rect(cx - 8, st - 42, 2, 30, D)
-    cv.rect(cx + 7, st - 42, 2, 30, D)
-    cv.rect(cx - 5, st - 49, 11, 7, D)                        # the belfry
-    for wx in (cx - 3, cx + 2):
-        cv.rect(wx, st - 47, 2, 4, K)
-        cv.put(wx, st - 48, K)
-    for j in range(6):                                        # the dome
-        w = 11 - (j * j) // 3
-        cv.rect(cx - w // 2, st - 50 - j, max(w, 1), 1, D)
-    cv.rect(cx - 1, st - 58, 3, 3, D)                         # lantern
-    cv.put(cx, st - 57, T)
-    cv.rect(cx, st - 62, 1, 4, D)                             # finial
+
+    def freedom(cv):
+        cv.rect(cx - 18, st - 12, 37, 12, D)
+        for ax in range(cx - 16, cx + 17, 5):
+            cv.rect(ax, st - 7, 3, 5, K)
+            cv.put(ax + 1, st - 8, K)
+        cv.rect(cx - 7, st - 42, 15, 30, D)
+        for k, y in enumerate(range(st - 40, st - 14, 7)):
+            cv.rect(cx - 8, y + 5, 17, 1, D)
+            for wx in (cx - 4, cx, cx + 4):
+                cv.rect(wx, y, 1, 3, T if (k + wx) % 3 else W)
+        cv.rect(cx - 8, st - 42, 2, 30, D)
+        cv.rect(cx + 7, st - 42, 2, 30, D)
+        cv.rect(cx - 5, st - 49, 11, 7, D)                        # the belfry
+        for wx in (cx - 3, cx + 2):
+            cv.rect(wx, st - 47, 2, 4, K)
+            cv.put(wx, st - 48, K)
+        for j in range(6):                                        # the dome
+            w = 11 - (j * j) // 3
+            cv.rect(cx - w // 2, st - 50 - j, max(w, 1), 1, D)
+        cv.rect(cx - 1, st - 58, 3, 3, D)                         # lantern
+        cv.put(cx, st - 57, T)
+        cv.rect(cx, st - 62, 1, 4, D)                             # finial
+
+    in_front(cv, freedom)
     top = st - 62
     # the beach: dithered sand
     for y in range(st, g):
@@ -256,11 +256,6 @@ def back_tower(cv, x, top, style, roof, base=RIVER):
         cv.put(x + 3, top - 2, W)
 
 
-def gap(cv, x0, y0, x1, y1):
-    """A lacquer gap: what follows reads in front of the back layer."""
-    cv.rect(x0, y0, x1 - x0, y1 - y0, K)
-
-
 def river(cv, ferry=None):
     """The river from RIVER down: black water, lit reflections of the skyline
     above it broken into ripples, and swell lines."""
@@ -295,56 +290,67 @@ def new_york(cv):
         back_tower(cv, x, st - h, style, roof)
     # One World Trade Center: a tapered prism of triangular facets, the spire
     ox = 28
-    gap(cv, ox - 1, st - 66, ox + 14, st)
-    for j in range(56):
-        half = 6 - j * 4 // 56
-        y = st - 1 - j
-        cv.rect(ox + 6 - half, y, 2 * half + 1, 1, D)
-        cv.put(ox + 6 - half + (j % 7 == 0), y, T)            # the lit facet edge
-        if j % 2 == 0:
-            cv.put(ox + 6 + (j // 8) % 3 - 1, y, T)            # the facets' diagonal
-    cv.rect(ox + 6, st - 68, 1, 12, D)                       # the spire
+
+    def one_wtc(cv):
+        for j in range(56):
+            half = 6 - j * 4 // 56
+            y = st - 1 - j
+            cv.rect(ox + 6 - half, y, 2 * half + 1, 1, D)
+            cv.put(ox + 6 - half + (j % 7 == 0), y, T)            # the lit facet edge
+            if j % 2 == 0:
+                cv.put(ox + 6 + (j // 8) % 3 - 1, y, T)            # the facets' diagonal
+        cv.rect(ox + 6, st - 68, 1, 12, D)                       # the spire
+
+    in_front(cv, one_wtc)
     # the Empire State building, front and centre
     cx = 72
-    gap(cv, cx - 16, st - 9, cx + 16, st)
-    gap(cv, cx - 11, st - 75, cx + 11, st - 8)
-    cv.rect(cx - 15, st - 8, 30, 8, D)
-    lit(cv, cx - 13, st - 6, cx + 14, st - 1, 3, 3, 4)
-    cv.rect(cx - 10, st - 44, 20, 36, D)
-    column(cv, cx - 8, cx + 9, st - 42, st - 9, 3, 1)
-    cv.rect(cx - 8, st - 49, 16, 5, D)
-    column(cv, cx - 6, cx + 7, st - 48, st - 45, 3, 2)
-    cv.rect(cx - 6, st - 53, 12, 4, D)
-    cv.rect(cx - 4, st - 57, 8, 4, D)
-    cv.rect(cx - 3, st - 56, 6, 1, W)
-    cv.rect(cx - 2, st - 61, 4, 4, D)
-    cv.rect(cx - 1, st - 66, 2, 5, D)
-    cv.put(cx - 1, st - 63, T)
+
+    def empire(cv):
+        cv.rect(cx - 15, st - 8, 30, 8, D)
+        lit(cv, cx - 13, st - 6, cx + 14, st - 1, 3, 3, 4)
+        cv.rect(cx - 10, st - 44, 20, 36, D)
+        column(cv, cx - 8, cx + 9, st - 42, st - 9, 3, 1)
+        cv.rect(cx - 8, st - 49, 16, 5, D)
+        column(cv, cx - 6, cx + 7, st - 48, st - 45, 3, 2)
+        cv.rect(cx - 6, st - 53, 12, 4, D)
+        cv.rect(cx - 4, st - 57, 8, 4, D)
+        cv.rect(cx - 3, st - 56, 6, 1, W)
+        cv.rect(cx - 2, st - 61, 4, 4, D)
+        cv.rect(cx - 1, st - 66, 2, 5, D)
+        cv.put(cx - 1, st - 63, T)
+
+    in_front(cv, empire)
     top = st - 66
     # the Chrysler building
     x = 114
-    gap(cv, x - 1, st - 66, x + 17, st)
-    cv.rect(x, st - 38, 16, 38, D)
-    column(cv, x + 2, x + 15, st - 36, st - 2, 3, 5)
-    for k in range(5):
-        w = 16 - k * 3
-        y0 = st - 40 - k * 4
-        cv.rect(x + (16 - w) // 2, y0, w, 4, D)
-        for t in range(x + (16 - w) // 2 + 1, x + (16 - w) // 2 + w - 1, 2):
-            cv.put(t, y0 + 1, W)
-    cv.rect(x + 7, st - 64, 2, 4, D)
-    cv.put(x + 7, st - 66, D)
-    cv.put(x + 7, st - 65, D)
+
+    def chrysler(cv):
+        cv.rect(x, st - 38, 16, 38, D)
+        column(cv, x + 2, x + 15, st - 36, st - 2, 3, 5)
+        for k in range(5):
+            w = 16 - k * 3
+            y0 = st - 40 - k * 4
+            cv.rect(x + (16 - w) // 2, y0, w, 4, D)
+            for t in range(x + (16 - w) // 2 + 1, x + (16 - w) // 2 + w - 1, 2):
+                cv.put(t, y0 + 1, W)
+        cv.rect(x + 7, st - 64, 2, 4, D)
+        cv.put(x + 7, st - 66, D)
+        cv.put(x + 7, st - 65, D)
+
+    in_front(cv, chrysler)
     # the Brooklyn Bridge, low across the left of the river
     tx = 12
-    gap(cv, tx - 8, st - 30, tx + 9, st)
-    cv.rect(tx - 7, st - 29, 15, 29, D)
-    for ax in (tx - 5, tx + 1):
-        cv.rect(ax, st - 22, 4, 12, K)
-        cv.put(ax + 1, st - 23, K)
-        cv.put(ax + 2, st - 23, K)
-        cv.put(ax + 1, st - 24, K)
-    cv.rect(tx - 8, st - 30, 17, 1, D)
+
+    def bridge_tower(cv):
+        cv.rect(tx - 7, st - 29, 15, 29, D)
+        for ax in (tx - 5, tx + 1):
+            cv.rect(ax, st - 22, 4, 12, K)
+            cv.put(ax + 1, st - 23, K)
+            cv.put(ax + 2, st - 23, K)
+            cv.put(ax + 1, st - 24, K)
+        cv.rect(tx - 8, st - 30, 17, 1, D)
+
+    in_front(cv, bridge_tower)
     cv.rect(0, st - 8, 27, 1, T)                             # the deck
     for x in range(0, 27, 3):
         cv.put(x, st - 7, W)                                 # its lamps
@@ -506,41 +512,48 @@ def moscow(cv):
     lit(cv, mx - 18, st - 12, mx + 19, st - 2, 3, 4, 2)
     column(cv, mx - 4, mx + 5, st - 30, st - 15, 3, 1)
     # the Kremlin wall with its swallow-tail battlements
-    gap(cv, 40, st - 16, 112, st)
-    cv.rect(40, st - 10, 72, 10, D)
-    for x in range(40, 112, 4):
-        cv.rect(x, st - 13, 3, 3, D)
-        cv.put(x + 1, st - 13, K)                                       # the swallow tail
+
+    def kremlin_wall(cv):
+        cv.rect(40, st - 10, 72, 10, D)
+        for x in range(40, 112, 4):
+            cv.rect(x, st - 13, 3, 3, D)
+            cv.put(x + 1, st - 13, K)                                       # the swallow tail
+
+    in_front(cv, kremlin_wall)
     # the Spasskaya Tower, front and centre: body, clock, tiers, tent, star
     cx = 76
-    cv.rect(cx - 6, st - 32, 13, 32, D)                                 # the body
-    cv.rect(cx - 1, st - 8, 3, 8, K)                                    # the gate
-    cv.put(cx, st - 9, K)
-    for y in range(st - 30, st - 12, 4):
-        cv.put(cx - 4, y, T)
-        cv.put(cx + 4, y, T)
-    cv.rect(cx - 7, st - 33, 15, 1, D)                                  # cornice
-    cv.rect(cx - 5, st - 42, 11, 9, D)                                  # the clock tier
-    for (dx, dy) in ((0, -2), (-2, 0), (2, 0), (0, 2), (-1, -1), (1, -1), (-1, 1), (1, 1)):
-        cv.put(cx + dx, st - 38 + dy, W)                                # the clock face
-    cv.put(cx, st - 38, T)
-    for px in (cx - 6, cx + 6):                                         # pinnacles
-        cv.rect(px, st - 46, 1, 4, D)
-    cv.rect(cx - 4, st - 47, 9, 5, D)                                   # the octagonal tiers
-    cv.rect(cx - 3, st - 50, 7, 3, D)
-    cv.put(cx - 1, st - 49, T)
-    cv.put(cx + 1, st - 49, T)
-    for j in range(10):                                                 # the tented spire
-        w = 7 - (j * 6) // 10
-        cv.rect(cx - w // 2, st - 51 - j, max(w, 1), 1, D)
-    cv.rect(cx, st - 62, 1, 1, D)
-    star = G.g("""
-..w..
-wwwww
-.www.
-.w.w.
-""")
-    cv.glyph(cx - 2, st - 66, star)                                     # the red star
+
+    def spasskaya(cv):
+        cv.rect(cx - 6, st - 32, 13, 32, D)                                 # the body
+        cv.rect(cx - 1, st - 8, 3, 8, K)                                    # the gate
+        cv.put(cx, st - 9, K)
+        for y in range(st - 30, st - 12, 4):
+            cv.put(cx - 4, y, T)
+            cv.put(cx + 4, y, T)
+        cv.rect(cx - 7, st - 33, 15, 1, D)                                  # cornice
+        cv.rect(cx - 5, st - 42, 11, 9, D)                                  # the clock tier
+        for (dx, dy) in ((0, -2), (-2, 0), (2, 0), (0, 2), (-1, -1), (1, -1), (-1, 1), (1, 1)):
+            cv.put(cx + dx, st - 38 + dy, W)                                # the clock face
+        cv.put(cx, st - 38, T)
+        for px in (cx - 6, cx + 6):                                         # pinnacles
+            cv.rect(px, st - 46, 1, 4, D)
+        cv.rect(cx - 4, st - 47, 9, 5, D)                                   # the octagonal tiers
+        cv.rect(cx - 3, st - 50, 7, 3, D)
+        cv.put(cx - 1, st - 49, T)
+        cv.put(cx + 1, st - 49, T)
+        for j in range(10):                                                 # the tented spire
+            w = 7 - (j * 6) // 10
+            cv.rect(cx - w // 2, st - 51 - j, max(w, 1), 1, D)
+        cv.rect(cx, st - 62, 1, 1, D)
+        star = G.g("""
+    ..w..
+    wwwww
+    .www.
+    .w.w.
+    """)
+        cv.glyph(cx - 2, st - 66, star)                                     # the red star
+
+    in_front(cv, spasskaya)
     top = st - 66
     # St Basil's Cathedral, front right on Red Square
     bx = 124

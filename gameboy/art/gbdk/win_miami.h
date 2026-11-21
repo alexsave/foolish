@@ -13,13 +13,13 @@
 #define win_miami_TILE_H 8
 #define win_miami_WIDTH 160
 #define win_miami_HEIGHT 144
-#define win_miami_TILE_COUNT 190
+#define win_miami_TILE_COUNT 187
 #define win_miami_MAP_ATTRIBUTES 0
 extern const unsigned char win_miami_map[360];
 #define win_miami_map_attributes win_miami_map
 
 BANKREF_EXTERN(win_miami)
 
-extern const uint8_t win_miami_tiles[3040];
+extern const uint8_t win_miami_tiles[2992];
 
 #endif

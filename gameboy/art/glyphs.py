@@ -106,12 +106,12 @@ XXXXX
 ..X..
 """),
 "C": g("""
-..X..
 .XXX.
-..X..
+.XXX.
 XXXXX
 XXXXX
 ..X..
+XXXXX
 """),
 "D": g("""
 ..X..
@@ -146,12 +146,12 @@ XXXXXXX
 """),
 "C": g("""
 ..XXX..
-.XXXXX.
 ..XXX..
-XXXXXXX
+XX.X.XX
 XXXXXXX
 XX.X.XX
 ..XXX..
+XXXXXXX
 """),
 "D": g("""
 ...X...
