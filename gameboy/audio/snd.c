@@ -24,8 +24,10 @@ typedef struct {
 static snd_state S;
 
 volatile uint8_t snd_owner;
+static uint8_t snd_active;          // set by a strike, cleared by the tick that finds nothing left
 volatile uint8_t snd_refused;
-static uint8_t strikes;             // round robin over a cue's takes: never the same twice running
+static uint8_t strikes;
+uint8_t snd_busy(void);             // round robin over a cue's takes: never the same twice running
 
 static const uint8_t base[4] = { 0x10, 0x15, 0x1A, 0x1F };
 
@@ -109,10 +111,12 @@ void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
     if (n > SND_MAX_HITS) n = SND_MAX_HITS;
     if (n == 0) n = 1;
     for (k = 0; k < n; k++) {
-        const uint8_t d = (uint8_t)(delay + k * SND_STAGGER);
-        if (d == 0) { start(cue, flags); continue; }
+        // every strike goes through the queue, so it starts on a tick (at most
+        // one tick, 4 ms, after the call: it trails, never leads)
+        const uint8_t d = (uint8_t)(delay + 1u + k * SND_STAGGER);
         for (i = 0; i < SND_QUEUE; i++) if (!S.q_wait[i]) break;
         if (i == SND_QUEUE) return;          // full: the later strikes of a beat are dropped
+        snd_active = 1;
         S.q_cue[i] = cue;
         S.q_flags[i] = flags;
         S.q_wait[i] = d;
@@ -121,10 +125,8 @@ void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
 
 void snd_tick(void) {
     uint8_t i;
-    if (snd_owner != SND_OWNER_SOUND) return;
-    for (i = 0; i < SND_QUEUE; i++) {
-        if (S.q_wait[i] && --S.q_wait[i] == 0) start(S.q_cue[i], S.q_flags[i]);
-    }
+    // the common case, nothing sounding: two loads and a branch
+    if (snd_owner != SND_OWNER_SOUND || !snd_active) return;
     for (i = 0; i < 4; i++) {
         snd_voice *v = &S.v[i];
         if (!v->row || --v->left) continue;
@@ -138,6 +140,12 @@ void snd_tick(void) {
         v->left = v->row->t;
         write_row(i, v->row, v->flags);
     }
+    // the strikes coming due start after the voices stepped, so a new row
+    // holds its whole t ticks
+    for (i = 0; i < SND_QUEUE; i++) {
+        if (S.q_wait[i] && --S.q_wait[i] == 0) start(S.q_cue[i], S.q_flags[i]);
+    }
+    if (!snd_busy()) snd_active = 0;
 }
 
 uint8_t snd_busy(void) {
@@ -150,6 +158,7 @@ uint8_t snd_busy(void) {
 void snd_yield(void) {
     uint8_t i;
     snd_owner = SND_OWNER_BOT;
+    snd_active = 0;
     for (i = 0; i < 4; i++) { S.v[i].row = 0; silence(i); }
     for (i = 0; i < SND_QUEUE; i++) S.q_wait[i] = 0;
 }

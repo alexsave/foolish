@@ -12,11 +12,15 @@
 #define SND_H
 #include <stdint.h>
 
-// The tick, from the timer: 4096 Hz / (256 - SND_TMA). 17 counts: 240.9 Hz,
-// four ticks a 60.2 Hz input tick (DESIGN.md "Why 240 Hz").
-#define SND_TMA        239u
-#define SND_TICK_HZ    241u
-#define SND_STAGGER    11u      // 45 ms (ANIM_SOUND_STAGGER_MS) in ticks: 45.7 ms
+// The tick: the input's timer interrupt, 4096 Hz / (256 - SND_TMA) = 60.2 Hz
+// (input.c IN_TMA), so the driver adds no interrupt of its own. DESIGN.md
+// "60 Hz or 241 Hz" has the measurement; host/render241 builds the 241 Hz
+// variant (TMA 239, 11 ticks a stagger) for the comparison.
+#ifndef SND_TMA
+#define SND_TMA        188u
+#define SND_TICK_HZ    60u
+#define SND_STAGGER    3u       // 45 ms (ANIM_SOUND_STAGGER_MS) in ticks: 49.8 ms
+#endif
 #define SND_MAX_HITS   6u       // ANIM_SOUND_MAX_HITS
 #define SND_QUEUE      8u
 
@@ -48,6 +52,8 @@ typedef struct { uint8_t prio; uint8_t n_takes; const snd_take *takes; } snd_cue
 
 extern const snd_cue snd_cues[SND_N_CUES];
 extern const uint8_t snd_waves[][16];
+extern const uint8_t snd_pre[SND_N_CUES];   // ticks from a strike to its moment: strike a landing this much early
+extern const uint8_t snd_dur[SND_N_CUES];   // ticks from a strike to the end of its longest take
 
 // Flags for a strike.
 #define SND_BACKWARDS 1u     // a revert: the take's rows in reverse (AUDIO.md "A revert is the move it undoes, backwards")
