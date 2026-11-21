@@ -183,7 +183,7 @@
 /* the discard pile: a 3x3 tile box at (ART_DISCARD_X, ART_DISCARD_Y), tiles ART_PILE_BASE + row-major */
 #define ART_DISCARD_X 17u
 #define ART_DISCARD_Y 1u
-#define ART_DISCARD_LAND_PX 142u  /* a swept card's flight ends with its top left here (pixels) */
+#define ART_DISCARD_LAND_PX 143u  /* a swept card's flight ends with its top left here (pixels) */
 #define ART_DISCARD_LAND_PY 8u
 #define ART_BOT_HAND_LAST_COL 16u  /* the bot's backs keep to columns 0..this */
 

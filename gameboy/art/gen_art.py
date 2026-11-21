@@ -521,25 +521,16 @@ TRUMP_AT, DECK_AT = (0, 4), (1, 4)
 # pack from column 1 to 18 at rows 4-13), nor does the TARGET arrow or its
 # brackets.  The bot's hand keeps to columns 0-16 (16 backs at most shown).
 PILE_BOX = (17, 1)
-PILE_LAND = (17 * 8 + 6, 1 * 8)        # a swept card's flight ends here: its top left, in pixels
+PILE_LAND = (17 * 8 + 7, 1 * 8)        # a swept card's flight ends here (the top back): its top left, in pixels
 BOT_HAND_LAST_COL = 16
 
 
-def rotate_cw(cv):
-    out = Canvas(cv.h, cv.w, None)
-    for y in range(cv.h):
-        for x in range(cv.w):
-            out.px[x][cv.h - 1 - y] = cv.px[y][x]
-    return out
-
-
 def pile_canvas():
-    """The jumbled pile, 24x24 over the wool: one back turned on its side,
-    another upright on top of it, a little off centre (the website's pile of
-    randomly rotated backs, in two cards' worth of tiles)."""
+    """The pile, 24x24 over the wool: two upright backs, the top one 4 px to
+    the right of the one under it, so the lower one's edge shows."""
     cv = Canvas(24, 24, None)
-    cv.blit(rotate_cw(card_back()), 0, 5)
-    cv.blit(card_back(), 6, 0)
+    cv.blit(card_back(), 3, 0)
+    cv.blit(card_back(), 7, 0)
     return cv
 
 

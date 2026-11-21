@@ -166,10 +166,10 @@ The foot rail can be the window layer (`WY = 136`) if that is easier to update; 
 ### The discard pile
 
 Top right, where the website draws it: a 3x3 tile box at columns 17-19, rows 1-3 (`ART_DISCARD_X`, `ART_DISCARD_Y`), tiles `T_PILE_00`..`T_PILE_22` in row-major order from `ART_PILE_BASE` (160).
-It echoes the website's jumble of randomly rotated backs in two cards' worth: one back turned on its side, another upright on it, a little off centre, over the wool (`gen_art.pile_canvas`).
+Two upright backs, the top one 4 px right of the one under it so the lower one's edge shows, over the wool (`gen_art.pile_canvas`); the backs keep their full 24 px height, so the offset is sideways and the box stays three columns wide (rows 1-3; a vertical offset would reach row 4, where battles go).
 Draw it once the first bout is swept; the table above is empty before that.
 It clears every battle layout (up to six use columns 4-14 at rows 4-11; past six the code packs them from column 1 to 18 at rows 4-13), the TARGET arrow and its brackets, and the bot's hand, which keeps to columns 0-16 (`ART_BOT_HAND_LAST_COL`: 16 backs at most shown).
-A swept table flies there: each card's flight ends with its top left at pixel (`ART_DISCARD_LAND_PX`, `ART_DISCARD_LAND_PY`) = (142, 8), on the upright back, and the pile's tiles stay as they are (no count is drawn, as the rail has the numbers).
+A swept table flies there: each card's flight ends with its top left at pixel (`ART_DISCARD_LAND_PX`, `ART_DISCARD_LAND_PY`) = (143, 8), exactly on the top back, and the pile's tiles stay as they are (no count is drawn, as the rail has the numbers).
 Before and after on the busiest table: `mockups/33_discard_right_before_after.png`.
 
 ### Battles
