@@ -203,7 +203,6 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 ## Not done
 
 - The other bots: New York, Seoul and Moscow play the random brain (the plan: handwritten, a cut-down robusta, a cut-down cordite).
-- Moscow's art: the code says MOSCOW, but until the art branch's rename lands the board and the fourth win picture are still Warsaw's (`win_warsaw`).
 - Motion: cards do not fly, the deal is not animated (the art has the frames).
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand (they are baked into the art).

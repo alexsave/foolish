@@ -4,7 +4,10 @@
 # A whole game I win, by a fixed input loop: try each card in turn (RIGHT, UP,
 # UP to commit a target), nine times, then DOWN (take or done). Ends
 # with Miami the fool, the win picture with the bot's name, then A: a rematch.
-@99  poke _sys_time 01 00
+# The game is real time (the bot moves 30 frames after the board settles), so a
+# change in how long the ROM takes to draw can change its course: if this ever
+# loses, re-pick the seed (seeds 2, 3, 4, 5 and 8 win today).
+@99  poke _sys_time 02 00
 @100 press A
 # The loop runs past the end of the game on purpose: the end picture ignores
 # LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.

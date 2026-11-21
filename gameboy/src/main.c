@@ -630,7 +630,7 @@ static void draw_table_sprites(void) {
 #define DASH_ROW_CONTINUE 10
 #define DASH_ROW_BOT0 13
 #define PLANE_STEP 2            // pixels a frame the plane glides
-static const uint8_t city_x[4] = { 14, 44, 75, 112 };    // art travel.py CITY_X
+static const uint8_t city_x[4] = { 14, 44, 75, 146 };    // art travel.py CITY_X
 static uint8_t plane_x;
 
 static uint8_t can_continue(void) { return live && G.status == GD_PLAYING; }
@@ -659,10 +659,13 @@ static void draw_dash(uint8_t full) {
     dash_sprites();
 }
 
-// The win screen's fireworks (art wins.py BURSTS and SCHEDULE): three bursts,
-// each a phase behind the last, in a 4-frame loop of FW_FRAME vsyncs a frame.
+// The win screen's fireworks (art wins.py BURSTS and SCHEDULE): per city two
+// or three bursts at points clear of its buildings, each a phase behind the
+// last, in a 4-frame loop of FW_FRAME vsyncs a frame.
 #define FW_FRAME 8
-static const uint8_t fw_x[3] = { 24, 104, 140 }, fw_y[3] = { 40, 32, 56 };
+static const uint8_t fw_n[4] = { 2, 3, 3, 3 };
+static const uint8_t fw_x[4][3] = { { 24, 136, 0 }, { 22, 88, 136 }, { 20, 80, 142 }, { 12, 92, 140 } };
+static const uint8_t fw_y[4][3] = { { 32, 34, 0 }, { 32, 34, 36 }, { 36, 36, 36 }, { 36, 36, 32 } };
 // per loop frame, per burst: 0xFF none, 0xFE a rising shell, else the phase
 static const uint8_t fw_sched[4][3] = {
     { 0, 0xFE, 0xFF }, { 1, 0, 0xFE }, { 2, 1, 0 }, { 0xFF, 2, 1 },
@@ -673,9 +676,9 @@ static void fireworks(void) {
     uint8_t k;
     const uint8_t f = (uint8_t)((fw_t / FW_FRAME) & 3u);
     gfx_spr_begin();
-    for (k = 0; k < 3; k++) {
+    for (k = 0; k < fw_n[bot_city]; k++) {
         const uint8_t ph = fw_sched[f][k];
-        const int16_t x = fw_x[k], y = fw_y[k];
+        const int16_t x = fw_x[bot_city][k], y = fw_y[bot_city][k];
         if (ph == 0xFF) continue;
         if (ph == 0xFE) { gfx_spr(x - 4, y + 10, T_FW_SHELL, 0); continue; }
         gfx_spr(x - 8, y - 8, (uint8_t)(T_FW_SPARK + ph), 0);

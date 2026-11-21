@@ -1,0 +1,57 @@
+# Each city's win picture: pick the city on the dashboard, then poke a
+# finished game (seat 0 out, status over) so the end screen comes up. The
+# game itself is proven by game_win.txt; this shows the four pictures and the
+# bot's name printed on each, with the fireworks running.
+@99  poke _sys_time 05 00
+@100 press START
++1   until _screen 00
+# miami
++8   press A
++1   until _screen 01
++0   expect _bot_city 00
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  shot shots/win_miami.png 3
++13  shot shots/win_miami_fireworks.png 3
++1   press B
++1   until _screen 00
+# new york
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 01
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  shot shots/win_new_york.png 3
++13  shot shots/win_new_york_fireworks.png 3
++1   press B
++1   until _screen 00
+# seoul
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 02
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  shot shots/win_seoul.png 3
++13  shot shots/win_seoul_fireworks.png 3
++1   press B
++1   until _screen 00
+# moscow
++8   press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 03
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  shot shots/win_moscow.png 3
++13  shot shots/win_moscow_fireworks.png 3
++1   press B
++1   until _screen 00

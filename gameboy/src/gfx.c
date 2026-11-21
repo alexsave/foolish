@@ -12,7 +12,7 @@
 #include "win_miami.h"
 #include "win_new_york.h"
 #include "win_seoul.h"
-#include "win_warsaw.h"
+#include "win_moscow.h"
 #include "lose.h"
 #include "lacquer.h"
 #include "paper.h"
@@ -120,7 +120,7 @@ void gfx_load_full(uint8_t which) {
         if (city == 0) load_picture(BANK(win_miami), win_miami_tiles, win_miami_TILE_COUNT, win_miami_map);
         else if (city == 1) load_picture(BANK(win_new_york), win_new_york_tiles, win_new_york_TILE_COUNT, win_new_york_map);
         else if (city == 2) load_picture(BANK(win_seoul), win_seoul_tiles, win_seoul_TILE_COUNT, win_seoul_map);
-        else load_picture(BANK(win_warsaw), win_warsaw_tiles, win_warsaw_TILE_COUNT, win_warsaw_map);
+        else load_picture(BANK(win_moscow), win_moscow_tiles, win_moscow_TILE_COUNT, win_moscow_map);
         from_bank(BANK(lacquer), VRAM_TILE(ART_LACQUER_BASE), lacquer_tiles, 16u * ART_LACQUER_COUNT);
         from_bank(BANK(fireworks), VRAM_TILE(ART_FW_BASE), fireworks_tiles, 16u * fireworks_TILE_COUNT);
         font_base = (uint8_t)(ART_LACQUER_BASE - ART_FONT_FIRST);
