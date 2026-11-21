@@ -26,7 +26,7 @@ import glyphs as G
 from sprig import sprig
 
 # The card back's sprig layout (sprig/sprig.py): "hanging", "diagonal" or "arching".
-BACK_LAYOUT = "final_2b"     # Alex picked 2B, then its curl, vine and corner leaf
+BACK_LAYOUT = "final_2b_framed"   # Alex picked 2B, then its curl, vine and corner leaf, and the frame back
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PNG = os.path.join(HERE, "png")
@@ -132,11 +132,18 @@ def card_face(rank, suit):
     return cv
 
 
-def card_back():
-    """Black lacquer to the border, no frame: the 14x22 field is the sprig's."""
+def card_back(layout=None):
+    """Black lacquer; a "_framed" layout sits inside the dark grey inner frame
+    (12x20 field), the others fill the whole 14x22 inside the border."""
+    layout = layout or BACK_LAYOUT
     cv = Canvas(CW, CH, None)
-    card_outline(cv, K)
-    cv.glyph(1, 1, sprig.LAYOUTS[BACK_LAYOUT]())
+    if layout.endswith("_framed"):
+        card_outline(cv, D)
+        cv.rect(2, 2, CW - 4, CH - 4, K)
+        cv.glyph(2, 2, sprig.LAYOUTS[layout]())
+    else:
+        card_outline(cv, K)
+        cv.glyph(1, 1, sprig.LAYOUTS[layout]())
     return cv
 
 

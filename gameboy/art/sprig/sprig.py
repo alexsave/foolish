@@ -303,8 +303,30 @@ def final_2b():
     return f.rows()
 
 
+FFW, FFH = 12, 20      # the field inside the dark grey frame
+
+
+def final_2b_framed():
+    """final_2b fitted inside the inner frame: the 12x20 field, the motif kept
+    one pixel off the frame on every side (inside x1..10, y1..18)."""
+    f = Field()
+    f.stamp(1, 1, SMALL_CURL)                         # the curl, tail at (2, 4)
+    f.stamp(3, 3, flip_x(LEAF_FINE))                  # its stalk ends at (3, 10)
+    # the uneven vine: down the left side a pixel clear of the leaf, then across
+    f.stem([(1, 5), (2, 6), (1, 7), (1, 8), (2, 9), (2, 10), (3, 11), (4, 12), (5, 12), (6, 12), (7, 13)])
+    f.stamp(1, 13, [r[:4] for r in LEAF_CORNER[:6]])  # the corner leaf, hung off the vine
+    f.stamp(6, 14, BERRY, ring=True)
+    rows = [r[:FFW] for r in f.rows()[:FFH]]
+    for j, r in enumerate(rows):                      # nothing on the margin ring
+        for i, ch in enumerate(r):
+            if ch != "." and (i in (0, FFW - 1) or j in (0, FFH - 1)):
+                raise AssertionError("framed sprig touches the frame at (%d, %d)" % (i, j))
+    return rows
+
+
 LAYOUTS = {"hanging": hanging, "diagonal": diagonal, "arching": arching,
            "final_2b": final_2b,
+           "final_2b_framed": final_2b_framed,
            "hanging_min": hanging_min, "diagonal_min": diagonal_min, "arching_min": arching_min}
 
 if __name__ == "__main__":

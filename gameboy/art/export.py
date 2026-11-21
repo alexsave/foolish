@@ -13,6 +13,7 @@ from PIL import Image
 import gen_art as A
 import screens_full
 import wins
+import travel
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PNG = os.path.join(HERE, "png")
@@ -139,6 +140,8 @@ def main():
                 assert tiles[mp[ty * 20 + tx]] == want, (fname, tx, ty)
         if fname.startswith("win_"):
             assert len(tiles) <= wins.TILESET_MAX, (fname, len(tiles))
+        if fname.startswith("dashboard"):
+            assert len(tiles) <= travel.TILESET_MAX, (fname, len(tiles))
         print("%-14s %3d unique tiles, map 20x18 checked" % (fname, len(tiles)))
 
     # fireworks sprite tiles (a win screen loads them at wins.FW_BASE)
@@ -149,13 +152,23 @@ def main():
          "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
     assert decode_2bpp(c_bytes(os.path.join(OUT, "fireworks.c"), "fireworks_tiles")) == list(fw.values())
 
+    # the boarding-pass font (black on white) and the plane sprite, dashboard only
+    pp = travel.paper_font_bank()
+    extra = {"paper": pp, "plane": travel.plane_bank()}
+    for name, bank in extra.items():
+        p = os.path.join(PNG, name + ".png")
+        indexed(list(bank.values()), 1).save(p)
+        run([PNG2ASSET, p, "-o", os.path.join(OUT, name + ".c"), "-map", "-tiles_only",
+             "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
+        assert decode_2bpp(c_bytes(os.path.join(OUT, name + ".c"), name + "_tiles")) == list(bank.values())
+
     # the shipped maps + the names the code prints == the mockups
     ui, lq = banks["ui"], A.lacquer_font_bank()
     for blank, baked in zip(screens_full.screens_full(sp, bake=False), screens_full.screens_full(sp)):
         cv = blank.bg
         if baked.name == "d1_dashboard":
             for i, ch in enumerate("SEOUL"):
-                cv.set_tile(11 + i, 11, ui["CH_" + ch])
+                cv.set_tile(travel.TICKET_CITY_COL + i, travel.TICKET_ROW, pp["PP_" + ch])
         assert all(cv.tile(x, y) == baked.bg.tile(x, y) for y in range(18) for x in range(20)), baked.name
     for blank, baked, city in zip(wins.win_screens(bake=False), wins.win_screens(), wins.CITIES):
         cv = blank.bg
@@ -185,8 +198,13 @@ def main():
     h.append("#define ART_FW_BASE %du  /* fireworks.c: the 4 firework sprite tiles on a win screen */" % wins.FW_BASE)
     for k, name in enumerate(fw):
         h.append("#define T_%s %du" % (name, wins.FW_BASE + k))
-    h.append("#define ART_DASH_CITY_ROW 11u  /* dashboard: the CONTINUE city, rail font, from column 11 */")
-    h.append("#define ART_DASH_CITY_COL 11u")
+    h.append("#define ART_DASH_CITY_ROW %du  /* dashboard: the CONTINUE city on the boarding pass, paper font */" % travel.TICKET_ROW)
+    h.append("#define ART_DASH_CITY_COL %du" % travel.TICKET_CITY_COL)
+    h.append("#define ART_PAPER_BASE %du  /* paper.c on the dashboard (its tileset is at most this many tiles) */" % travel.PAPER_BASE)
+    h.append("#define ART_PAPER_COUNT %du" % len(pp))
+    h.append("#define ART_DASH_POINTER_TILE %du  /* copy SP_POINTER here on the dashboard */" % travel.POINTER_TILE)
+    h.append("#define ART_DASH_PLANE_TILE %du  /* plane.c: the plane on the flight route */" % travel.PLANE_TILE)
+    h.append("#define ART_DASH_ROUTE_Y %du  /* the plane's centre y; x per city: see travel.CITY_X */" % travel.ROUTE_Y)
     h.append('#define ART_FONT_CHARS "%s"' % A.FONT_CHARS.replace("'", "\\'"))
     h.append("#define ART_FONT_FIRST %du" % list(banks["ui"]).index("CH_ "))
     h += ["", "#endif", ""]

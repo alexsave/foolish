@@ -283,5 +283,6 @@ def screens_full(sp, bake=True):
     """The win screens are per bot now (wins.py).
     bake=True: the mockups, names printed as the code will print them.
     bake=False: what export.py ships, those cells left black for the code."""
-    return [dashboard(sp, "SEOUL", 0, bake), dashboard(sp, None, 3, bake),
+    import travel
+    return [travel.dashboard(sp, "SEOUL", 0, bake), travel.dashboard(sp, None, 3, bake),
             outcome(False, bake=bake)]

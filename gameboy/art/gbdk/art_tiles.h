@@ -171,8 +171,13 @@
 #define T_FW_BURST 253u
 #define T_FW_FADE 254u
 #define T_FW_SHELL 255u
-#define ART_DASH_CITY_ROW 11u  /* dashboard: the CONTINUE city, rail font, from column 11 */
+#define ART_DASH_CITY_ROW 10u  /* dashboard: the CONTINUE city on the boarding pass, paper font */
 #define ART_DASH_CITY_COL 11u
+#define ART_PAPER_BASE 200u  /* paper.c on the dashboard (its tileset is at most this many tiles) */
+#define ART_PAPER_COUNT 46u
+#define ART_DASH_POINTER_TILE 250u  /* copy SP_POINTER here on the dashboard */
+#define ART_DASH_PLANE_TILE 251u  /* plane.c: the plane on the flight route */
+#define ART_DASH_ROUTE_Y 40u  /* the plane's centre y; x per city: see travel.CITY_X */
 #define ART_FONT_CHARS " ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?-:\'/+"
 #define ART_FONT_FIRST 1u
 

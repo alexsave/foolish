@@ -5,7 +5,8 @@
 #              selected city
 #   row 10     CONTINUE as a boarding pass (paper ticket); the city on it is
 #              printed by the code with the paper font (black on white)
-#   rows 11-16 DEPARTURES: a split-flap board, one row per bot, a departure
+#   row 11     DEPARTURES
+#   rows 12-15: a split-flap board, one row per bot, a departure
 #              time (later = harder; Warsaw, the boss, leaves at midnight)
 #   row 17     A FLY
 # Moscow stands in the skyline only: it is the real top bot, too big for the
@@ -106,7 +107,7 @@ def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
         for (x, y) in ((8, 80), (8, 87), (159, 80), (159, 87)):
             cv.put(x, y, K)
         for y in range(81, 87, 2):
-            cv.put(73, y, D)                            # the tear line
+            cv.put(80, y, D)                            # the tear line
         pp = paper_font_bank()
         for i, ch in enumerate("CONTINUE"):
             cv.set_tile(1 + i, TICKET_ROW, pp["PP_" + ch])
@@ -117,8 +118,8 @@ def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
     else:
         text(cv, (160 - 13 * 8) // 2, 80, "PICK A FLIGHT", T)
     # DEPARTURES header
-    text(cv, 8, 96, "DEPARTURES", W)
-    cv.glyph(144, 96, PLANE_ICON, W)
+    text(cv, 8, 88, "DEPARTURES", W)
+    cv.glyph(152, 88, PLANE_ICON, W)
     rows = [80] if cont else []
     for k, (name, when, pips) in enumerate(BOARD):
         ty = BOARD_ROW + k
