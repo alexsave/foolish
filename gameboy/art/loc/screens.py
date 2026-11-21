@@ -190,10 +190,11 @@ def dashboard(lang, cont=True):
         rows = []
         if cont:
             cv.rect(8, 80, 152, 8, W)
+            end = text(cv, 8, 80, t["continue"], lang, K, W)
+            city_x = max(88, (end + 8 + 7) // 8 * 8)      # column 11, or later if the word is long
             for y in range(81, 87, 2):
-                cv.put(80, y, D)
-            text(cv, 8, 80, t["continue"], lang, K, W)
-            text(cv, 88, 80, t["moscow"], lang, K, W)
+                cv.put(city_x - 4, y, D)                 # the tear line
+            text(cv, city_x, 80, t["moscow"], lang, K, W)
             rows.append(80)
         else:
             text(cv, 80 - width(t["pick_flight"], lang) // 2, 80, t["pick_flight"], lang, T)
@@ -354,7 +355,11 @@ def win(lang):
         text(cv, 80 - width(t["moscow"], lang) // 2, 112, t["moscow"], lang, W)
         text(cv, 80 - width(t["is_durak"], lang) // 2, 120, t["is_durak"], lang, T)
         r = "{BTN_A}" + t["rematch"] + " {BTN_B}" + t["home"]
-        text(cv, 80 - width(r, lang) // 2, 136, r, lang, W)
+        if width(r, lang) <= 144:
+            text(cv, 80 - width(r, lang) // 2, 136, r, lang, W)
+        else:                                        # long words: one button a line
+            text(cv, 40, 128, "{BTN_A} " + t["rematch"], lang, W)
+            text(cv, 40, 136, "{BTN_B} " + t["home"], lang, W)
     else:
         line = t["moscow"] + t["is_durak"]
         text(cv, 80 - width(line, lang) // 2, 112, line, lang, W)
