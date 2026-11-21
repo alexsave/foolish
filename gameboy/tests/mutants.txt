@@ -30,20 +30,20 @@ gd_sim.c~        if (best == GD_NONE && gd_suit_of[a] != W.trump) {~        if (
 gd_sim.c~    return m_low(m_empty(&nt) ? &m : &nt);~    return m_low(&m);~sim: passes with a trump before a non-trump
 gd_sim.c~            if (!first) return MV_GOOD;               // decline: good~            ;~sim: declining a trump attack does not say good
 gd_sim.c~        if (M_EMPTY(h_tab) || defcap <= 0) { (void)draw16(); return MV_GOOD; }~        if (M_EMPTY(h_tab) || defcap <= 0) { return MV_GOOD; }~sim: no draw before good
-gd_sim.c~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8);~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8); if (k) k--;~sim: draws the card before the one foolish draws
-gd_sim.c~        if (p != DEF()) draw_up_to_six(p);~        if (p == DEF()) draw_up_to_six(p);~sim: the defender draws first
-gd_sim.c~    if (!IS_OUT(a) && IS_GOOD(a) && all_covered()) round_transition();~    if (!IS_OUT(a) && IS_GOOD(a)) round_transition();~sim: good ends the bout over an uncovered attack
+gd_simboard.h~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8);~        k = (uint8_t)((uint16_t)(hi + (lo >> 8)) >> 8); if (k) k--;~sim: draws the card before the one foolish draws
+gd_simboard.h~        if (p != DEF()) draw_up_to_six(p);~        if (p == DEF()) draw_up_to_six(p);~sim: the defender draws first
+gd_simboard.h~    if (!IS_OUT(a) && IS_GOOD(a) && all_covered()) round_transition();~    if (!IS_OUT(a) && IS_GOOD(a)) round_transition();~sim: good ends the bout over an uncovered attack
 gd_sim.c~    for (r = 0; r < GD_NRANKS && m; r++)~    for (r = GD_NRANKS; r-- > 0 && m;)~sim: a capped throw-in keeps its lowest cards back
 gd_rng.c~    return low16 >= n || low16 >= (uint16_t)((uint16_t)(0u - n) % n);~    return 1;~Seoul's shuffle draw not uniform (no rejection)
 gd_rules.c~        GD_SET(g->gone, g->att[i]);~        ;~the discarded cards not remembered
 gd_rules.c~            GD_CLR(g->known[seat], m->cards[i]);~            ;~a played card stays known in the hand
-gd_sim.c~        if (!all_covered()) { if (!(m = slot())) return gen_n; m->type = SM_PICKUP;~        if (0) { if (!(m = slot())) return gen_n; m->type = SM_PICKUP;~solve: the defender never picks up
-gd_sim.c~                    if (kmax >= 1) { k = ids_of(&g, ids); gen_subsets(ids, k, (uint8_t)kmax, SM_PASS); }~                    if (kmax >= 1) { k = ids_of(&g, ids); gen_subsets(ids, k, 1, SM_PASS); }~solve: a transfer is one card only
-gd_sim.c~    if (cnt < gs_cap) {~    if (cnt <= gs_cap) {~solve: an attack may be one card more than the defender can take
-gd_sim.c~    if (gd_suit_of[a] != W.trump) { M_AND(t, W.hand[def], SIM_SUIT[W.trump]); m_or(&ok, &t); }~    ;~solve: a trump never beats a plain attack
-gd_sim.c~    if (sol_should_act(DEF())) actor = DEF();~    if (0) actor = DEF();~solve: the attacker acts before the defender
-gd_sim.c~    if (v > f->alpha0 && v < f->beta0) {~    if (1) {~solve: the table stores bounds as exact values
-gd_sim.c~        if (tv > 0) v = (int16_t)(1000 - depth - tv);~        if (tv > 0) v = (int16_t)(1000 - tv);~solve: a stored win is not re-based to the depth
-gd_sim.c~            if (loser == me) v = (int16_t)-v;~            if (loser != me) v = (int16_t)-v;~solve: the terminal value from the wrong side
-gd_sim.c~        else x = (uint8_t)((W.flags & (SIM_DEF1 | SIM_FA1 | SIM_GOOD0 | SIM_GOOD1)) | (uint8_t)(W.trump << 5));~        else x = (uint8_t)(W.trump << 5);~solve: the table key leaves out the roles
-gd_sim.c~    M_AND(h, W.hand[p], SIM_RANKSET[W.tranks]);~    M_AND(h, W.hand[p], SIM_RANKSET[W.tranks & 0x1FEu]);~solve: a throw-in of sixes is missed
+gd_solve.c~        if (!all_covered()) { if (!(m = slot())) return gen_n; m->type = SM_PICKUP;~        if (0) { if (!(m = slot())) return gen_n; m->type = SM_PICKUP;~solve: the defender never picks up
+gd_solve.c~                    if (kmax >= 1) { k = ids_of(&g, ids); gen_subsets(ids, k, (uint8_t)kmax, SM_PASS); }~                    if (kmax >= 1) { k = ids_of(&g, ids); gen_subsets(ids, k, 1, SM_PASS); }~solve: a transfer is one card only
+gd_solve.c~    if (cnt < gs_cap) {~    if (cnt <= gs_cap) {~solve: an attack may be one card more than the defender can take
+gd_solve.c~    if (gd_suit_of[a] != W.trump) { M_AND(t, W.hand[def], SIM_SUIT[W.trump]); m_or(&ok, &t); }~    ;~solve: a trump never beats a plain attack
+gd_solve.c~    if (sol_should_act(DEF())) actor = DEF();~    if (0) actor = DEF();~solve: the attacker acts before the defender
+gd_solve.c~    if (v > f->alpha0 && v < f->beta0) {~    if (1) {~solve: the table stores bounds as exact values
+gd_solve.c~        if (tv > 0) v = (int16_t)(1000 - depth - tv);~        if (tv > 0) v = (int16_t)(1000 - tv);~solve: a stored win is not re-based to the depth
+gd_solve.c~            if (loser == me) v = (int16_t)-v;~            if (loser != me) v = (int16_t)-v;~solve: the terminal value from the wrong side
+gd_solve.c~        else x = (uint8_t)((W.flags & (SIM_DEF1 | SIM_FA1 | SIM_GOOD0 | SIM_GOOD1)) | (uint8_t)(W.trump << 5));~        else x = (uint8_t)(W.trump << 5);~solve: the table key leaves out the roles
+gd_solve.c~    M_AND(h, W.hand[p], SIM_RANKSET[W.tranks]);~    M_AND(h, W.hand[p], SIM_RANKSET[W.tranks & 0x1FEu]);~solve: a throw-in of sixes is missed

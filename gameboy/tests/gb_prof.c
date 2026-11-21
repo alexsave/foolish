@@ -18,8 +18,11 @@ static uint32_t clock_lines(void) {
     return (uint32_t)t * 154u + (ly >= 144 ? ly - 144u : ly + 10u);
 }
 
+// lines from a to b, across sys_time's wrap at 65536 frames
+#define SPAN(a, b) ((b) >= (a) ? (b) - (a) : (b) + 65536ul * 154u - (a))
+
 void gb_prof_mark(uint8_t i) {
     const uint32_t t = clock_lines();
-    if (i > 0 && i <= 4) gb_prof_sect[i - 1] += t - last;
+    if (i > 0 && i <= 4) gb_prof_sect[i - 1] += SPAN(last, t);
     last = clock_lines();
 }

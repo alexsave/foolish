@@ -14,16 +14,17 @@ B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
 
-CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c
-CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
+CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_solve.c
+CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_solve.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_solve.c
 ROM_BANK1 = main gfx gd_play
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu
 ROM_BANK6 = gd_sim
 ROM_BANK7 = gd_bot_seoul
+ROM_BANK8 = gd_solve
 ROM_H    = src/gfx.h src/input.h $(CORE_H) src/gd_bot_seoul.h $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
@@ -69,13 +70,13 @@ $(B)/rom:
 $(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) -I$(B) -I$(ART) -c -o $@ $<
 
-bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5,$(if $(filter $1,$(ROM_BANK6)),-Wf-bo6,$(if $(filter $1,$(ROM_BANK7)),-Wf-bo7)))))
+bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5,$(if $(filter $1,$(ROM_BANK6)),-Wf-bo6,$(if $(filter $1,$(ROM_BANK7)),-Wf-bo7,$(if $(filter $1,$(ROM_BANK8)),-Wf-bo8))))))
 
 $(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -Wf-bo$(if $(filter $*,$(ART_BANK3)),3,2) -c -o $@ $<
 
 $(B)/durak.gb: $(ROM_OBJ)
-	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo8 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
 	    | tee $(B)/link.log
 	@! grep -i overflow $(B)/link.log || { rm -f $@; echo "the code overflowed its ROM area"; exit 1; }
 	sh tests/home_in_bank0.sh $(B)/durak.map
@@ -193,7 +194,7 @@ $(B)/prof/gd_bot_seoul.o: src/gd_bot_seoul.c $(ROM_H) | $(B)/prof
 
 PROF_OBJ = $(B)/prof/gb_prof.o $(filter-out $(B)/rom/gd_bot_seoul.o,$(ROM_OBJ)) $(B)/prof/gd_bot_seoul.o
 $(B)/durak_prof.gb: $(PROF_OBJ)
-	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo8 -Wm-yn"DURAK" -o $@ $(PROF_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(PROF_OBJ)
 
 # ---- Seoul's cross-compiler check (a banked ROM, laid out like the game) --------------
 $(B)/seoulcheck_host: tests/seoulcheck.c $(MATCH_SRC) $(CORE_H) | $(B)
@@ -211,3 +212,21 @@ seoulcheck: $(B)/seoulcheck_host $(B)/seoulcheck.gb $(B)/gbrun
 	sh tests/seoulcheck.sh
 
 .PHONY: seoulcheck
+
+# The endgame solver: the ROM must solve as the clang build does, and the
+# scanline clock times it (tests/solvecheck.c). MBC1 with 32 KB of cart RAM.
+$(B)/solvecheck_host: tests/solvecheck.c $(MATCH_SRC) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DSOLVECHECK_HOST -I$(B) -o $@ tests/solvecheck.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_solve.c
+
+$(B)/rom/solvecheck.o: tests/solvecheck.c $(CORE_H) | $(B)/rom
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
+
+SV_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/solvecheck.o \
+         $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_solve.o
+$(B)/solvecheck.gb: $(SV_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(SV_OBJ)
+
+solvecheck: $(B)/solvecheck_host $(B)/solvecheck.gb $(B)/gbrun
+	sh tests/solvecheck.sh
+
+.PHONY: solvecheck

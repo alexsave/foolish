@@ -1,4 +1,4 @@
-// solvetest - the endgame solver (src/gd_sim.c gd_solve) against foolish's
+// solvetest - the endgame solver (src/gd_solve.c) against foolish's
 // (../foolish/c/src/cordite_sim.c cd_sim_solve, read-only, the build of
 // simtest). For each seed: a deal, then moves on both rule engines (uniformly
 // random from the full menu, or New York's, half each, so the endgames are
@@ -15,6 +15,7 @@
 #include "../src/gd_rules.h"
 #include "../src/gd_rng.h"
 #include "../src/gd_sim.h"
+#include "../src/gd_solve.h"
 #include "../src/gd_bot_hw.h"
 #include "game.h"
 #include "legal.h"

@@ -59,6 +59,26 @@ int main(void) {
     printf("static const uint8_t SIM_MOD3[256] = {");
     for (int i = 0; i < 256; i++) printf("%s%d", i ? "," : "", i % 3);
     printf("};\n");
+    // the cards that beat card a when suit t is trump: its suit's higher
+    // cards, and every trump when a is not one (the endgame solver's covers)
+    printf("static const uint8_t SIM_BEAT[4][36][5] = {\n");
+    for (int t = 0; t < 4; t++) {
+        printf("  {\n");
+        for (int a = 0; a < 36; a++) {
+            uint8_t b[5] = { 0 };
+            for (int c = 0; c < 36; c++)
+                if ((c / 9 == a / 9 && c % 9 > a % 9) || (a / 9 != t && c / 9 == t)) b[c >> 3] |= (uint8_t)(1u << (c & 7));
+            printf("    { 0x%02X, 0x%02X, 0x%02X, 0x%02X, 0x%02X },\n", b[0], b[1], b[2], b[3], b[4]);
+        }
+        printf("  },\n");
+    }
+    printf("};\n");
+    // a card's byte in a mask and its bit there, by lookup (no shift)
+    printf("static const uint8_t SIM_CBYTE[36] = {");
+    for (int c = 0; c < 36; c++) printf("%s%d", c ? "," : "", c >> 3);
+    printf("};\nstatic const uint8_t SIM_CBIT[36] = {");
+    for (int c = 0; c < 36; c++) printf("%s%d", c ? "," : "", 1 << (c & 7));
+    printf("};\n");
     // 2 to the k, for subset counters without a variable shift
     printf("static const uint16_t SIM_POW2[16] = {");
     for (int i = 0; i < 16; i++) printf("%s%u", i ? "," : "", 1u << i);
