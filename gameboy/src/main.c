@@ -797,28 +797,35 @@ static void draw_table_sprites(void) {
 // The search reads the rules state G (only read, there and here) and its own
 // memory; what live_think changes (the hand's order, the cursor, the
 // selection, the map and the sprites) is the screen's, which no bot reads.
-#define THINK_DOT_TICKS 15      // a dot every quarter second, then none again
-static uint8_t think_t, think_dots, think_sel;
+#define THINK_DOT_TICKS 15      // a dot every quarter second (frames), three, then none again
+static uint8_t think_dots, think_sel;
+static uint16_t think_next;             // sys_time when the dots step next
 
-static void think_rail(void) {
-    char t[21];
-    uint8_t n = 0, k;
+// "<CITY> THINKS" into t; its length.
+static uint8_t think_text(char *t) {
+    uint8_t n = 0;
     const char *p = bot_names[bot_city];
     while (*p) t[n++] = *p++;
     p = " THINKS";
     while (*p) t[n++] = *p++;
+    return n;
+}
+
+static void think_rail(void) {
+    char t[21];
+    uint8_t n = think_text(t), k;
     for (k = 0; k < think_dots; k++) t[n++] = '.';
     t[n] = 0;
     gfx_rail(ROW_FOOT, t, "");
 }
 
 static void live_think(void) {
-    uint8_t rail = 0;
+    char t[21];
+    uint8_t d;
     in_update();
     in_give_back(J_START);
     if (!in_target) hand_input();       // TARGET mode waits for the move
     if (in_select_held() != think_sel) { think_sel = in_select_held(); dirty_ui = 1; }
-    if (++think_t >= THINK_DOT_TICKS) { think_t = 0; think_dots = (uint8_t)((think_dots + 1u) & 3u); rail = 1; }
     if (dirty_ui && !dirty) {
         // a cursor move: the hand only needs redrawing when it scrolls
         const uint8_t off = view_off;
@@ -828,11 +835,19 @@ static void live_think(void) {
     }
     dirty_ui = 0;
     if (dirty) { dirty = 0; draw_table(); draw_table_sprites(); }
-    else if (rail) { think_rail(); gfx_flush(); }
+    // the dots: only their three tiles change, and only the foot row is sent
+    if ((int16_t)(sys_time - think_next) >= 0) {
+        const uint8_t x = think_text(t);
+        think_next += THINK_DOT_TICKS;
+        d = think_dots = (uint8_t)((think_dots + 1u) & 3u);
+        t[0] = d > 0 ? '.' : ' '; t[1] = d > 1 ? '.' : ' '; t[2] = d > 2 ? '.' : ' '; t[3] = 0;
+        gfx_text(x, ROW_FOOT, t);
+        gfx_flush_row(ROW_FOOT);
+    }
 }
 
 static void think_begin(void) {
-    think_t = 0;
+    think_next = sys_time + THINK_DOT_TICKS;
     think_dots = 0;
     think_sel = in_select_held();
     bot_thinking = 1;
