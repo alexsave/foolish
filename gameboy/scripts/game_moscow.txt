@@ -9,7 +9,8 @@
 +8   press A
 +1   until _screen 01
 +0   expect _bot_city 03
-+20  shot shots/moscow_01_deal.png 3
++0   until _fly_n 00
++1   shot shots/moscow_01_deal.png 3
 # the first time Moscow thinks, the rail says so while the screen holds still
 +0   until _bot_thinking 01
 +30  expect _bot_thinking 01

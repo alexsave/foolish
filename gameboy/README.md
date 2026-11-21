@@ -414,6 +414,27 @@ The sprites of a frame are built in a staging copy and handed to GBDK's shadow O
 Building them in the shadow OAM itself let the VBlank copy a half-built set: moving the aim in TARGET mode showed the new arrow's first dots beside the old arrowhead for a frame.
 `scripts/target_cover.txt` watches that move frame by frame; with the old in-place build it fails on the torn frame.
 
+## The deal
+
+The opening deal and every refill from the stock fly, one card at a time, through the same flight as a played card (art README "The deal", `mockups/05_deal.png`).
+- The opening: twelve cards leave the deck at (1, 4), alternating bot and you, the bot first; then the trump is turned up last: the top card flips on its way to (0, 4) and the stock is set down on it as it lands.
+- A card to the bot flies as a back (6 sprites); a card to you flips in flight: back (6 sprites), `SP_NARROW_*` (3), `SP_EDGE_*` (3), then its face (6), each a quarter of the flight, and lands in its place in the hand. A club's face uses the club's sprite copies on OBP1, as any flying club does.
+- A refill after a bout uses the same flight, in the order the rules draw: the attacker's cards, then the defender's; the face-up trump, when drawn, flies face up from (0, 4) as the last card.
+- `DEAL_FRAMES` (`src/main.c`) is the frames a card: the one pacing constant.
+- The board shows the deal as it goes: a card not yet arrived leaves its place empty (the hand and the bot's backs are laid out for their final count, so every card lands where the settled board draws it), the deck count and the bot's count on the top rail count the cards as they leave and land, the trump suit icon appears with the trump, and the foot rail says DEALING during the opening.
+- While cards are dealt the bot waits (its half second starts when the last card lands) and your presses are kept, not dropped: they act once the deal has landed; START still leaves at once.
+- The state is 5 bytes (`dl_n[2]`, `dl_first`, `dl_flags`, `dl_seat`) beside the flight's.
+  It is not overlaid on the bots' scratch: the phases are exclusive today (the bot never thinks during a deal), but another branch makes the screen live while a bot thinks, and a refill then would run beside the search.
+
+### Hypothesis (written before measuring)
+
+- Pacing: with `DEAL_FRAMES` 8, the opening's 13 flights (12 cards and the trump) take about 125 frames (2.1 s) from the first card's first frame to the last landing: 8 frames a card plus about 1.5 frames of board redraw at each landing (the next card's flight starts when its first frame is drawn).
+  Falsifier: under 110 or over 140 frames.
+- A landing's board redraw (`draw_lines_last`): 150 to 300 scanlines (1 to 2 frames).
+  Falsifier: over 460 scanlines (3 frames), which would show as a stall between cards.
+- ROM: bank 1 grows by about 600 bytes. Falsifier: over 1.2 KB.
+- RAM: 5 bytes of static state, nothing on the stack beyond a few bytes of locals in the main loop's own calls. Falsifier: the gap between the data and the stack's top shrinks by more than 8 bytes.
+
 ## gbrun, the headless runner
 
 `tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).

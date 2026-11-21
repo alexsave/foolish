@@ -47,5 +47,7 @@ void gfx_spr(int16_t px, int16_t py, uint8_t tile, uint8_t flags);   // screen p
 void gfx_spr_end(void);                          // hides every sprite not placed
 void gfx_spr_text(int16_t px, int16_t py, const char *s);           // a "chip" of font tiles
 void gfx_spr_card(int16_t px, int16_t py, uint8_t card);            // a flying card, six sprites
+void gfx_spr_back(int16_t px, int16_t py);                          // a flying back, six sprites
+void gfx_spr_strip(int16_t px, int16_t py, uint8_t top);            // the flip's narrow or edge frame, three
 
 #endif

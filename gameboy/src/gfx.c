@@ -317,3 +317,22 @@ void gfx_spr_card(int16_t px, int16_t py, uint8_t card) {
 void gfx_spr_text(int16_t px, int16_t py, const char *s) {
     while (*s) { gfx_spr(px, py, char_tile(*s++), 0); px += 8; }
 }
+
+// A card back as six sprites (a card dealt to the bot, or a card to me before
+// it turns over): the back's round corners are index 0, see-through.
+void gfx_spr_back(int16_t px, int16_t py) {
+    gfx_spr(px, py, T_BACK_TL_U0, 0);
+    gfx_spr(px + 8, py, T_BACK_TR, 0);
+    gfx_spr(px, py + 8, T_BACK_ML, 0);
+    gfx_spr(px + 8, py + 8, T_BACK_MR, 0);
+    gfx_spr(px, py + 16, T_BACK_BL_U0, 0);
+    gfx_spr(px + 8, py + 16, T_BACK_BR, 0);
+}
+
+// One column of three sprites, tiles top, top + 1, top + 2: the deal's flip
+// frames (T_SP_NARROW_T.., T_SP_EDGE_T..), centred on the card by the caller.
+void gfx_spr_strip(int16_t px, int16_t py, uint8_t top) {
+    gfx_spr(px, py, top, 0);
+    gfx_spr(px, py + 8, (uint8_t)(top + 1u), 0);
+    gfx_spr(px, py + 16, (uint8_t)(top + 2u), 0);
+}
