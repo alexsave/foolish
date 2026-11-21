@@ -57,6 +57,25 @@ make romusage       # ROM and RAM per bank
 - Table redraw: the slowest whole-board redraw in those games was 582 scanlines (3.8 frames); moving the cursor redraws only the foot rail and the sprites.
   Buttons are latched by an interrupt, so a slow redraw never loses a press.
 
+### Win-screen fireworks from the art's export, and the stack guard (gb-fireworks-stack)
+
+Written before any of it was measured; each line is marked right or wrong after.
+
+Fireworks:
+- The game drew bursts from a hand-copied table (`fw_x`, `fw_y` in `main.c`). Prediction: it matches the art in at most a few of the 16 frames (4 cities x 4 frames) and fails the art comparison in the burst boxes in the rest; with `ART_WIN_BURSTS_<CITY>` in its place every frame matches the art's own render pixel for pixel, in the boxes and on the whole screen.
+  Falsifier: the old table already matching in most frames, or any pixel differing after the change.
+  Right on both counts: the old table failed 16 of 16 frames (47 to 217 differing pixels per frame), the export passes 16 of 16 with 0 differing pixels.
+- Where the 8 px came from: not from the drawing code. `gfx_spr` adds the OAM's (8, 16) once and the four quarters and the shell use the art's formula, so a burst centred on the same point is drawn on the same pixels (the comparison proves it). The table was a hand copy of an old art revision (the commit that added per-city bursts), and the art moved its bursts afterwards: New York's right burst went from (136, 36) to (144, 36) to (146, 36), the one the game drew onto 270 Park's crown at 8 px off the art's, and every city's other bursts moved too (Miami's y from 32 and 34 to 28 and 28, New York lost its middle burst, and so on). Nothing tied the two together; now `art_tiles.h` is the only source.
+- Cost: ROM about the same (the table is the same size), RAM none (`fw_t` stays one byte; it lost `static` so `scripts/win_fireworks.txt` can set the loop frame by `poke _fw_t`).
+- Mutation: the burst centre shifted 8 px left in the game fails `tests/fwcheck.py` on all 16 frames.
+
+Stack guard (a canary over the gap between the end of the data and the stack, painted at boot, read back at the end of a game):
+- The gap at boot is `0xE000 - s__HEAP_END`, 539 bytes before the guard and 537 with its 2-byte result. Falsifier: a different number in `build/durak.map`.
+- The untouched bytes left after a whole game against Moscow (`game_moscow.txt`): 130 to 200 (the stack's reach read by hand was 320 of 541, and the guard also counts the interrupt handler's pushes). Falsifier: under 48 (the threshold) or over 250.
+- The same after `moscowcheck` (100 decisions, 6 solved): 100 to 170 (hand reading: 400 of 541). Falsifier: under 48 or over 250.
+- Cost: 2 bytes of RAM, under 90 bytes of bank 0 ROM, painting under 0.1 frame at boot and the read-back under 0.15 frame once per game. Falsifier: any of those over double.
+- The check fails when fewer than 48 bytes are untouched; mutation checked with a grown stack frame and with a threshold above the measured headroom.
+
 ## New York: foolish's handwritten_prod
 
 `src/gd_bot_hw.c` ports `foolish/c/src/handwritten_prod_strategy.c` to the Game Boy with integers in place of its doubles, branch for branch:
