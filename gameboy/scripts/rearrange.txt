@@ -7,7 +7,10 @@
 # website's Cmd+arrows); it never plays. Hand: Ts 9h Th 6d 7d Td.
 @99  poke _sys_time 3a 00
 @100 press A
-+20  press RIGHT
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
++1   press RIGHT
 +6   expect _disp 04 0c 0d 1b 1c 1f
 +1   press SELECT 40
 +8   press SELECT+RIGHT 2

@@ -8,7 +8,10 @@
 # the cursor card can add the rail reads DONE. Hand: 6s As 6h Qh Kc 6d.
 @99  poke _sys_time 1f 00
 @100 press A
-+20  press RIGHT
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
++1   press RIGHT
 +6   press UP
 +6   expect _G+74 01
 +45  expect _G+56 20
