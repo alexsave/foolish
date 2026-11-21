@@ -10,6 +10,10 @@ LCC      = $(GBDK)/bin/lcc
 # SDCC must play identical games - is the check that keeps codegen honest.
 LCCFLAGS =
 HOSTCC  ?= clang
+# mGBA for the headless runner: Homebrew's paths by default (the Mac); on Linux
+# libmgba-dev is on the default paths, so MGBA_CFLAGS= MGBA_LIBS='-lmgba -lpng'.
+MGBA_CFLAGS ?= -I/opt/homebrew/include
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
 B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
@@ -37,7 +41,7 @@ ART      = art/gbdk
 # Bank 2: the table's banks, the fonts and small sprites, the dashboards and
 # the lose picture; bank 3: the four win pictures. gfx.c reads each file's bank
 # with BANK(), so this list is the one place that decides it.
-ART_BANK2 = cards ui sprites lacquer paper plane fireworks dashboard dashboard_new lose
+ART_BANK2 = cards ui sprites pile lacquer paper plane fireworks dashboard dashboard_new lose
 ART_BANK3 = win_miami win_new_york win_seoul win_moscow
 ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC))) \
             $(patsubst %,$(B)/rom/%.o,$(ART_BANK2) $(ART_BANK3))
@@ -123,7 +127,7 @@ rom-mutants: $(B)/durak.gb $(B)/gbrun
 
 # ---- the headless runner ------------------------------------------------------------
 $(B)/gbrun: tools/gbrun.c | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
+	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -D_GNU_SOURCE $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
 
 gbrun: $(B)/gbrun
 

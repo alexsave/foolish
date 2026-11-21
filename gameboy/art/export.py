@@ -24,7 +24,7 @@ PNG2ASSET = os.path.join(GBDK, "bin", "png2asset")
 # VRAM: one 256-tile space at 0x8000 shared by the background, the window
 # and the sprites (LCDC bit 4 = 1, GBDK's default).  Card tiles double as
 # sprite tiles for a flying card; font tiles double as sprite 'chips'.
-BASE = {"cards": 0, "ui": 72, "sprites": 140}
+BASE = {"cards": 0, "ui": 72, "sprites": 140, "pile": 160}
 PALETTE = [A.SHADE[i] for i in (A.T, A.W, A.D, A.K)]   # index order
 
 
@@ -95,12 +95,13 @@ def ident(name):
 def main():
     os.makedirs(PNG, exist_ok=True)
     os.makedirs(OUT, exist_ok=True)
-    banks = {"cards": A.card_bank(), "ui": A.ui_bank(), "sprites": A.sprite_bank()}
+    banks = {"cards": A.card_bank(), "ui": A.ui_bank(), "sprites": A.sprite_bank(), "pile": A.pile_bank()}
     for b, bank in banks.items():
         tiles = list(bank.values())
         assert len(set(tiles)) == len(tiles), "%s bank has duplicate tiles" % b
     assert BASE["ui"] >= len(banks["cards"]) and BASE["sprites"] >= BASE["ui"] + len(banks["ui"])
-    assert BASE["sprites"] + len(banks["sprites"]) <= 256
+    assert BASE["sprites"] + len(banks["sprites"]) <= BASE["pile"]
+    assert BASE["pile"] + len(banks["pile"]) <= 256
 
     # tile banks: 1 tile wide strips, so png2asset keeps the order
     for b, bank in banks.items():
@@ -199,6 +200,13 @@ def main():
         for k, name in enumerate(bank):
             h.append("#define T_%s %du" % (ident(name), BASE[b] + k))
         h.append("")
+    h.append("/* the discard pile: a 3x3 tile box at (ART_DISCARD_X, ART_DISCARD_Y), tiles ART_PILE_BASE + row-major */")
+    h.append("#define ART_DISCARD_X %du" % A.PILE_BOX[0])
+    h.append("#define ART_DISCARD_Y %du" % A.PILE_BOX[1])
+    h.append("#define ART_DISCARD_LAND_PX %du  /* a swept card's flight ends with its top left here (pixels) */" % A.PILE_LAND[0])
+    h.append("#define ART_DISCARD_LAND_PY %du" % A.PILE_LAND[1])
+    h.append("#define ART_BOT_HAND_LAST_COL %du  /* the bot's backs keep to columns 0..this */" % A.BOT_HAND_LAST_COL)
+    h.append("")
     h.append("/* the rail font: character c is at ART_UI_BASE + ART_FONT_FIRST + index of c in ART_FONT_CHARS */")
     h.append("#define ART_LACQUER_COUNT %du  /* lacquer.c: the same characters, white on black */" % len(lq))
     h.append("#define ART_LACQUER_BASE %du  /* where a win screen loads it (its tileset is at most this many tiles) */" % wins.LACQUER_BASE)

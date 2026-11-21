@@ -414,6 +414,35 @@ The sprites of a frame are built in a staging copy and handed to GBDK's shadow O
 Building them in the shadow OAM itself let the VBlank copy a half-built set: moving the aim in TARGET mode showed the new arrow's first dots beside the old arrowhead for a frame.
 `scripts/target_cover.txt` watches that move frame by frame; with the old in-place build it fails on the torn frame.
 
+## The discard pile and the sweep
+
+The pile is the art's (`art/README.md` "The discard pile"): nine tiles (`pile`, bank 2, loaded with the table's banks to tiles 160..168) drawn at columns 17-19, rows 1-3 once the discard is not empty, and nothing while it is.
+The bot's backs keep to columns 0-16 (`ART_BOT_HAND_LAST_COL`, 16 shown at most, centred there; the top rail has the true count).
+Nothing else is in rows 1-3 right of column 16: battles start at row 4 in every layout (up to six, past six, past twelve), as do the TARGET arrow and brackets.
+
+When a move ends the bout on the discard (the discard count grew: a last cover, or DONE over a covered table) the table's cards fly to the pile, landing with their top left at (143, 8), by the one flight code: 12 frames on `sys_time`, the staging buffer, at most four in flight.
+Choice: fly the top cards and drop the rest, rather than fly in batches.
+A batch of four takes 12 frames, so twelve cards (six battles, the most the art lays out; more are rare) would be three flights, 36 frames, with the bot's next move and my input waiting or racing the flight's state (`fly_*` is one flight's state); the top cards are what the eye sees go, the rest are covered by them, and a pickup already does exactly this (the first four fly, the rest land at once).
+Top is the cards of my own last cover first (they fly from my hand, or the bot's), then the table from its last battle backwards (the cover, then its attack).
+No new RAM: the sweep fills the flight arrays that were there, and the one new local is a byte on the stack.
+
+### Hypothesis (written for what I had not measured; a slip, I had already looked at the RAM and bank sizes)
+
+I built before writing these, so the RAM line and the bank-size lines are not predictions; the rest were made before the numbers.
+- RAM: no change (no new variables). Measured: `_DATA` 7487 bytes before and after, the stack top still at 0xE000 with 539 bytes above the data: right (a bank-1 stack frame grows by a byte or two).
+- Bank 1 (`main`, `gfx`): about 250 bytes more, falsifier over 600. Measured 13579 to 13957: +378, wrong against my 250 but under the falsifier (the pile loop, the sweep list and the 16-column centring). Bank 2 +144 (the pile's 9 tiles): right, it is the tile size.
+- The worst board redraw (`draw_lines_max`, `game_win.txt`): 661 scanlines before; 9 `gfx_tile` calls and the row diff should add about 10, falsifier over 60. Measured 698: +37, right.
+- A sweep flight is 12 frames, 2 cards for a one-battle table, the first card at t = 6 half way between its start and (143, 8), at t = 11 within 6 px of it. Measured exactly that: `_fly_pos` is (107, 32) at t = 6 and (137, 12) at t = 11 from (72, 56): right.
+- Falsifier for the layout: a bot hand of 32 cards drawn with 16 backs reaches pixel 135 at most; right (the test below).
+Timings on this VM are indicative only; the Mac re-measures.
+
+### The proof
+
+- `scripts/sweep.txt`: the pile is absent at the start (three pixels read wool) and while the bout is open; DOWN says DONE, both cards of the battle fly (`_fly_n` 2), pinned at frames 6 and 11 of the flight (`_fly_pos` equals the interpolation toward (143, 8), so it fails if they head anywhere else, or land elsewhere); after the landing the table is empty (`_G+74` 0, the attack card's black edge at (65, 48) is wool again) and the pile's black reads at (141, 20) and (156, 20).
+  Mutants, each failing on its own assertion: the sweep landing at the old left position (0, 64) fails both `_fly_pos` expects; the pile drawn when empty fails the first pixel check (the pile's black on an empty discard, frame 119); the sweep never flying (`swept` always 0) fails `until _fly_n 02`, which runs to its frame limit (no flight ever starts).
+- `scripts/pile_busy.txt`: 32 cards in the bot's hand, a card in the discard: 16 backs, the last one's dark edge at (135, 20), wool at (137, 20), the pile whole beside it.
+  Mutant: the old centring and cap (18 backs from column 0 of 20) draws the last back's edge elsewhere: pixel 135 reads white and the script fails.
+
 ## gbrun, the headless runner
 
 `tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
@@ -437,6 +466,8 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
 | `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
 | `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
+| `sweep.txt` | the discard pile absent at first, then the bout's cards flying to it, pinned mid-flight and landing, the table empty, the pile drawn | `sweep_01` to `sweep_05` |
+| `pile_busy.txt` | 32 cards in the bot's hand beside the pile: 16 backs in columns 0-16, the pile whole | `pile_busy` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
