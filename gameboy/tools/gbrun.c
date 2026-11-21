@@ -11,7 +11,8 @@
 //                               RIGHT, joined by +) for FRAMES frames (default 2)
 //   +N   shot PATH [SCALE]      write the screen after frame N as a PNG, SCALE
 //                               times larger (nearest neighbour, default 1)
-//   +N   peek SYM [LEN]         print LEN (default 1) bytes at a symbol or 0xADDR
+//   +N   peek SYM [LEN]         print LEN (default 1) bytes at a symbol or 0xADDR,
+//                               either one optionally +OFFSET ("_G+74")
 //   +N   expect SYM HEX...      fail (exit 1) unless those bytes are there
 //   +N   end                    stop after this frame
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
@@ -21,10 +22,12 @@
 // the linker writes (lines "DEF _name 0xADDR").
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
+#include <mgba/core/log.h>
 #include <mgba-util/png-io.h>
 #include <mgba-util/vfs.h>
 
 #include <fcntl.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -167,10 +170,16 @@ static void load_noi(const char *path) {
     fclose(f);
 }
 
-static uint32_t resolve(const char *s) {
-    if (!strncmp(s, "0x", 2)) return (uint32_t)strtoul(s, 0, 16);
-    for (int i = 0; i < nsyms; i++) if (!strcmp(syms[i], s)) return symaddr[i];
-    fprintf(stderr, "unknown symbol %s (pass the .noi file)\n", s);
+// A symbol or 0xADDR, optionally +N (decimal): "_G+74".
+static uint32_t resolve(const char *arg) {
+    char s[256];
+    uint32_t off = 0;
+    snprintf(s, sizeof s, "%s", arg);
+    char *plus = strchr(s, '+');
+    if (plus) { *plus = 0; off = (uint32_t)strtoul(plus + 1, 0, 10); }
+    if (!strncmp(s, "0x", 2)) return (uint32_t)strtoul(s, 0, 16) + off;
+    for (int i = 0; i < nsyms; i++) if (!strcmp(syms[i], s)) return symaddr[i] + off;
+    fprintf(stderr, "unknown symbol %s (pass the .noi file)\n", arg);
     exit(2);
 }
 
@@ -194,7 +203,17 @@ static void write_png(const char *path, const color_t *src, unsigned stride, int
     vf->close(vf);
 }
 
+// The emulator's own log goes to stderr, so a script's output is only its own
+// lines (mGBA notes, for one, that GBDK's start-up writes an MBC1 RAM bank on a
+// cart with no RAM).
+static void log_stderr(struct mLogger *l, int cat, enum mLogLevel level, const char *fmt, va_list ap) {
+    (void)l; (void)cat;
+    if (level & (mLOG_FATAL | mLOG_ERROR | mLOG_WARN)) { vfprintf(stderr, fmt, ap); fputc('\n', stderr); }
+}
+static struct mLogger logger = { .log = log_stderr };
+
 int main(int argc, char **argv) {
+    mLogSetDefaultLogger(&logger);
     if (argc < 3) { fprintf(stderr, "usage: gbrun ROM SCRIPT [SYMBOLS.noi]\n"); return 2; }
     FILE *sf = fopen(argv[2], "r");
     if (!sf) { perror(argv[2]); return 2; }

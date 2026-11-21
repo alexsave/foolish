@@ -1,0 +1,7 @@
+# DOWN picks up (the defender), shown on the foot rail as PICK UP.
+@126 press A
++50  expect _G+74 01
++0   shot shots/40_before_take.png 3
++1   press DOWN
++8   expect _G+74 00
++0   shot shots/41_take.png 3

@@ -16,10 +16,11 @@
 // SELECT counts as held (so LEFT/RIGHT rearrange the hand) after this many frames.
 #define IN_SELECT_HELD_FRAMES 0
 
-void    in_update(void);               // once per frame
-uint8_t in_pressed(uint8_t mask);      // went down this frame
+void    in_init(void);                 // installs the VBlank reader
+void    in_update(void);               // once per pass of the game loop: takes what was latched
+uint8_t in_pressed(uint8_t mask);      // went down since the last update
 uint8_t in_down(uint8_t mask);         // is down
-int8_t  in_lr_step(void);              // -1 / +1 on a LEFT / RIGHT press or repeat, else 0
+int8_t  in_lr_steps(void);             // LEFT (-) / RIGHT (+) presses and repeats since the last update
 uint8_t in_a_held(void);
 uint8_t in_select_held(void);
 uint8_t in_any_pressed(void);

@@ -5,6 +5,7 @@
 // controls table.
 #include <gb/gb.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "gd_rules.h"
 #include "gd_play.h"
@@ -50,7 +51,8 @@ static uint8_t view_off;        // first shown card when the hand is wider than 
 static uint8_t idle;            // frames since the board last changed
 static uint8_t flash_t;
 static const char *flash_msg;
-static uint8_t dirty;
+static uint8_t dirty;          // redraw the board
+static uint8_t dirty_ui;       // redraw the foot rail and the sprites only
 #define SCREEN_DASH  0
 #define SCREEN_TABLE 1
 #define SCREEN_END   2      // the win or lose picture
@@ -67,6 +69,8 @@ static char flash_buf[21];
 // How long the bot's last decision took, in scanlines (1 line = 108.7 us):
 // count + unrank + apply. Read by tools/gbrun (peek _bot_lines_max).
 uint16_t bot_lines_last, bot_lines_max;
+// The same for one redraw of the table (board, rails, flush and sprites).
+uint16_t draw_lines_last, draw_lines_max;
 
 static void rebuild_disp(void) {
     uint8_t i;
@@ -132,7 +136,11 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
     note_new_cards(&before);
     idle = 0;
     dirty = 1;
-    in_target = 0;      // the website's afterMove (and a stale target after a bot move)
+    // The website's afterMove leaves target mode after my own move. A bot move
+    // leaves it only when the table changed under the aim: a silent good (the
+    // bot stops adding) changes nothing there.
+    if (seat == HUMAN || G.nb != before.nb || memcmp(G.def, before.def, GD_MAXB) || memcmp(G.att, before.att, GD_MAXB))
+        in_target = 0;
     if (seat == BOT) {
         switch (m->type) {
         case GD_ATTACK: flash_bot(before.nb ? "ADDS" : "ATTACKS"); break;
@@ -145,8 +153,9 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
             if (before.nb && !gd_uncovered(&before)) flash_bot("IS DONE");
             break;
         }
-    } else if (m->type == GD_PICKUP) {
-        flash("YOU TAKE");
+    } else {
+        flash_t = 0;    // my move replaces whatever the bot's last one said
+        if (m->type == GD_PICKUP) flash("YOU TAKE");
     }
     return 1;
 }
@@ -291,27 +300,33 @@ static void sweep(int8_t step) {
     toggle(disp[(uint8_t)cur]);
 }
 
+// One LEFT (-1) or RIGHT (+1) step.
+static void lr_step(int8_t step) {
+    if (in_select_held()) rearrange(step);
+    else if (in_a_held()) sweep(step);
+    else if (in_target) tgt_i = (uint8_t)(((int16_t)tgt_i + step + tgt_n) % tgt_n);
+    else if (cur < 0) { if (disp_n) cur = 0; }
+    else if (!disp_n) cur = -1;
+    else cur = (int8_t)(((int16_t)cur + step + disp_n) % disp_n);
+}
+
 static void human_input(void) {
-    const int8_t step = in_lr_step();
+    int8_t steps = in_lr_steps();
     if (in_pressed(J_START)) { screen = SCREEN_DASH; dash_item = 0; dirty = 1; return; }
     if (G.status != GD_PLAYING) return;
-    if (in_pressed(J_A) || in_pressed(J_B) || in_pressed(J_UP) || in_pressed(J_DOWN) || step) dirty = 1;
     // A is the website's Shift press: toggle the cursor card in or out of the selection.
-    if (in_pressed(J_A) && cur >= 0 && !in_target && (uint8_t)cur < disp_n) toggle(disp[(uint8_t)cur]);
+    if (in_pressed(J_A) && cur >= 0 && !in_target && (uint8_t)cur < disp_n) { toggle(disp[(uint8_t)cur]); dirty = 1; }
     // B backs out: of target mode, else clears the selection.
-    if (in_pressed(J_B)) { if (in_target) in_target = 0; else clear_sel(); }
-    if (step) {
-        if (in_select_held()) rearrange(step);
-        else if (in_a_held()) sweep(step);
-        else if (in_target) tgt_i = (uint8_t)(((int16_t)tgt_i + step + tgt_n) % tgt_n);
-        else if (cur < 0) { if (disp_n) cur = 0; }
-        else if (!disp_n) cur = -1;
-        else cur = (int8_t)(((int16_t)cur + step + disp_n) % disp_n);
-    }
+    if (in_pressed(J_B)) { if (in_target) in_target = 0; else clear_sel(); dirty = 1; }
+    // Cursor-only changes redraw the rail and the sprites; the rest the board.
+    // (target mode redraws the board: the pass slot is background tiles)
+    if (steps) { if (in_select_held() || in_a_held() || in_target) dirty = 1; else dirty_ui = 1; }
+    while (steps > 0) { lr_step(1); steps--; }
+    while (steps < 0) { lr_step(-1); steps++; }
     // A or SELECT held: up and down are inert, so a held modifier never plays.
     if (in_down(J_A) || in_down(J_SELECT)) return;
-    if (in_pressed(J_DOWN)) { if (in_target) in_target = 0; else take_or_good(); }
-    if (in_pressed(J_UP)) up();
+    if (in_pressed(J_DOWN)) { if (in_target) in_target = 0; else take_or_good(); dirty = 1; }
+    if (in_pressed(J_UP)) { up(); dirty = 1; }
 }
 
 static void bot_turn(void) {
@@ -388,18 +403,11 @@ static void hand_place(uint8_t i, uint8_t *x, uint8_t *y, uint8_t *w) {
     *w = (hand_step == 2 || k + 1u == hand_shown) ? 2 : 1;
 }
 
+// Whose move it is, short enough (12 at most) to sit beside any action word.
 static const char *role_text(void) {
-    static char buf[21];
-    const char *verb;
-    const char *p = bot_names[bot_city];
-    uint8_t n = 0;
-    if (G.nb == 0) { if (G.fa == HUMAN) return "YOUR ATTACK"; verb = " ATTACKS"; }
-    else if (G.defender == HUMAN) { if (gd_uncovered(&G)) return "YOU DEFEND"; verb = " MAY ADD"; }
-    else { if (!gd_uncovered(&G)) return "ALL COVERED"; verb = " DEFENDS"; }
-    while (*p) buf[n++] = *p++;
-    while (*verb) buf[n++] = *verb++;
-    buf[n] = 0;
-    return buf;
+    if (G.nb == 0) return G.fa == HUMAN ? "YOUR ATTACK" : "THEIR ATTACK";
+    if (G.defender == HUMAN) return gd_uncovered(&G) ? "YOU DEFEND" : "THEY MAY ADD";
+    return gd_uncovered(&G) ? "THEY DEFEND" : "ALL COVERED";
 }
 
 // The move UP makes for the selection, or for the cursor card alone; then the
@@ -434,10 +442,42 @@ static const char *top_left(void) {
     return rail_buf;
 }
 
+// The foot rail: the status, and the move DOWN or UP makes.
+static void draw_foot(void) {
+    uint8_t i, n;
+    char foot_left[21];
+    const char *fr;
+    if (G.status != GD_PLAYING) {
+        const uint8_t r = gd_result(&G);
+        gfx_rail(ROW_FOOT, r == GD_RESULT_FOOL1 ? "YOU WIN" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED",
+                 r == GD_RESULT_DRAW ? IC_A "AGAIN" : "");
+    } else if (in_target) {
+        gfx_rail(ROW_FOOT, IC_LEFT IC_RIGHT "TARGET", tgt[tgt_i] == TGT_PASS ? IC_UP "PASS" : IC_UP "COVER");
+    } else if (in_select_held() && cur >= 0) {
+        gfx_rail(ROW_FOOT, "SELECT+" IC_LEFT IC_RIGHT, "MOVE CARD");
+    } else {
+        uint8_t s[GD_NCARDS];
+        n = sel_list(s);
+        fr = flash_t ? flash_msg : role_text();
+        if (n && !flash_t) {
+            foot_left[0] = n >= 10 ? (char)('0' + n / 10) : (char)('0' + n);
+            i = 1;
+            if (n >= 10) foot_left[i++] = (char)('0' + n % 10);
+            foot_left[i] = 0;
+            {
+                const char *sel = " SELECTED";
+                while (*sel) foot_left[i++] = *sel++;
+                foot_left[i] = 0;
+            }
+            fr = foot_left;
+        }
+        gfx_rail(ROW_FOOT, fr, action_text());
+    }
+}
+
 static void draw_table(void) {
     uint8_t i, n, x, y, w, deck;
-    char right[8], foot_left[21];
-    const char *fr;
+    char right[8];
     gfx_clear_table();
     // the top rail: the bot and its count; the deck and the trump suit
     deck = (uint8_t)(G.stock_n + (G.has_flipped ? 1u : 0u));
@@ -494,33 +534,7 @@ static void draw_table(void) {
             gfx_text((uint8_t)(SCR_W - k), ROW_UNDER, t);
         }
     }
-    // the foot rail
-    if (G.status != GD_PLAYING) {
-        const uint8_t r = gd_result(&G);
-        gfx_rail(ROW_FOOT, r == GD_RESULT_FOOL1 ? "YOU WIN" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED",
-                 r == GD_RESULT_DRAW ? IC_A "AGAIN" : "");
-    } else if (in_target) {
-        gfx_rail(ROW_FOOT, IC_LEFT IC_RIGHT "TARGET", tgt[tgt_i] == TGT_PASS ? IC_UP "PASS" : IC_UP "COVER");
-    } else if (in_select_held() && cur >= 0) {
-        gfx_rail(ROW_FOOT, "SELECT+" IC_LEFT IC_RIGHT, "MOVE CARD");
-    } else {
-        uint8_t s[GD_NCARDS];
-        n = sel_list(s);
-        fr = flash_t ? flash_msg : role_text();
-        if (n && !flash_t) {
-            foot_left[0] = n >= 10 ? (char)('0' + n / 10) : (char)('0' + n);
-            i = 1;
-            if (n >= 10) foot_left[i++] = (char)('0' + n % 10);
-            foot_left[i] = 0;
-            {
-                const char *sel = " SELECTED";
-                while (*sel) foot_left[i++] = *sel++;
-                foot_left[i] = 0;
-            }
-            fr = foot_left;
-        }
-        gfx_rail(ROW_FOOT, fr, action_text());
-    }
+    draw_foot();
     gfx_flush();
 }
 
@@ -543,11 +557,16 @@ static void arrow(int16_t sx, int16_t sy, int16_t dx, int16_t dy, uint8_t dashed
     const uint16_t len = isqrt((uint16_t)(adx * adx + ady * ady));
     const uint8_t step = dashed ? 10 : 6;
     uint16_t k, nd;
+    int16_t stx, sty, fx, fy;
     if (len < 10) return;
     nd = (uint16_t)((len - 9u) / step);
+    // one step along the line, in 8.8 fixed point: two divisions, not two a dot
+    stx = (int16_t)(((int32_t)ax * step * 256) / (int16_t)len);
+    sty = (int16_t)(((int32_t)ay * step * 256) / (int16_t)len);
+    fx = (int16_t)(sx << 8); fy = (int16_t)(sy << 8);
     for (k = 1; k <= nd; k++) {
-        const int16_t f = (int16_t)(k * step);
-        gfx_spr(sx + (int16_t)((int32_t)ax * f / (int16_t)len) - 2, sy + (int16_t)((int32_t)ay * f / (int16_t)len) - 2, T_SP_DOT, 0);
+        fx += stx; fy += sty;
+        gfx_spr((int16_t)(fx >> 8) - 2, (int16_t)(fy >> 8) - 2, T_SP_DOT, 0);
     }
     if (ay <= 0 && adx * 5u < ady * 2u) gfx_spr(dx - 4, dy - 4, T_SP_HEAD_N, 0);
     else if (ay <= 0) gfx_spr(dx - 4, dy - 4, T_SP_HEAD_NE, ax < 0 ? S_FLIPX : 0);
@@ -658,6 +677,7 @@ static void end_input(void) {
 void main(void) {
     uint8_t shown = 0xFF, was_select = 0;
     gfx_init();
+    in_init();
     dirty = 1;
     for (;;) {
         vsync();
@@ -681,14 +701,26 @@ void main(void) {
             if (in_select_held() != was_select) { was_select = in_select_held(); dirty = 1; }
         }
         if (screen != shown) dirty = 1;
+        if (dirty_ui && !dirty && screen == SCREEN_TABLE) {
+            // a cursor move: the hand only needs redrawing when it scrolls
+            const uint8_t off = view_off;
+            hand_layout();
+            if (view_off != off) dirty = 1;
+            else { draw_foot(); gfx_flush(); draw_table_sprites(); }
+        }
+        dirty_ui = 0;
         if (dirty) {
             dirty = 0;
             if (screen == SCREEN_DASH) draw_dash(shown != SCREEN_DASH);
             else if (screen == SCREEN_END) draw_end();
             else {
+                const uint16_t t0 = sys_time;
+                const uint8_t ly0 = LY_REG;
                 if (shown != SCREEN_TABLE) gfx_load_table();
                 draw_table();
                 draw_table_sprites();
+                draw_lines_last = (uint16_t)((uint16_t)(sys_time - t0) * 154u + LY_REG - ly0);
+                if (shown == SCREEN_TABLE && draw_lines_last > draw_lines_max) draw_lines_max = draw_lines_last;
             }
             shown = screen;
         }

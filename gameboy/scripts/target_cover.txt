@@ -1,0 +1,29 @@
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+# TARGET mode, cover: Miami opens with two kings (spades, clubs); hearts are
+# trumps and my 9 of hearts beats either, so UP enters target mode.
+@105 press A
++50  shot shots/10_defend.png 3
++0   expect _G+74 02
+# right, right, right: the cursor to the 9 of hearts (6s Ts 9h ...)
++5   press RIGHT
++5   press RIGHT
++5   press RIGHT
++5   expect _cur 02
++0   press UP
++5   expect _in_target 01
++0   expect _tgt_n 02
++0   shot shots/11_target_cover_first.png 3
+# right: the arrow moves to the other king
++5   press RIGHT
++5   expect _tgt_i 01
++0   shot shots/12_target_cover_second.png 3
+# down cancels back to the cards; up again, and up commits the cover
++10  press DOWN
++8   expect _in_target 00
++1   press UP
++8   expect _in_target 01
++1   press UP
++8   expect _in_target 00
++0   expect _G+56 0c
++0   shot shots/13_covered.png 3

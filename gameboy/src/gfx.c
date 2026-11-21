@@ -21,6 +21,11 @@
 #define FULL_POINTER 230u
 
 static uint8_t map[SCR_H * SCR_W];
+// What VRAM holds, so a flush writes only the rows that changed: writing all
+// 360 tiles costs about 180 scanlines, more than a frame, and a redraw that
+// long drops short button presses.
+static uint8_t shown[SCR_H * SCR_W];
+static uint8_t shown_valid;
 static uint8_t font_base = ART_UI_BASE;
 
 // ---- loading --------------------------------------------------------------------------
@@ -30,6 +35,7 @@ void gfx_load_table(void) {
     set_bkg_data(ART_UI_BASE, ART_UI_COUNT, ui_tiles);
     set_sprite_data(ART_SPRITES_BASE, ART_SPRITES_COUNT, sprites_tiles);
     font_base = ART_UI_BASE;
+    shown_valid = 0;
     DISPLAY_ON;
 }
 
@@ -39,6 +45,7 @@ void gfx_init(void) {
     BGP_REG = ART_BGP;
     OBP0_REG = ART_OBP0;
     SPRITES_8x8;
+    build_char_table();
     gfx_load_table();
     gfx_spr_begin();
     gfx_spr_end();
@@ -80,6 +87,7 @@ void gfx_load_full(uint8_t which) {
     set_bkg_data(FULL_UI_BASE, ART_UI_COUNT, ui_tiles);
     set_sprite_data(FULL_POINTER, 1, sprites_tiles + 16u * (T_SP_POINTER - ART_SPRITES_BASE));
     font_base = FULL_UI_BASE;
+    shown_valid = 0;
     DISPLAY_ON;
 }
 
@@ -93,41 +101,50 @@ static uint8_t at(uint8_t x, uint8_t y) {
 }
 
 void gfx_clear_table(void) {
-    uint16_t i;
-    for (i = 0; i < SCR_W * SCR_H; i++) map[i] = T_WOOL;
+    memset(map, T_WOOL, sizeof map);
     gfx_rail(0, "", "");
     gfx_rail(SCR_H - 1, "", "");
 }
 
-static uint8_t char_tile(char c) {
+// Character code -> tile offset from the font base, built once (gfx_init):
+// the rail font and the icons in ART_FONT_CHARS order.
+static uint8_t char_off[128];
+
+static void build_char_table(void) {
     const char *f = ART_FONT_CHARS;
     uint8_t i;
-    if (c == IC_UP[0]) return (uint8_t)(font_base + (T_IC_UP - ART_UI_BASE));
-    if (c == IC_DOWN[0]) return (uint8_t)(font_base + (T_IC_DOWN - ART_UI_BASE));
-    if (c == IC_LEFT[0]) return (uint8_t)(font_base + (T_IC_LEFT - ART_UI_BASE));
-    if (c == IC_RIGHT[0]) return (uint8_t)(font_base + (T_IC_RIGHT - ART_UI_BASE));
-    if (c == IC_A[0]) return (uint8_t)(font_base + (T_IC_BTN_A - ART_UI_BASE));
-    if (c == IC_B[0]) return (uint8_t)(font_base + (T_IC_BTN_B - ART_UI_BASE));
-    if (c == IC_BACK[0]) return (uint8_t)(font_base + (T_IC_MINIBACK - ART_UI_BASE));
-    if (c == IC_DECK[0]) return (uint8_t)(font_base + (T_IC_MINIDECK - ART_UI_BASE));
-    if (c >= IC_SUIT0 && c < IC_SUIT0 + 4) return (uint8_t)(font_base + (T_IC_S - ART_UI_BASE) + (c - IC_SUIT0));
-    for (i = 0; f[i]; i++) if (f[i] == c) return (uint8_t)(font_base + ART_FONT_FIRST + i);
-    return (uint8_t)(font_base + ART_FONT_FIRST);   // a space
+    for (i = 0; i < 128; i++) char_off[i] = ART_FONT_FIRST;      // unknown: a space
+    for (i = 0; f[i]; i++) char_off[(uint8_t)f[i]] = (uint8_t)(ART_FONT_FIRST + i);
+    char_off[(uint8_t)IC_UP[0]] = T_IC_UP - ART_UI_BASE;
+    char_off[(uint8_t)IC_DOWN[0]] = T_IC_DOWN - ART_UI_BASE;
+    char_off[(uint8_t)IC_LEFT[0]] = T_IC_LEFT - ART_UI_BASE;
+    char_off[(uint8_t)IC_RIGHT[0]] = T_IC_RIGHT - ART_UI_BASE;
+    char_off[(uint8_t)IC_A[0]] = T_IC_BTN_A - ART_UI_BASE;
+    char_off[(uint8_t)IC_B[0]] = T_IC_BTN_B - ART_UI_BASE;
+    char_off[(uint8_t)IC_BACK[0]] = T_IC_MINIBACK - ART_UI_BASE;
+    char_off[(uint8_t)IC_DECK[0]] = T_IC_MINIDECK - ART_UI_BASE;
+    for (i = 0; i < 4; i++) char_off[IC_SUIT0 + i] = (uint8_t)(T_IC_S - ART_UI_BASE + i);
 }
+
+static uint8_t char_tile(char c) { return (uint8_t)(font_base + char_off[(uint8_t)c & 127u]); }
 
 uint8_t gfx_text_len(const char *s) { return (uint8_t)strlen(s); }
 
 void gfx_text(uint8_t x, uint8_t y, const char *s) {
-    while (*s && x < SCR_W) gfx_tile(x++, y, char_tile(*s++));
+    uint8_t *p;
+    if (y >= SCR_H) return;
+    p = map + (uint16_t)y * SCR_W + x;
+    while (*s && x++ < SCR_W) *p++ = char_tile(*s++);
 }
 
 void gfx_rail(uint8_t row, const char *left, const char *right) {
     uint8_t x;
-    const uint8_t sp = char_tile(' ');
-    for (x = 0; x < SCR_W; x++) gfx_tile(x, row, sp);
+    memset(map + (uint16_t)row * SCR_W, char_tile(' '), SCR_W);
     gfx_text(0, row, left);
+    // Both, when they fit with a space between; else the left one alone (a
+    // bot's move flashing by wins over the action word until it fades).
     x = gfx_text_len(right);
-    gfx_text((uint8_t)(SCR_W - (x < SCR_W ? x : SCR_W)), row, right);
+    if (gfx_text_len(left) + 1u + x <= SCR_W) gfx_text((uint8_t)(SCR_W - x), row, right);
 }
 
 // ---- cards and the round-corner rule ------------------------------------------------------
@@ -155,34 +172,47 @@ static uint8_t pipl_tile(uint8_t suit, uint8_t under) {
     return (uint8_t)(T_PIPL_S_U0 + 4u * suit + off[under]);
 }
 
+// The six tiles of a 2x3 card at (x, y), in reading order; clipped at the edges.
+static void put6(uint8_t x, uint8_t y, uint8_t a, uint8_t b, uint8_t c, uint8_t d, uint8_t e, uint8_t f) {
+    uint8_t *p;
+    if (x + 1u >= SCR_W || y + 2u >= SCR_H) {
+        gfx_tile(x, y, a); gfx_tile((uint8_t)(x + 1u), y, b);
+        gfx_tile(x, (uint8_t)(y + 1u), c); gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 1u), d);
+        gfx_tile(x, (uint8_t)(y + 2u), e); gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 2u), f);
+        return;
+    }
+    p = map + (uint16_t)y * SCR_W + x;
+    p[0] = a; p[1] = b; p[SCR_W] = c; p[SCR_W + 1] = d; p[2 * SCR_W] = e; p[2 * SCR_W + 1] = f;
+}
+
 void gfx_card(uint8_t x, uint8_t y, uint8_t card) {
     const uint8_t s = gd_suit_of[card];
     const uint8_t tl = left_pixel(at(x, y), 0), bl = left_pixel(at(x, (uint8_t)(y + 2u)), 7);
-    gfx_tile(x, y, rank_tile(gd_rank_of[card], tl));
-    gfx_tile((uint8_t)(x + 1u), y, T_FACE_TR);
-    gfx_tile(x, (uint8_t)(y + 1u), (uint8_t)(T_SUIT_S + s));
-    gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 1u), (uint8_t)(T_PIPT_S + s));
-    gfx_tile(x, (uint8_t)(y + 2u), pipl_tile(s, bl));
-    gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 2u), (uint8_t)(T_PIPR_S + s));
+    put6(x, y, rank_tile(gd_rank_of[card], tl), T_FACE_TR, (uint8_t)(T_SUIT_S + s), (uint8_t)(T_PIPT_S + s),
+         pipl_tile(s, bl), (uint8_t)(T_PIPR_S + s));
 }
 
 void gfx_back(uint8_t x, uint8_t y) {
     const uint8_t tl = left_pixel(at(x, y), 0), bl = left_pixel(at(x, (uint8_t)(y + 2u)), 7);
-    gfx_tile(x, y, tl ? T_BACK_TL_U3 : T_BACK_TL_U0);
-    gfx_tile((uint8_t)(x + 1u), y, T_BACK_TR);
-    gfx_tile(x, (uint8_t)(y + 1u), T_BACK_ML);
-    gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 1u), T_BACK_MR);
-    gfx_tile(x, (uint8_t)(y + 2u), bl ? T_BACK_BL_U3 : T_BACK_BL_U0);
-    gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 2u), T_BACK_BR);
+    put6(x, y, tl ? T_BACK_TL_U3 : T_BACK_TL_U0, T_BACK_TR, T_BACK_ML, T_BACK_MR,
+         bl ? T_BACK_BL_U3 : T_BACK_BL_U0, T_BACK_BR);
 }
 
 void gfx_pass_slot(uint8_t x, uint8_t y) {
-    gfx_tile(x, y, T_PASS_TL); gfx_tile((uint8_t)(x + 1u), y, T_PASS_TR);
-    gfx_tile(x, (uint8_t)(y + 1u), T_PASS_ML); gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 1u), T_PASS_MR);
-    gfx_tile(x, (uint8_t)(y + 2u), T_PASS_BL); gfx_tile((uint8_t)(x + 1u), (uint8_t)(y + 2u), T_PASS_BR);
+    put6(x, y, T_PASS_TL, T_PASS_TR, T_PASS_ML, T_PASS_MR, T_PASS_BL, T_PASS_BR);
 }
 
-void gfx_flush(void) { set_bkg_tiles(0, 0, SCR_W, SCR_H, map); }
+
+void gfx_flush(void) {
+    uint8_t y;
+    for (y = 0; y < SCR_H; y++) {
+        const uint16_t o = (uint16_t)y * SCR_W;
+        if (shown_valid && !memcmp(map + o, shown + o, SCR_W)) continue;
+        set_bkg_tiles(0, y, SCR_W, 1, map + o);
+        memcpy(shown + o, map + o, SCR_W);
+    }
+    shown_valid = 1;
+}
 
 // ---- sprites ---------------------------------------------------------------------------
 static uint8_t spr_n;

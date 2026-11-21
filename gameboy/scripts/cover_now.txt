@@ -1,0 +1,13 @@
+# UP covers at once: the ace of clubs beats the queen of clubs, one way only.
+@126 press A
++50  expect _G+74 01
++1   press RIGHT
++8   press RIGHT
++8   press RIGHT
++8   press RIGHT
++8   expect _cur 03
++0   shot shots/32_cover_only.png 3
++1   press UP
++8   expect _in_target 00
++0   expect _G+56 1a
++0   shot shots/33_covered_at_once.png 3

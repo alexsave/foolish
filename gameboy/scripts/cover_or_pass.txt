@@ -1,0 +1,25 @@
+# TARGET mode, cover or pass: Miami leads the queen of spades; diamonds are
+# trumps, and my queen of diamonds can beat it (a trump) or pass it on (a queen).
+# Every command at frame N acts after frame N ran, so steps leave a frame
+# between. The bot acts again 30 frames after the board last changed, so the
+# whole aim happens inside that window.
+@133 press A
++41  expect _G+74 01
+# right then left: the cursor wraps from the first card to the last (the queen)
++1   press RIGHT
++4   press LEFT
++4   expect _cur 05
++1   press UP
++4   expect _in_target 01
++0   expect _tgt_n 02
++0   shot shots/20_cover_or_pass_cover.png 3
+# one step right of the last attack is the pass space
++1   press RIGHT
++4   expect _tgt_i 01
++0   shot shots/21_cover_or_pass_pass.png 3
++1   press UP
++5   expect _in_target 00
+# passed: two queens on the table and Miami defends
++0   expect _G+74 02
++0   expect _G+76 01
++0   shot shots/22_passed.png 3

@@ -1,0 +1,13 @@
+# The moves UP makes at once. Miami leads the queen of clubs (hearts trump);
+# my hand is 8c 9c Tc Ac 9d Qd.
+@126 press A
++50  expect _G+74 01
+# the queen of diamonds can only pass: UP passes at once
++1   press RIGHT
++8   press LEFT
++8   expect _cur 05
++0   shot shots/30_pass_only.png 3
++1   press UP
++8   expect _in_target 00
++0   expect _G+76 01
++0   shot shots/31_passed_at_once.png 3
