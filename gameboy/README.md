@@ -20,6 +20,8 @@ make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
 
+gbrun links libmgba and libpng from Homebrew's paths by default; on Linux: `make MGBA_CFLAGS=-D_DEFAULT_SOURCE MGBA_LIBS="-lmgba -lpng" ...` (with `apt-get install libmgba-dev libpng-dev`).
+
 ## Hypotheses (written before measuring) and measurements
 
 - ROM: about 14 KB of the 32 KB ROM-only cart (code about 10 KB, as SDCC pulls in its 32-bit multiply and divide helpers; the binomial table 2.8 KB; tiles about 1.3 KB).
@@ -47,6 +49,7 @@ make romusage       # ROM and RAM per bank
   With Moscow: 7.1 KB (3.9 KB + 3.3 KB), 0.7 KB left above the stack; Seoul and Moscow share one world and one candidate list (`gd_botlib.h`), and Moscow ranks candidates by menu index, as a move is 38 bytes.
   With the sprites built in a staging copy (160 bytes, below): 541 bytes are left between the data and the stack's top at 0xE000.
   The stack's deepest reach, read from the bytes it left in that gap: 320 bytes over a whole game against Moscow, 400 in `moscowcheck` (100 decisions, 6 solved), so about 80 bytes to spare once the game's own frames are counted.
+  With the live screen during a think (below): 14 bytes more data, so 527 bytes are left; the deepest reach is unchanged at 400 in `moscowcheck`, so about 66 bytes to spare.
   The cart's 32 KB of RAM is the solver's: bank 0 its stack (49 states and frames, 640 moves, the hash's table at 0xBF00), banks 1 to 3 its transposition table (3 x 1024 entries of a 32-bit tag and a value).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
   Falsifier: a typical move over one frame (154 lines, 16.7 ms).
@@ -160,7 +163,7 @@ The model is the per-playout cost the profiling ROM measured (sampling 17.3 ms, 
 
 On the Game Boy itself (`make build/durak_prof.gb`, three scripted games, budget 20): 2.66 s a decision on average and 4.1 s at worst, 17.4 playouts a decision; its time is 82% playouts, 12% sampling worlds, 5% applying and converting, 1% the candidates.
 That is more than the model's 1.5 s because the scripted player keeps taking, so Seoul faces big hands and its budget fills.
-The rail says SEOUL THINKS while it searches, since the screen cannot move meanwhile.
+The rail says SEOUL THINKS while it searches, with dots that step while the hand stays live ("The screen while a bot thinks", below).
 
 Strength, final (budget 20, seeds 9001 on):
 - Seoul against New York: 77.7% of 2000 games;
@@ -259,7 +262,7 @@ Time a decision on the Game Boy:
 - `make moscowcheck`, 100 decisions over games of random and New York moves: 2.3 s on average.
 - The solver at its cap: 400 nodes, 3.3 s. The Mac's model over 8000 games against Seoul: 3.3 s on average, 8.4 s at most; against random, 9.1 s at most.
 - The hypothesis (3.5 s, under 13 s) held; the budget (5 s, 15 s) holds.
-- The rail says MOSCOW THINKS while it searches (`shots/moscow_02_thinks.png`); `shots/moscow_03_end.png` is the finished game.
+- The rail says MOSCOW THINKS while it searches, with stepping dots (`shots/moscow_02_thinks.png`); `shots/moscow_03_end.png` is the finished game.
 
 The cart's RAM in practice: the 400-node cap stores at most 400 values, which 8 KB would have held; the 32 KB keep the stack (2.8 KB of states and frames, 5 KB of moves) in a bank of its own and leave room for the 1500-node solves of `make solvecheck`.
 
@@ -271,7 +274,7 @@ Mutation checked: a ROM-only Moscow with 5 worlds in stage 1, or 900 solver node
 
 Seoul and Moscow search for seconds in the game loop, and the screen used to hold still meanwhile, with presses queued until the move.
 Now the input timer's interrupt (`src/input.c` `in_tick`, 60.2 a second, which already reads the buttons) calls `live_tick` (`src/live.c`, bank 0), and while a think runs that runs the game's handler (`src/main.c` `live_think`, bank 1) once a tick:
-- the rail says MOSCOW THINKS (or SEOUL THINKS) and a dot more every quarter second, three at most, then none again (the font's own `.`, no new tiles);
+- the rail says MOSCOW THINKS (or SEOUL THINKS) with a wave of dots after it, a step every quarter second: "", ".", "..", "...", " ..", "  .", again (the font's own `.`, no new tiles). One tile changes a step, so no frame can show a step half written (a version that cleared three dots at once could, for the frame the row was sent in);
 - LEFT, RIGHT, A, B, A held + LEFT / RIGHT and SELECT held + LEFT / RIGHT move the cursor, select, sweep-select and rearrange the hand, drawn as at any other time (the sprites through the staging copy, the hand by the usual board redraw);
 - UP and DOWN wait for the bot's move, and a press of either during the think is dropped, so nothing plays itself after it; TARGET mode waits too (in TARGET mode every key is dropped); START is kept and takes effect after the move.
 
@@ -279,6 +282,7 @@ What makes it safe:
 - The search is stopped at any instruction, in any ROM bank and any cart RAM bank. `live_tick` saves the ROM bank (`_current_bank`), maps the handler's bank, maps cart RAM bank 3, moves the stack there (the free top of the bank, 0xB400 to 0xBFFF, above the solver's transposition table: `gd_solve.c` fails the build if the table ever grows into it), lets interrupts in again (the VBlank must still copy the sprites and count frames; a tick that comes meanwhile sees the handler busy and only latches the buttons), runs the handler, then puts the stack, the RAM bank and the ROM bank back.
 - Both banks are put back from what the search last asked for, not from a register (MBC1 registers read back nothing): GBDK's banked calls write `_current_bank` before the MBC register (read from GBDK 4.5's `___sdcc_bcall_ehl`), and the solver now writes a shadow, `gd_ram_bank`, before its register, so a tick that lands between the two still restores the bank meant.
 - On the search's stack (work RAM, about 80 bytes to spare) the handler costs only `in_tick`'s call to `live_tick`, 2 bytes; everything else runs on the cart RAM stack.
+- `in_tick` calls `live_tick` only while a think runs, and then only when a key wants it (a press, a step, SELECT going down or up) or every third tick (the dots); outside a think it adds one flag test a tick, so play outside a think keeps its timing.
 - The search reads the rules state `G` (through a `const` pointer) and its own memory. The handler only reads `G` and changes what is the screen's: the hand's order (`mem`, `disp`), the cursor, the selection, the map and the sprites. No bot reads any of them, and the hand order is presentation (the rules keep hands as sets).
 - During a think the foot rail is the think rail, so the handler never asks the rules for the pills (`action_text`); the rest of the board redraw reads `G` only.
 - SDCC's `CRITICAL` on this CPU is a plain `di` / `ei` (seen in its output), so inside an interrupt it lets interrupts in anyway; the handler is written for that from the start (the busy flag), rather than relying on running with interrupts off.
@@ -293,6 +297,35 @@ What makes it safe:
 - ROM: about 100 bytes in bank 0, about 250 in bank 1.
 - A LEFT press during a think shows on the screen within 2 frames (falsifier: more than 4).
 - Moscow decides exactly as before: `moscowcheck` (now run with the handler ticking) matches clang.
+
+### Measured (marking the hypothesis)
+
+Think time, on the same decisions. `scripts/think_time.txt` plays Moscow with every press in the 20 frames after a move (Moscow waits 30 frames after the board last changed), never during a think, so the old ROM and the new one play the same game (25 decisions; the scripts expect the same playouts, plies and moves). `scripts/think_time_keys.txt` is the same game with keys pressed during each think that leave the hand as it was (RIGHT then LEFT, A then A: two cursor moves and two board redraws a think).
+
+| 25 decisions, scanline clock | before | after, no key | after, keys mid-think |
+| --- | --- | --- | --- |
+| average a decision | 44275 lines (4.81 s) | 45600 (4.96 s), +3.0% | 46537 (5.06 s), +5.1% |
+| worst | 54294 lines (5.90 s) | 55933 (6.08 s), +3.0% | 56903 (6.19 s), +4.8% |
+
+- 3% with no key: right, but only for the second version. The first one cost 7.4%, past the falsifier, so it was taken apart by building variants and timing the same game: the bank and stack switch alone 0.7%, taking the keys 1.7%, and the dots 5.0% (they rebuilt the whole rail and compared the whole map every quarter second). Now `in_tick` runs the handler only when a key wants it or every third tick (0.5%), and the dots step on a `sys_time` deadline instead of a 16-bit division and send only the foot row (`gfx_flush_row`). A flush of only the changed span of the row measured the same, so it was not kept.
+- About 4% with keys: 5.1%, so about right; it depends on how many keys are pressed.
+- `scripts/game_moscow.txt` presses UP and DOWN during thinks, which are now dropped instead of played after the move, so it is a different game than before: 34 decisions, 4.66 s on average, 7.40 s at worst (before: 26 decisions, 4.84 s and 6.00 s). Those are not comparable decision for decision; the table above is.
+- The handler's stack: 166 bytes at most (cart RAM bank 3 filled with a pattern through gbrun, which writes the MBC register like the CPU does, then a Moscow game of about 300 rounds of keys pressed through the thinks, including selections and moves of cards). Under 256: right.
+- Work RAM: 14 bytes, not 12. `live.c` 8, the RAM bank shadow 1, `in_tick`'s idle count 1, and 4 in `main.c` (the dots' step, SELECT as drawn, and a 16-bit deadline where I had planned an 8-bit counter). The search's stack: same game, 321 bytes before and 323 after (`think_time.txt`): the 2 bytes predicted. `moscowcheck`, which now ticks the handler all the while, still reaches 400 bytes, as before. (`game_moscow.txt` reaches 356 now, in a different game; it is the search's own frames, written during a think.)
+- ROM: bank 0 +187 bytes, bank 1 +461 (bank 0: `live.c`, `in_give_back` and the tick's test; bank 1: the think screen in `main.c` and `gfx_flush_row`): wrong by about 2x both, as SDCC's code usually is against my guesses. Bank 1 has 2.3 KB left.
+- A LEFT during a think shows within 2 frames: right, 1 or 2 frames (the input timer's 60.2 ticks a second drift against the 59.7 frames).
+- `moscowcheck` matches clang with the handler ticking (about 5000 runs of a stand-in handler that works a 64-byte buffer on its stack during the 100 decisions); `seoulcheck`, `solvecheck` and `selfplay` match too.
+
+The proof, `scripts/live_think.txt` (45 expects), during Moscow's first think: the rail's dots are checked pixel by pixel at each of the six steps, mid-step; a LEFT puts the cursor on the first card and its underline is on the screen two frames later, while `_bot_thinking` is still 1 and `_bot_moves` 0; a second LEFT wraps to the last card; A raises it; SELECT held + LEFT moves it a place left; B clears the selection; RIGHT twice wraps the cursor to the ten of spades, a trump that beats the jack of hearts Moscow is about to lead; UP is pressed. After the move: six cards, no cover, not in TARGET mode, the cursor where it was (`shots/live_01_dot.png` to `live_05_after.png`).
+
+Mutation checked:
+- the handler's input path off (`hand_input` not called): `live_think.txt` fails on `expect _cur 00` (the cursor is still `ff` two frames after LEFT) and on the underline's pixel;
+- UP given back with START instead of dropped: `live_think.txt` fails on `expect _disp_n 06` (5: the ten covered the jack after the move) and on the cover's slot;
+- the dots frozen at no dot: `live_think.txt` fails on the first dot's pixel;
+- the RAM bank put back as left by the handler (bank 3) instead of `gd_ram_bank`: `moscowcheck` fails on the sum (1b b1 for e2 38: Moscow decided differently);
+- the ROM bank put back as the handler's instead of the search's: `moscowcheck` never finishes (the search runs on in the wrong bank).
+
+Not covered by a script: TARGET mode during a think (every key dropped) and START during a think (kept for after the move); both are one line each in `live_think`.
 
 ## Rules: foolish's variant, two seats
 
@@ -453,7 +486,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `cover_or_pass.txt` | TARGET mode with the pass space, passing | `20` to `22` |
 | `single_moves.txt` | UP passes at once with a pass-only card | `30`, `31` |
 | `cover_now.txt` | UP covers at once with a one-way cover | `32`, `33` |
-| `take.txt` | DOWN picks up | `40`, `41` |
+| `take.txt` | DOWN picks up (the shot once the cards land: at a fixed frame it caught a redraw half sent) | `40`, `41` |
 | `selection.txt` | A toggles, B clears, A held sweeps (and deselects), UP plays three sixes, the bot takes | `50` to `52`, `55` |
 | `done.txt` | DOWN says DONE over a covered table, the bout ends | `53`, `54` |
 | `rearrange.txt` | SELECT held + RIGHT moves a card twice, UP with SELECT held does nothing | `60`, `61` |
@@ -463,6 +496,9 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `win_screens.txt` | each city's win picture with its name and fireworks | `win_*` |
 | `game_seoul.txt` | a whole game against Seoul | `seoul_01`, `seoul_02` |
 | `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
+| `live_think.txt` | while Moscow thinks: the dots step, frame-checked; LEFT, A, SELECT + LEFT and B work before the move lands; UP pressed meanwhile is dropped | `live_01` to `live_05` |
+| `think_time.txt` | Moscow's think time on 25 decisions that are the same in any ROM (no key during a think) | |
+| `think_time_keys.txt` | the same game with keys pressed during each think that leave the hand as it was | |
 | `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 

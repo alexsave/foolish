@@ -16,7 +16,7 @@ static volatile uint8_t lr_frames, a_frames, sel_frames;
 static volatile uint16_t first_press_time;     // sys_time at the first press ever seen
 static volatile uint8_t first_press_seen;
 
-static uint8_t live_idle, live_due;    // ticks since the think handler last ran; run it now
+static uint8_t live_idle;              // ticks since the think handler last ran
 #define LIVE_IDLE_TICKS 3
 
 static uint8_t now, pressed;
@@ -24,12 +24,13 @@ static int8_t steps;
 
 static void in_tick(void) {
     const uint8_t j = joypad();
+    uint8_t live_due = 0;
     isr_pressed |= (uint8_t)(j & (uint8_t)~isr_now);
     if (isr_pressed && !first_press_seen) { first_press_time = sys_time; first_press_seen = 1; }
     // a bot thinking: the screen's handler (live.h), when a key wants it (a
     // press, a step, SELECT going down or up) or every LIVE_IDLE_TICKS ticks
     // (the dots); run below, once this tick's keys are in
-    live_due = (uint8_t)(isr_pressed || ((j ^ isr_now) & J_SELECT) || ++live_idle >= LIVE_IDLE_TICKS);
+    if (live_on) live_due = (uint8_t)(isr_pressed || ((j ^ isr_now) & J_SELECT) || ++live_idle >= LIVE_IDLE_TICKS);
     isr_now = j;
     if (j & (J_LEFT | J_RIGHT)) {
         const int8_t dir = (j & J_LEFT) ? -1 : 1;
@@ -41,7 +42,7 @@ static void in_tick(void) {
     } else lr_frames = 0;
     if (j & J_A) { if (a_frames < 255) a_frames++; } else a_frames = 0;
     if (j & J_SELECT) { if (sel_frames < 255) sel_frames++; } else sel_frames = 0;
-    if (live_due || isr_steps) { live_idle = 0; live_tick(); }
+    if (live_on && (live_due || isr_steps)) { live_idle = 0; live_tick(); }
 }
 
 // 4096 Hz / (256 - 188) = 60.2 ticks a second, one a frame near enough.
