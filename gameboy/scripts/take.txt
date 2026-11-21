@@ -8,7 +8,7 @@
 # DOWN picks up (the defender), as the foot rail's PICK UP says.
 @99  poke _sys_time 06 00
 @100 press A
-+42  expect _G+74 01
++1   until _G+74 01
 +0   shot shots/40_before_take.png 3
 +1   press DOWN
 +5   expect _G+74 00

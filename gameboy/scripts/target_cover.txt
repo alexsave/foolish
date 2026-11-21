@@ -9,7 +9,7 @@
 # trumps and my ten of diamonds beats either. Hand: 7s Kh 9c Tc Ac Td.
 @99  poke _sys_time 01 00
 @100 press A
-+42  expect _G+74 02
++1   until _G+74 02
 +0   shot shots/10_defend.png 3
 # right then left: the cursor wraps from the first card to the last (the ten)
 +1   press RIGHT

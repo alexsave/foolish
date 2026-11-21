@@ -10,7 +10,7 @@
 # queen). Hand: 6h 9h Ah 8c Jc Qd.
 @99  poke _sys_time 78 00
 @100 press A
-+44  expect _G+74 01
++1   until _G+74 01
 +1   press RIGHT
 +4   press LEFT
 +4   expect _cur 05

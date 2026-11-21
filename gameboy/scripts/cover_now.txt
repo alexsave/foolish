@@ -9,7 +9,7 @@
 # clubs on the six of clubs. Hand: 6s Js Ks 7h Jc 9d.
 @99  poke _sys_time 06 00
 @100 press A
-+42  expect _G+74 01
++1   until _G+74 01
 +1   press RIGHT
 +4   press LEFT
 +4   press LEFT

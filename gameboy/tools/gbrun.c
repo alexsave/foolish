@@ -2,25 +2,31 @@
 //
 //   gbrun ROM SCRIPT [SYMBOLS.noi]
 //
-// Loads the ROM as a DMG, runs it frame by frame, holds buttons on the frames
-// the script says, writes PNG screenshots and reads memory on set frames. The
-// script is plain text, one command per line:
+// Loads the ROM as a DMG and plays a script against it, frame by frame: holds
+// buttons, writes PNG screenshots, reads, checks and writes memory, and waits
+// for memory to reach a value. The script is plain text, one step per line,
+// run in order:
 //
 //   # a comment
 //   @N   press KEYS [FRAMES]    hold KEYS (A, B, SELECT, START, UP, DOWN, LEFT,
-//                               RIGHT, joined by +) for FRAMES frames (default 2)
-//   +N   shot PATH [SCALE]      write the screen after frame N as a PNG, SCALE
-//                               times larger (nearest neighbour, default 1)
+//                               RIGHT, joined by +) from frame N for FRAMES
+//                               frames (default 2)
+//   +N   shot PATH [SCALE]      write the screen as a PNG, SCALE times larger
+//                               (nearest neighbour, default 1)
 //   +N   peek SYM [LEN]         print LEN (default 1) bytes at a symbol or 0xADDR,
 //                               either one optionally +OFFSET ("_G+74")
 //   +N   expect SYM HEX...      fail (exit 1) unless those bytes are there
-//   +N   poke SYM HEX...        write those bytes there (after frame N ran)
-//   +N   end                    stop after this frame
+//   +N   poke SYM HEX...        write those bytes there
+//   +N   until SYM HEX...       run on, a frame at a time, until those bytes are
+//                               there (fail after UNTIL_MAX frames); the next
+//                               "+N" counts from the frame it stopped on
+//   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
-// "@N" is frame N; "+N" is N frames after the previous command's frame. So a
-// script reads as a sequence of steps. A symbol is looked up in the .noi file
-// the linker writes (lines "DEF _name 0xADDR").
+// "@N" is frame N; "+N" is N frames after the previous step's frame. Every
+// step but press acts after its frame ran; a press holds its keys while its
+// first frame runs. So a press and a check on the same frame see the press.
+// A symbol is looked up in the .noi file the linker writes ("DEF _name 0xADDR").
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
@@ -33,28 +39,30 @@
 #include <stdlib.h>
 #include <string.h>
 
-enum { EV_PRESS, EV_SHOT, EV_PEEK, EV_EXPECT, EV_POKE, EV_END };
+#define UNTIL_MAX 3000
+
+enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_END };
 
 typedef struct {
-    int frame, kind, len, order;
+    int absolute, n;        // @n or +n
+    int kind, len, line;
     uint32_t keys;
     char arg[256];
     unsigned char bytes[16];
     int nbytes;
-} Ev;
+} Step;
 
-static Ev *evs;
-static int nev, capev;
+static Step *steps;
+static int nsteps, capsteps;
 
-static Ev *ev_new(void) {
-    if (nev == capev) {
-        capev = capev ? capev * 2 : 256;
-        evs = realloc(evs, sizeof(Ev) * (size_t)capev);
-        if (!evs) { perror("realloc"); exit(2); }
+static Step *step_new(void) {
+    if (nsteps == capsteps) {
+        capsteps = capsteps ? capsteps * 2 : 256;
+        steps = realloc(steps, sizeof(Step) * (size_t)capsteps);
+        if (!steps) { perror("realloc"); exit(2); }
     }
-    memset(&evs[nev], 0, sizeof(Ev));
-    evs[nev].order = nev;
-    return &evs[nev++];
+    memset(&steps[nsteps], 0, sizeof(Step));
+    return &steps[nsteps++];
 }
 
 static uint32_t parse_keys(const char *s, int line) {
@@ -70,57 +78,51 @@ static uint32_t parse_keys(const char *s, int line) {
     return k;
 }
 
-// ---- the script, with repeats expanded ------------------------------------------
+// ---- the script, with repeats expanded --------------------------------------------
 static char **lines;
 static int nlines;
 
-static int run_lines(int from, int to, int *now, int depth);
-
-static int parse_line(int i, int *now) {
+static void parse_line(int i) {
     char *l = lines[i], cmd[32] = "", a1[256] = "", a2[64] = "";
-    int t;
     while (*l == ' ' || *l == '\t') l++;
-    if (!*l || *l == '#' || *l == '\n') return i + 1;
-    if (*l == '@') t = atoi(l + 1);
-    else if (*l == '+') t = *now + atoi(l + 1);
-    else { fprintf(stderr, "script line %d: a step starts with @N or +N\n", i + 1); exit(2); }
-    *now = t;
+    if (!*l || *l == '#' || *l == '\n') return;
+    Step *s = step_new();
+    s->line = i + 1;
+    if (*l == '@') s->absolute = 1;
+    else if (*l != '+') { fprintf(stderr, "script line %d: a step starts with @N or +N\n", i + 1); exit(2); }
+    s->n = atoi(l + 1);
     while (*l && *l != ' ' && *l != '\t') l++;
     int n = sscanf(l, "%31s %255s %63s", cmd, a1, a2);
-    Ev *e = ev_new();
-    e->frame = t;
     if (!strcmp(cmd, "press") && n >= 2) {
-        e->kind = EV_PRESS;
-        e->keys = parse_keys(a1, i + 1);
-        e->len = n >= 3 ? atoi(a2) : 2;
+        s->kind = ST_PRESS;
+        s->keys = parse_keys(a1, i + 1);
+        s->len = n >= 3 ? atoi(a2) : 2;
     } else if (!strcmp(cmd, "shot") && n >= 2) {
-        e->kind = EV_SHOT;
-        snprintf(e->arg, sizeof e->arg, "%s", a1);
-        e->len = n >= 3 ? atoi(a2) : 1;
-        if (e->len < 1 || e->len > 8) { fprintf(stderr, "script line %d: scale 1..8\n", i + 1); exit(2); }
+        s->kind = ST_SHOT;
+        snprintf(s->arg, sizeof s->arg, "%s", a1);
+        s->len = n >= 3 ? atoi(a2) : 1;
+        if (s->len < 1 || s->len > 8) { fprintf(stderr, "script line %d: scale 1..8\n", i + 1); exit(2); }
     } else if (!strcmp(cmd, "peek") && n >= 2) {
-        e->kind = EV_PEEK;
-        snprintf(e->arg, sizeof e->arg, "%s", a1);
-        e->len = n >= 3 ? atoi(a2) : 1;
-    } else if ((!strcmp(cmd, "expect") || !strcmp(cmd, "poke")) && n >= 3) {
-        e->kind = !strcmp(cmd, "poke") ? EV_POKE : EV_EXPECT;
-        snprintf(e->arg, sizeof e->arg, "%s", a1);
+        s->kind = ST_PEEK;
+        snprintf(s->arg, sizeof s->arg, "%s", a1);
+        s->len = n >= 3 ? atoi(a2) : 1;
+    } else if ((!strcmp(cmd, "expect") || !strcmp(cmd, "poke") || !strcmp(cmd, "until")) && n >= 3) {
+        s->kind = !strcmp(cmd, "poke") ? ST_POKE : !strcmp(cmd, "until") ? ST_UNTIL : ST_EXPECT;
+        snprintf(s->arg, sizeof s->arg, "%s", a1);
         char *p = strstr(l, a1) + strlen(a1);
         unsigned v;
         int used;
-        while (e->nbytes < 16 && sscanf(p, " %x%n", &v, &used) == 1) { e->bytes[e->nbytes++] = (unsigned char)v; p += used; }
-        e->len = e->nbytes;
+        while (s->nbytes < 16 && sscanf(p, " %x%n", &v, &used) == 1) { s->bytes[s->nbytes++] = (unsigned char)v; p += used; }
+        s->len = s->nbytes;
     } else if (!strcmp(cmd, "end")) {
-        e->kind = EV_END;
+        s->kind = ST_END;
     } else {
         fprintf(stderr, "script line %d: unknown command '%s'\n", i + 1, cmd);
         exit(2);
     }
-    return i + 1;
 }
 
-// Lines [from, to): expands "repeat N ... endrepeat".
-static int run_lines(int from, int to, int *now, int depth) {
+static void expand(int from, int to) {
     int i = from;
     while (i < to) {
         char *l = lines[i];
@@ -134,22 +136,15 @@ static int run_lines(int from, int to, int *now, int depth) {
                 else if (!strncmp(m, "endrepeat", 9)) d--;
             }
             if (d) { fprintf(stderr, "script line %d: repeat without endrepeat\n", i + 1); exit(2); }
-            for (int k = 0; k < count; k++) run_lines(i + 1, j - 1, now, depth + 1);
+            for (int k = 0; k < count; k++) expand(i + 1, j - 1);
             i = j;
         } else if (!strncmp(l, "endrepeat", 9)) {
             fprintf(stderr, "script line %d: endrepeat without repeat\n", i + 1);
             exit(2);
         } else {
-            i = parse_line(i, now);
+            parse_line(i++);
         }
     }
-    return i;
-}
-
-static int ev_cmp(const void *a, const void *b) {
-    const Ev *x = a, *y = b;
-    if (x->frame != y->frame) return x->frame < y->frame ? -1 : 1;
-    return x->order - y->order;
 }
 
 // ---- symbols from the linker's .noi ------------------------------------------------
@@ -194,12 +189,14 @@ static void write_png(const char *path, const color_t *src, unsigned stride, int
     for (unsigned y = 0; y < GB_H * (unsigned)scale; y++)
         for (unsigned x = 0; x < GB_W * (unsigned)scale; x++)
             px[y * GB_W * (unsigned)scale + x] = src[(y / (unsigned)scale) * stride + x / (unsigned)scale];
-    stride = GB_W * (unsigned)scale;
     struct VFile *vf = VFileOpen(path, O_WRONLY | O_CREAT | O_TRUNC);
     if (!vf) { fprintf(stderr, "cannot write %s\n", path); exit(2); }
     png_structp png = PNGWriteOpen(vf);
     png_infop info = PNGWriteHeader(png, GB_W * (unsigned)scale, GB_H * (unsigned)scale);
-    if (!PNGWritePixels(png, GB_W * (unsigned)scale, GB_H * (unsigned)scale, stride, px)) { fprintf(stderr, "png write failed: %s\n", path); exit(2); }
+    if (!PNGWritePixels(png, GB_W * (unsigned)scale, GB_H * (unsigned)scale, GB_W * (unsigned)scale, px)) {
+        fprintf(stderr, "png write failed: %s\n", path);
+        exit(2);
+    }
     PNGWriteClose(png, info);
     vf->close(vf);
 }
@@ -213,6 +210,41 @@ static void log_stderr(struct mLogger *l, int cat, enum mLogLevel level, const c
 }
 static struct mLogger logger = { .log = log_stderr };
 
+// ---- running ----------------------------------------------------------------------------
+static struct mCore *core;
+static color_t *video;
+static unsigned stride;
+static int frame_next;                  // the next frame to run
+static struct { int from, to; uint32_t keys; } held[256];
+static int nheld;
+
+static void run_frame(void) {
+    uint32_t keys = 0;
+    for (int i = 0; i < nheld; i++)
+        if (frame_next >= held[i].from && frame_next < held[i].to) keys |= held[i].keys;
+    core->setKeys(core, keys);
+    core->runFrame(core);
+    frame_next++;
+    // forget presses that are over
+    int k = 0;
+    for (int i = 0; i < nheld; i++) if (held[i].to > frame_next) held[k++] = held[i];
+    nheld = k;
+}
+
+static int mem_is(uint32_t a, const unsigned char *b, int n) {
+    for (int k = 0; k < n; k++) if ((core->busRead8(core, a + (uint32_t)k) & 0xFF) != b[k]) return 0;
+    return 1;
+}
+
+// Print a step's bytes; ok < 0 for a plain peek.
+static int show(const char *what, int frame, const Step *s, int ok) {
+    uint32_t a = resolve(s->arg);
+    printf("frame %d: %s %s =", frame, what, s->arg);
+    for (int k = 0; k < s->len; k++) printf(" %02x", core->busRead8(core, a + (uint32_t)k) & 0xFF);
+    if (ok < 0) printf("\n"); else printf(ok ? "  ok\n" : "  FAILED\n");
+    return ok;
+}
+
 int main(int argc, char **argv) {
     mLogSetDefaultLogger(&logger);
     if (argc < 3) { fprintf(stderr, "usage: gbrun ROM SCRIPT [SYMBOLS.noi]\n"); return 2; }
@@ -225,17 +257,9 @@ int main(int argc, char **argv) {
     }
     fclose(sf);
     if (argc > 3) load_noi(argv[3]);
-    int now = 0;
-    run_lines(0, nlines, &now, 0);
-    qsort(evs, (size_t)nev, sizeof(Ev), ev_cmp);
-    int last = 0;
-    for (int i = 0; i < nev; i++) {
-        int e = evs[i].frame + (evs[i].kind == EV_PRESS ? evs[i].len : 0);
-        if (e > last) last = e;
-        if (evs[i].kind == EV_END) { last = evs[i].frame; break; }
-    }
+    expand(0, nlines);
 
-    struct mCore *core = mCoreFind(argv[1]);
+    core = mCoreFind(argv[1]);
     if (!core || !core->init(core)) { fprintf(stderr, "no core for %s\n", argv[1]); return 2; }
     mCoreInitConfig(core, NULL);
     mCoreConfigSetValue(&core->config, "gb.model", "DMG");
@@ -243,41 +267,53 @@ int main(int argc, char **argv) {
     mCoreLoadConfig(core);
     unsigned w, h;
     core->desiredVideoDimensions(core, &w, &h);
-    color_t *video = calloc((size_t)w * h, sizeof(color_t));
+    video = calloc((size_t)w * h, sizeof(color_t));
+    stride = w;
     core->setVideoBuffer(core, video, w);
     if (!mCoreLoadFile(core, argv[1])) { fprintf(stderr, "cannot load %s\n", argv[1]); return 2; }
     core->reset(core);
 
-    int fail = 0, ei = 0;
-    for (int frame = 0; frame <= last; frame++) {
-        uint32_t keys = 0;
-        for (int i = 0; i < nev; i++)
-            if (evs[i].kind == EV_PRESS && frame >= evs[i].frame && frame < evs[i].frame + evs[i].len) keys |= evs[i].keys;
-        core->setKeys(core, keys);
-        core->runFrame(core);
-        // Commands at frame N see the screen after frame N ran.
-        while (ei < nev && evs[ei].frame <= frame) {
-            Ev *e = &evs[ei++];
-            if (e->kind == EV_SHOT) {
-                write_png(e->arg, video, w, e->len);
-                printf("frame %d: shot %s\n", frame, e->arg);
-            } else if (e->kind == EV_POKE) {
-                uint32_t a = resolve(e->arg);
-                for (int k = 0; k < e->len; k++) core->busWrite8(core, a + (uint32_t)k, e->bytes[k]);
-            } else if (e->kind == EV_PEEK || e->kind == EV_EXPECT) {
-                uint32_t a = resolve(e->arg);
-                int ok = 1;
-                printf("frame %d: %s %s =", frame, e->kind == EV_PEEK ? "peek" : "expect", e->arg);
-                for (int k = 0; k < e->len; k++) {
-                    unsigned v = core->busRead8(core, a + (uint32_t)k) & 0xFF;
-                    printf(" %02x", v);
-                    if (e->kind == EV_EXPECT && v != e->bytes[k]) ok = 0;
-                }
-                if (e->kind == EV_EXPECT) printf(ok ? "  ok\n" : "  FAILED\n"); else printf("\n");
-                if (!ok) fail = 1;
-            }
+    int fail = 0, now = 0, last_press_end = 0;
+    for (int i = 0; i < nsteps; i++) {
+        const Step *s = &steps[i];
+        const int f = s->absolute ? s->n : now + s->n;
+        // a press may start on the frame about to run; anything else may act
+        // on the frame that just ran, but not earlier
+        if (f < frame_next - (s->kind == ST_PRESS ? 0 : 1)) {
+            fprintf(stderr, "script line %d: frame %d is in the past (at %d)\n", s->line, f, frame_next - 1);
+            return 2;
+        }
+        now = f;
+        while (frame_next < f) run_frame();
+        if (s->kind == ST_PRESS) {
+            if (nheld == 256) { fprintf(stderr, "too many presses at once\n"); return 2; }
+            held[nheld].from = f; held[nheld].to = f + s->len; held[nheld].keys = s->keys;
+            nheld++;
+            if (f + s->len > last_press_end) last_press_end = f + s->len;
+            continue;
+        }
+        if (frame_next == f) run_frame();          // the step acts after its frame ran
+        if (s->kind == ST_END) break;
+        if (s->kind == ST_SHOT) {
+            write_png(s->arg, video, stride, s->len);
+            printf("frame %d: shot %s\n", f, s->arg);
+        } else if (s->kind == ST_PEEK) {
+            show("peek", f, s, -1);
+        } else if (s->kind == ST_EXPECT) {
+            if (!show("expect", f, s, mem_is(resolve(s->arg), s->bytes, s->len))) fail = 1;
+        } else if (s->kind == ST_POKE) {
+            uint32_t a = resolve(s->arg);
+            for (int k = 0; k < s->len; k++) core->busWrite8(core, a + (uint32_t)k, s->bytes[k]);
+        } else if (s->kind == ST_UNTIL) {
+            const uint32_t a = resolve(s->arg);
+            int waited = 0;
+            while (!mem_is(a, s->bytes, s->len) && waited < UNTIL_MAX) { run_frame(); waited++; }
+            now = frame_next - 1;
+            if (!show("until", now, s, mem_is(a, s->bytes, s->len))) { fail = 1; break; }
         }
     }
+    // let the last press finish
+    while (frame_next < last_press_end) run_frame();
     core->deinit(core);
     free(video);
     return fail;
