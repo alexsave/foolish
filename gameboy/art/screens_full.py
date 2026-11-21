@@ -280,7 +280,8 @@ def fool_cap(cv, cx, top):
 
 
 def screens_full(sp, bake=True):
-    """bake=True: the mockups, names printed as the code will print them.
+    """The win screens are per bot now (wins.py).
+    bake=True: the mockups, names printed as the code will print them.
     bake=False: what export.py ships, those cells left black for the code."""
     return [dashboard(sp, "SEOUL", 0, bake), dashboard(sp, None, 3, bake),
-            outcome(True, "SEOUL", bake), outcome(False, bake=bake)]
+            outcome(False, bake=bake)]

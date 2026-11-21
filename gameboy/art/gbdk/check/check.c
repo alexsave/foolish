@@ -12,7 +12,10 @@
 #include "check_screens.h"
 #include "../dashboard.h"
 #include "../dashboard_new.h"
-#include "../win.h"
+#include "../win_miami.h"
+#include "../win_new_york.h"
+#include "../win_seoul.h"
+#include "../win_warsaw.h"
 #include "../lose.h"
 #include "../lacquer.h"
 
@@ -31,12 +34,17 @@ static void print_at(uint8_t x, uint8_t y, const char *s, uint8_t base, uint8_t 
 
 /* The full screens ship as png2asset maps with their own tilesets. */
 typedef struct { const uint8_t *tiles; uint8_t count; const uint8_t *map; } full_screen;
-static const full_screen fulls[4] = {
+#define FULLS 7
+static const full_screen fulls[FULLS] = {
     {dashboard_tiles, dashboard_TILE_COUNT, dashboard_map},
     {dashboard_new_tiles, dashboard_new_TILE_COUNT, dashboard_new_map},
-    {win_tiles, win_TILE_COUNT, win_map},
+    {win_miami_tiles, win_miami_TILE_COUNT, win_miami_map},
+    {win_new_york_tiles, win_new_york_TILE_COUNT, win_new_york_map},
+    {win_seoul_tiles, win_seoul_TILE_COUNT, win_seoul_map},
+    {win_warsaw_tiles, win_warsaw_TILE_COUNT, win_warsaw_map},
     {lose_tiles, lose_TILE_COUNT, lose_map},
 };
+static const char *const win_names[4] = {"MIAMI", "NEW YORK", "SEOUL", "WARSAW"};
 
 static void load_banks(void)
 {
@@ -54,9 +62,13 @@ static void show_full(uint8_t k)
     if (k == 0) {             /* dashboard: the CONTINUE city in the rail font */
         set_bkg_data(160, ART_UI_COUNT, ui_tiles);
         print_at(ART_DASH_CITY_COL, ART_DASH_CITY_ROW, "SEOUL", 160, ART_FONT_FIRST);
-    } else if (k == 2) {      /* win: the bot's name in the lacquer font, centred */
+    } else if (k >= 2 && k <= 5) {   /* win: the bot's name in the lacquer font, centred */
+        const char *name = win_names[k - 2];
+        uint8_t len = 0;
+        while (name[len])
+            len++;
         set_bkg_data(ART_LACQUER_BASE, ART_LACQUER_COUNT, lacquer_tiles);
-        print_at((20 - 5) / 2, ART_WIN_NAME_ROW, "SEOUL", ART_LACQUER_BASE, 0);
+        print_at((uint8_t)((20 - len) / 2), ART_WIN_NAME_ROW, name, ART_LACQUER_BASE, 0);
     }
     for (i = 0; i < 40; i++)
         move_sprite(i, 0, 0);
@@ -97,7 +109,7 @@ void main(void)
         keys = joypad();
         if ((keys & J_B) && !(prev & J_B)) {
             show_full(f);
-            f = (uint8_t)((f + 1) % 4);
+            f = (uint8_t)((f + 1) % FULLS);
             in_full = 1;
         } else if (in_full && (keys & (J_A | J_RIGHT | J_LEFT)) && !(prev & (J_A | J_RIGHT | J_LEFT))) {
             DISPLAY_OFF;

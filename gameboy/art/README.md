@@ -8,11 +8,12 @@ The website is the reference: its card faces, its khokhloma card back, its wool 
 - `glyphs.py`: every shape as ASCII art (ranks, suits, pips, the khokhloma back, the font, the icons).
   This is the editable source of truth for the pixels.
 - `gen_art.py`: draws the tile banks from `glyphs.py`, composes every screen mockup from those same tiles, and checks the hardware limits.
-- `screens_full.py`: the full-screen pictures (dashboard, win, lose) and the city skyline.
+- `screens_full.py`: the full-screen pictures (dashboard, lose) and the city skyline.
+- `wins.py`: the four per-bot win screens (each city at night, the fool's cap on its landmark) and the fireworks sprites.
 - `export.py`: writes the indexed PNGs, runs GBDK's `png2asset` on them, decodes its bytes back and asserts they equal the drawn tiles, and writes `gbdk/art_tiles.h`.
 - `png/`: the indexed 4-shade PNGs (palette in index order), one per bank and one per full screen.
   `cards.png`, `ui.png` and `sprites.png` are one tile wide so `png2asset` keeps their order; the `*_sheet.png` files are the same tiles 16 wide for looking at.
-- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `dashboard.c/.h`, `dashboard_new.c/.h`, `win.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
+- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `dashboard.c/.h`, `dashboard_new.c/.h`, `win_miami.c/.h`, `win_new_york.c/.h`, `win_seoul.c/.h`, `win_warsaw.c/.h`, `fireworks.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
   All generated; do not edit them by hand.
 - `gbdk/check/`: a check ROM that loads the banks the way the game will and shows every table mockup composed from them (A or right: next, left: previous, B: the full screens).
 - `mockups/`: every screen at 4x with nearest neighbour (640x576), and contact sheets.
@@ -186,7 +187,10 @@ Unique background tiles each screen uses (all banks together are 131, so every t
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 55 | 4 | 4 |
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 145 (map shipped: 140) | 1 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 138 | 1 | 1 |
-| Win | `mockups/e1_win.png` | 85 (map shipped: 83) | 0 | 0 |
+| Win over Miami | `mockups/w_miami.png` | 152 (map shipped: 151) | 12 | 4 |
+| Win over New York | `mockups/w_new_york.png` | 152 (148) | 12 | 4 |
+| Win over Seoul | `mockups/w_seoul.png` | 139 (136) | 12 | 4 |
+| Win over Warsaw | `mockups/w_warsaw.png` | 154 (152) | 12 | 4 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
 
 Contact sheets: `mockups/01_cards_sheet.png`, `02_table_layouts.png`, `03_dashboard_win_lose.png`, `04_fly.png`, `05_deal.png`.
@@ -209,12 +213,20 @@ Each is under 160 tiles because the sky, the lacquer and the black areas repeat 
 
 ### Win and lose
 
-- Win: "YOU WIN", the bot's name, "IS THE DURAK", four aces below.
-  The shipped `win` map leaves the name row black: the code loads `lacquer.c` (the font, white on black, same characters as the rail font) at tile `ART_LACQUER_BASE` (160) and prints the name on row `ART_WIN_NAME_ROW` (5), from column (20 - length) / 2, tile = 160 + index of the character in `ART_FONT_CHARS`.
+- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: Miami's Freedom Tower among art deco hotels and palms, New York's Empire State with the Chrysler building and the Brooklyn Bridge, Seoul's N Seoul Tower on Namsan with Lotte World Tower and Namdaemun, Warsaw's Palace of Culture with the Old Town, Sigismund's Column and the new towers.
+  Under it the bot's name, then "IS THE DURAK".
+  The shipped map leaves the name row black: the code loads `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
+  Each win tileset is at most 206 tiles (checked), so the tileset, the lacquer font and the fireworks fit one 256-tile space.
 - Lose: "ДУРАК!" in Cyrillic, "YOU ARE THE FOOL", the fool's cap and the cards left in your hand.
 - Both offer A rematch, B home.
 
 ## Motion
+
+### Fireworks on the win screens (`mockups/09_fireworks_frames.png`)
+
+Sprites, loaded from `fireworks.c` at `ART_FW_BASE` (252): `T_FW_SPARK`, `T_FW_BURST`, `T_FW_FADE` are the top-left quarter of a 16x16 burst (draw it four times with X and Y flips), `T_FW_SHELL` is a rising shell.
+Three bursts at fixed points in the sky (`wins.BURSTS`), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
+At most 12 sprites on screen and 4 on one line.
 
 ### A card flying from the hand to the table (`mockups/04_fly.png`)
 
@@ -237,5 +249,5 @@ Taking cards after a turn (pick up, or refilling from the deck) uses the same fl
 - `export.py` decodes `png2asset`'s 2bpp bytes back to pixels and asserts they equal the drawn tiles (banks) and the drawn screens (full maps, tile by tile).
   Mutation checked: corrupting one pixel of the PNG before conversion makes it fail with "png2asset bytes differ from the drawn tiles".
 - `export.py` also prints the names into the shipped (blank) dashboard and win maps the way the code will and asserts the result equals the mockups; mutation checked by printing the win name one column off.
-- The check ROM prints SEOUL on the dashboard and the win screen with the same rule.
+- The check ROM prints SEOUL on the dashboard and each bot's name on its win screen with the same rule.
 - `gbdk/check` builds with GBDK's `lcc` and runs in SameBoy, showing the table mockups composed at runtime from the exported banks.

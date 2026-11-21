@@ -12,6 +12,7 @@ from PIL import Image
 
 import gen_art as A
 import screens_full
+import wins
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PNG = os.path.join(HERE, "png")
@@ -119,11 +120,13 @@ def main():
     run([PNG2ASSET, p, "-o", os.path.join(OUT, "lacquer.c"), "-map", "-tiles_only",
          "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
     assert decode_2bpp(c_bytes(os.path.join(OUT, "lacquer.c"), "lacquer_tiles")) == list(lq.values())
-    print("lacquer  %3d tiles (loaded at tile 160 on the win screen)" % len(lq))
+    print("lacquer  %3d tiles (loaded at tile %d on a win screen)" % (len(lq), wins.LACQUER_BASE))
 
     # full screens: png2asset dedupes them into a tileset and a 20x18 map
     sp = banks["sprites"]
-    for s, fname in zip(screens_full.screens_full(sp, bake=False), ("dashboard", "dashboard_new", "win", "lose")):
+    full = list(zip(screens_full.screens_full(sp, bake=False), ("dashboard", "dashboard_new", "lose")))
+    full += [(s, "win_" + c.lower().replace(" ", "_")) for s, c in zip(wins.win_screens(bake=False), wins.CITIES)]
+    for s, fname in full:
         p = os.path.join(PNG, fname + ".png")
         screen_png(s.bg).save(p)
         run([PNG2ASSET, p, "-o", os.path.join(OUT, fname + ".c"), "-map", "-noflip",
@@ -134,7 +137,18 @@ def main():
             for tx in range(20):
                 want = tuple(A.T if v is None else v for v in s.bg.tile(tx, ty))
                 assert tiles[mp[ty * 20 + tx]] == want, (fname, tx, ty)
+        if fname.startswith("win_"):
+            assert len(tiles) <= wins.TILESET_MAX, (fname, len(tiles))
         print("%-14s %3d unique tiles, map 20x18 checked" % (fname, len(tiles)))
+
+    # fireworks sprite tiles (a win screen loads them at wins.FW_BASE)
+    fw = wins.firework_bank()
+    p = os.path.join(PNG, "fireworks.png")
+    indexed(list(fw.values()), 1).save(p)
+    run([PNG2ASSET, p, "-o", os.path.join(OUT, "fireworks.c"), "-map", "-tiles_only",
+         "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
+    assert decode_2bpp(c_bytes(os.path.join(OUT, "fireworks.c"), "fireworks_tiles")) == list(fw.values())
+
     # the shipped maps + the names the code prints == the mockups
     ui, lq = banks["ui"], A.lacquer_font_bank()
     for blank, baked in zip(screens_full.screens_full(sp, bake=False), screens_full.screens_full(sp)):
@@ -142,9 +156,11 @@ def main():
         if baked.name == "d1_dashboard":
             for i, ch in enumerate("SEOUL"):
                 cv.set_tile(11 + i, 11, ui["CH_" + ch])
-        if baked.name == "e1_win":
-            for i, ch in enumerate("SEOUL"):
-                cv.set_tile((20 - 5) // 2 + i, screens_full.NAME_ROW, lq["LQ_" + ch])
+        assert all(cv.tile(x, y) == baked.bg.tile(x, y) for y in range(18) for x in range(20)), baked.name
+    for blank, baked, city in zip(wins.win_screens(bake=False), wins.win_screens(), wins.CITIES):
+        cv = blank.bg
+        for i, ch in enumerate(city):
+            cv.set_tile((20 - len(city)) // 2 + i, wins.NAME_ROW, lq["LQ_" + ch])
         assert all(cv.tile(x, y) == baked.bg.tile(x, y) for y in range(18) for x in range(20)), baked.name
     print("printed names reproduce the mockups")
 
@@ -164,8 +180,11 @@ def main():
         h.append("")
     h.append("/* the rail font: character c is at ART_UI_BASE + ART_FONT_FIRST + index of c in ART_FONT_CHARS */")
     h.append("#define ART_LACQUER_COUNT %du  /* lacquer.c: the same characters, white on black */" % len(lq))
-    h.append("#define ART_LACQUER_BASE 160u  /* where to load it on the win screen */")
-    h.append("#define ART_WIN_NAME_ROW %du  /* win screen: the bot's name, columns (20 - len) / 2 */" % screens_full.NAME_ROW)
+    h.append("#define ART_LACQUER_BASE %du  /* where a win screen loads it (its tileset is at most this many tiles) */" % wins.LACQUER_BASE)
+    h.append("#define ART_WIN_NAME_ROW %du  /* win screens: the bot's name, columns (20 - len) / 2 */" % wins.NAME_ROW)
+    h.append("#define ART_FW_BASE %du  /* fireworks.c: the 4 firework sprite tiles on a win screen */" % wins.FW_BASE)
+    for k, name in enumerate(fw):
+        h.append("#define T_%s %du" % (name, wins.FW_BASE + k))
     h.append("#define ART_DASH_CITY_ROW 11u  /* dashboard: the CONTINUE city, rail font, from column 11 */")
     h.append("#define ART_DASH_CITY_COL 11u")
     h.append('#define ART_FONT_CHARS "%s"' % A.FONT_CHARS.replace("'", "\\'"))

@@ -439,6 +439,21 @@ class Screen:
                         cv.put(x + i, y + j, v)
         return cv
 
+    def check_sprites(self, banks):
+        """Sprites only (full-screen pictures ship their own tile maps)."""
+        lookup = {t for bank in banks.values() for t in bank.values()}
+        lines = [0] * 144
+        for (x, y, t) in self.sprites:
+            assert any(flip(t, fx, fy) in lookup for fx in (0, 1) for fy in (0, 1)), \
+                "%s: sprite tile not in a bank" % self.name
+            for j in range(8):
+                if 0 <= y + j < 144:
+                    lines[y + j] += 1
+        assert len(self.sprites) <= 40, self.name
+        assert max(lines + [0]) <= 10, "%s: %d sprites on one line" % (self.name, max(lines))
+        self.sprite_count, self.max_line = len(self.sprites), max(lines + [0])
+        return self
+
     def check(self, banks):
         lookup = {}
         for bname, bank in banks.items():
@@ -868,6 +883,23 @@ def main():
         s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
         print("%-18s unique bg tiles %3d  sprites %2d" % (s.name, s.unique_bg, len(s.sprites)))
     contact([s.name for s in full], os.path.join(OUT_MOCK, "03_dashboard_win_lose.png"))
+    import wins
+    fw = {"fireworks": wins.firework_bank()}
+    for s in wins.win_screens():
+        tiles = set(s.bg.tile(tx, ty) for ty in range(18) for tx in range(20))
+        assert len(tiles) <= wins.TILESET_MAX, (s.name, len(tiles))
+        s.check_sprites(fw)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        print("%-18s unique bg tiles %3d  sprites %2d  max/line %d" % (s.name, len(tiles), s.sprite_count, s.max_line))
+    contact(["w_miami", "w_new_york", "w_seoul", "w_warsaw"], os.path.join(OUT_MOCK, "08_win_cities.png"))
+    strip = []
+    for f in range(len(wins.SCHEDULE)):
+        s = wins.win_screen("SEOUL", frame=f)
+        s.name = "w_seoul_frame%d" % f
+        s.check_sprites(fw)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        strip.append(s.name)
+    contact(strip, os.path.join(OUT_MOCK, "09_fireworks_frames.png"), cols=4)
 
 
 if __name__ == "__main__":
