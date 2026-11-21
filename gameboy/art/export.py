@@ -140,6 +140,7 @@ def main():
                 assert tiles[mp[ty * 20 + tx]] == want, (fname, tx, ty)
         if fname.startswith("win_"):
             assert len(tiles) <= wins.TILESET_MAX, (fname, len(tiles))
+            assert wins.LACQUER_BASE + wins.LACQUER_WIN_COUNT <= wins.TRAIN_BASE
         if fname.startswith("dashboard"):
             assert len(tiles) <= travel.TILESET_MAX, (fname, len(tiles))
         print("%-14s %3d unique tiles, map 20x18 checked" % (fname, len(tiles)))
@@ -151,6 +152,12 @@ def main():
     run([PNG2ASSET, p, "-o", os.path.join(OUT, "fireworks.c"), "-map", "-tiles_only",
          "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
     assert decode_2bpp(c_bytes(os.path.join(OUT, "fireworks.c"), "fireworks_tiles")) == list(fw.values())
+    tr = wins.train_bank()
+    p = os.path.join(PNG, "train.png")
+    indexed(list(tr.values()), 1).save(p)
+    run([PNG2ASSET, p, "-o", os.path.join(OUT, "train.c"), "-map", "-tiles_only",
+         "-keep_duplicate_tiles", "-noflip", "-keep_palette_order", "-no_palettes"])
+    assert decode_2bpp(c_bytes(os.path.join(OUT, "train.c"), "train_tiles")) == list(tr.values())
 
     # the boarding-pass font (black on white) and the plane sprite, dashboard only
     pp = travel.paper_font_bank()
@@ -198,6 +205,10 @@ def main():
     h.append("#define ART_FW_BASE %du  /* fireworks.c: the 4 firework sprite tiles on a win screen */" % wins.FW_BASE)
     for k, name in enumerate(fw):
         h.append("#define T_%s %du" % (name, wins.FW_BASE + k))
+    h.append("#define ART_LACQUER_WIN_COUNT %du  /* a win screen loads only space and A..Z of lacquer.c */" % wins.LACQUER_WIN_COUNT)
+    h.append("#define ART_TRAIN_BASE %du  /* train.c: the New York subway sprites */" % wins.TRAIN_BASE)
+    for k, name in enumerate(tr):
+        h.append("#define T_%s %du" % (name, wins.TRAIN_BASE + k))
     h.append("#define ART_DASH_CITY_ROW %du  /* dashboard: the CONTINUE city on the boarding pass, paper font */" % travel.TICKET_ROW)
     h.append("#define ART_DASH_CITY_COL %du" % travel.TICKET_CITY_COL)
     h.append("#define ART_PAPER_BASE %du  /* paper.c on the dashboard (its tileset is at most this many tiles) */" % travel.PAPER_BASE)

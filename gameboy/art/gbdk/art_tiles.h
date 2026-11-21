@@ -173,6 +173,10 @@
 #define T_FW_BURST 253u
 #define T_FW_FADE 254u
 #define T_FW_SHELL 255u
+#define ART_LACQUER_WIN_COUNT 27u  /* a win screen loads only space and A..Z of lacquer.c */
+#define ART_TRAIN_BASE 240u  /* train.c: the New York subway sprites */
+#define T_TRAIN_CAR 240u
+#define T_TRAIN_NOSE 241u
 #define ART_DASH_CITY_ROW 10u  /* dashboard: the CONTINUE city on the boarding pass, paper font */
 #define ART_DASH_CITY_COL 11u
 #define ART_PAPER_BASE 200u  /* paper.c on the dashboard (its tileset is at most this many tiles) */

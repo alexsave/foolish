@@ -68,7 +68,7 @@ static void show_full(uint8_t k)
         uint8_t len = 0;
         while (name[len])
             len++;
-        set_bkg_data(ART_LACQUER_BASE, ART_LACQUER_COUNT, lacquer_tiles);
+        set_bkg_data(ART_LACQUER_BASE, ART_LACQUER_WIN_COUNT, lacquer_tiles);
         print_at((uint8_t)((20 - len) / 2), ART_WIN_NAME_ROW, name, ART_LACQUER_BASE, 0);
     }
     for (i = 0; i < 40; i++)

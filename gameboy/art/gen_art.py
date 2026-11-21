@@ -891,7 +891,7 @@ def main():
         print("%-18s unique bg tiles %3d  sprites %2d" % (s.name, s.unique_bg, len(s.sprites)))
     contact([s.name for s in full], os.path.join(OUT_MOCK, "03_dashboard_win_lose.png"))
     import wins
-    fw = {"fireworks": wins.firework_bank()}
+    fw = {"fireworks": wins.firework_bank(), "train": wins.train_bank()}
     for s in wins.win_screens():
         tiles = set(s.bg.tile(tx, ty) for ty in range(18) for tx in range(20))
         assert len(tiles) <= wins.TILESET_MAX, (s.name, len(tiles))
@@ -910,6 +910,14 @@ def main():
         for f in range(len(wins.SCHEDULE)):
             wins.win_screen(city, frame=f)
     contact(strip, os.path.join(OUT_MOCK, "09_fireworks_frames.png"), cols=4)
+    nystrip = []
+    for f in range(len(wins.SCHEDULE)):
+        s = wins.win_screen("NEW YORK", frame=f)
+        s.name = "w_new_york_frame%d" % f
+        s.check_sprites(fw)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        nystrip.append(s.name)
+    contact(nystrip, os.path.join(OUT_MOCK, "19_new_york_frames.png"), cols=4)
 
 
 if __name__ == "__main__":

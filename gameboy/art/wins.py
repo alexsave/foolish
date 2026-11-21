@@ -14,6 +14,8 @@ from screens_full import big_text, big_width, text, button
 # VRAM on a win screen: its tileset from 0, the lacquer font at LACQUER_BASE,
 # the four firework sprite tiles at FW_BASE, so a tileset may use up to 206.
 LACQUER_BASE, FW_BASE = 206, 252
+LACQUER_WIN_COUNT = 27  # a win screen loads only " A..Z" of the lacquer font (206..232)
+TRAIN_BASE = 240        # the New York subway train's two sprite tiles
 TILESET_MAX = LACQUER_BASE
 NAME_ROW = 14          # the bot's name, columns (20 - len) / 2, lacquer font
 GROUND = 104           # the skyline stands on this y; water below to y 111
@@ -256,11 +258,12 @@ def back_tower(cv, x, top, style, roof, base=RIVER):
         cv.put(x + 3, top - 2, W)
 
 
-def river(cv, ferry=None):
+def river(cv, ferry=None, depth=None):
     """The river from RIVER down: black water, lit reflections of the skyline
-    above it broken into ripples, and swell lines."""
+    above it broken into ripples (down to `depth` px; the rest is plain swell,
+    whose tiles repeat), and swell lines."""
     cv.rect(0, RIVER, 160, 112 - RIVER, K)
-    for d in range(1, 112 - RIVER):
+    for d in range(1, depth or (112 - RIVER)):
         y = RIVER + d
         if d % 3 == 0:
             continue                                # a ripple gap
@@ -281,28 +284,56 @@ def river(cv, ferry=None):
 
 
 def new_york(cv):
+    """Lower Manhattan and Midtown at night over the East River: the back
+    blocks, Billionaires' Row behind (432 Park, 111 West 57th, Central Park
+    Tower), One WTC, the capped Empire State, One Vanderbilt, the Chrysler,
+    270 Park; the Brooklyn Bridge's tower on the left, the Manhattan Bridge
+    with its subway deck on the right (the train is a sprite)."""
     st = RIVER
-    # Manhattan behind: setbacks, water towers, glass; repeating columns
-    for (x, h, style, roof) in ((0, 34, "grid", "water"), (8, 46, "glass", "setback"), (16, 30, "grid", "water"),
-                                (48, 40, "lit", "setback"), (56, 52, "grid", "flat"), (88, 44, "glass", "flat"),
-                                (96, 30, "grid", "water"), (104, 50, "lit", "setback"), (136, 36, "grid", "water"),
-                                (144, 48, "glass", "setback"), (152, 32, "lit", "water")):
+    for (x, h, style, roof) in ((0, 30, "grid", "water"), (56, 36, "grid", "setback"), (144, 32, "grid", "water"),
+                                (152, 24, "grid", "flat")):
         back_tower(cv, x, st - h, style, roof)
-    # One World Trade Center: a tapered prism of triangular facets, the spire
-    ox = 28
+    # 432 Park Avenue: a slender square grid, a flat top, open floors as dark bands
+    px = 41
+    cv.rect(px, st - 74, 5, 74, D)
+    for y in range(st - 73, st, 2):
+        if (st - y) % 14 in (0, 1):
+            cv.rect(px, y, 5, 1, K)                                   # an open mechanical floor
+        else:
+            cv.put(px + 1, y, T)
+            cv.put(px + 3, y, T)
+    # 111 West 57th: ultra-thin, feathered setbacks down its east side, terracotta bands
+    sx = 49
+    for j in range(76):
+        y = st - 1 - j
+        w = 4 if j < 46 else 4 - (j - 46) // 8                       # the feathered steps
+        cv.rect(sx, y, max(w, 1), 1, D)
+        if j % 3 == 0:
+            cv.put(sx, y, T)                                          # the terracotta piers
+    # Central Park Tower: glass, the tallest roof, the cantilever
+    tx = 100
+    cv.rect(tx, st - 76, 6, 56, D)
+    cv.rect(tx - 1, st - 20, 6, 20, D)                                # under the cantilever
+    for y in range(st - 75, st, 2):
+        cv.put(tx + 2, y, T)
+        cv.put(tx + 4, y, T)
+    cv.rect(tx + 1, st - 78, 1, 2, D)                                 # crown fins
+    cv.rect(tx + 4, st - 78, 1, 2, D)
+    # One World Trade Center (downtown, left)
+    ox = 26
 
     def one_wtc(cv):
         for j in range(56):
             half = 6 - j * 4 // 56
             y = st - 1 - j
             cv.rect(ox + 6 - half, y, 2 * half + 1, 1, D)
-            cv.put(ox + 6 - half + (j % 7 == 0), y, T)            # the lit facet edge
+            cv.put(ox + 6 - half + (j % 7 == 0), y, T)
             if j % 2 == 0:
-                cv.put(ox + 6 + (j // 8) % 3 - 1, y, T)            # the facets' diagonal
-        cv.rect(ox + 6, st - 68, 1, 12, D)                       # the spire
+                cv.put(ox + 6 + (j // 8) % 3 - 1, y, T)
+        cv.rect(ox + 6, st - 68, 1, 12, D)
 
     in_front(cv, one_wtc)
-    # the Empire State building, front and centre
+    # the Empire State building, front and centre, capped
     cx = 72
 
     def empire(cv):
@@ -321,24 +352,60 @@ def new_york(cv):
 
     in_front(cv, empire)
     top = st - 66
-    # the Chrysler building
-    x = 114
+    # One Vanderbilt: a tapering faceted glass tower, angled terraces, crown and spire
+    vx = 90
+
+    def vanderbilt(cv):
+        for j in range(58):
+            y = st - 1 - j
+            w = 9 - j * 5 // 58
+            cut = 1 if (j % 14) > 10 else 0                           # the angled terraces
+            cv.rect(vx - w // 2 + cut, y, w - cut, 1, D)
+            if j % 3 == 0:
+                cv.put(vx - w // 2 + 1, y, T)                          # the lit facet
+        cv.rect(vx, st - 66, 1, 8, D)                                  # the spire
+
+    in_front(cv, vanderbilt)
+    # the Chrysler building: the shaft, then terraced arches stacked in
+    # sunbursts of triangular windows, the needle
+    x = 112
 
     def chrysler(cv):
-        cv.rect(x, st - 38, 16, 38, D)
-        column(cv, x + 2, x + 15, st - 36, st - 2, 3, 5)
-        for k in range(5):
-            w = 16 - k * 3
-            y0 = st - 40 - k * 4
-            cv.rect(x + (16 - w) // 2, y0, w, 4, D)
-            for t in range(x + (16 - w) // 2 + 1, x + (16 - w) // 2 + w - 1, 2):
-                cv.put(t, y0 + 1, W)
-        cv.rect(x + 7, st - 64, 2, 4, D)
-        cv.put(x + 7, st - 66, D)
-        cv.put(x + 7, st - 65, D)
+        cv.rect(x, st - 36, 15, 36, D)
+        column(cv, x + 2, x + 14, st - 34, st - 2, 3, 5)
+        for k, w in enumerate((15, 13, 11, 9, 7, 5)):
+            y0 = st - 38 - k * 4
+            x0 = x + (15 - w) // 2
+            cv.rect(x0, y0, w, 4, D)
+            for t in range(x0 + 1, x0 + w - 1, 2):
+                cv.put(t, y0 + 2, W)                                   # the triangle windows
+                cv.put(t, y0 + 1, W if (t - x0) % 4 == 1 else D)
+            cv.put(x0, y0, K)                                          # the arch's rounded shoulder
+            cv.put(x0 + w - 1, y0, K)
+        cv.rect(x + 7, st - 66, 1, 4, D)                               # the needle
 
     in_front(cv, chrysler)
-    # the Brooklyn Bridge, low across the left of the river
+    # 270 Park Avenue: fan columns at the base, a stepped tower braced with
+    # a diamond lattice, its crown
+    jx = 130
+
+    def jpmorgan(cv):
+        steps = ((13, 18), (11, 16), (9, 14), (7, 10))
+        y = st
+        for (w, h) in steps:
+            cv.rect(jx - w // 2, y - h, w, h, D)
+            for yy in range(y - h, y):
+                for xx in range(jx - w // 2, jx - w // 2 + w):
+                    if (xx - jx + yy) % 6 == 0 or (xx - jx - yy) % 6 == 0:
+                        cv.put(xx, yy, T)                              # the diamond lattice
+            y -= h
+        cv.rect(jx - 1, y - 4, 3, 4, D)                                # the crown
+        for k in range(4):                                             # the fan columns
+            cv.put(jx - 6 + k, st - 1 - k, K)
+            cv.put(jx + 6 - k, st - 1 - k, K)
+
+    in_front(cv, jpmorgan)
+    # the Brooklyn Bridge's tower and cables, left
     tx = 12
 
     def bridge_tower(cv):
@@ -351,26 +418,37 @@ def new_york(cv):
         cv.rect(tx - 8, st - 30, 17, 1, D)
 
     in_front(cv, bridge_tower)
-    cv.rect(0, st - 8, 27, 1, T)                             # the deck
-    for x in range(0, 27, 3):
-        cv.put(x, st - 7, W)                                 # its lamps
-    for k in range(4):                                       # the cable fans, on its own span
+    cv.rect(0, st - 8, 23, 1, T)
+    for xx in range(0, 23, 3):
+        cv.put(xx, st - 7, W)
+    for k in (0, 2):
         for sign in (-1, 1):
             x0, y0 = tx + sign * 7, st - 29
-            x1, y1 = max(0, min(26, tx + sign * (9 + k * 2))), st - 8 - k * 4
+            x1, y1 = max(0, min(22, tx + sign * (9 + k * 2))), st - 8 - k * 4
             n = max(abs(x1 - x0), abs(y1 - y0))
             for step in range(0, n + 1, 2):
                 cv.put(round(x0 + (x1 - x0) * step / n), round(y0 + (y1 - y0) * step / n), T)
-    # the Statue of Liberty, small on her island at the right
-    lx = 150
-    cv.rect(lx - 4, st - 3, 9, 3, D)                         # the island fort
-    cv.rect(lx - 2, st - 10, 5, 7, D)                        # the pedestal
-    cv.rect(lx - 1, st - 16, 3, 6, T)                        # the figure
-    cv.put(lx, st - 17, T)
-    cv.rect(lx + 2, st - 20, 1, 5, T)                        # the raised arm
-    cv.put(lx + 2, st - 21, W)                               # the torch
-    river(cv, ferry=(76, RIVER + 5))
+    river(cv, depth=8)                  # reflections in the first water row only: tile budget
+    # the Manhattan Bridge over the river, right: a latticed tower, the truss
+    # road deck, the subway deck below it (the train runs there as a sprite)
+    mx = 146
+    cv.rect(mx - 4, RIVER - 24, 2, 28, D)
+    cv.rect(mx + 3, RIVER - 24, 2, 28, D)
+    cv.rect(mx - 4, RIVER - 25, 9, 1, D)
+    for y in range(RIVER - 22, RIVER - 2, 4):
+        cv.put(mx - 1, y, D)
+        cv.put(mx + 1, y + 2, D)
+    cv.rect(96, MAN_DECK, 64, 1, T)                                   # the road deck
+    for xx in range(96, 160, 2):
+        cv.put(xx, MAN_DECK + 1, D if xx % 4 else T)                  # its truss
+    cv.rect(96, MAN_DECK + 2, 64, 1, D)
+    cv.rect(96, MAN_DECK + 6, 64, 1, T)                               # the subway deck
+    for k in range(0, 46, 3):                                          # the main cable's sag
+        cv.put(mx - 4 - k, RIVER - 25 + (k * k) // 110, T)
     return cx, top
+
+
+MAN_DECK = RIVER + 1        # the Manhattan Bridge's road deck; the train runs 5 px under it
 
 
 def seoul(cv):
@@ -621,6 +699,51 @@ def shell_tile():
     return cv.tile(0, 0)
 
 
+TRAIN = {
+"TRAIN_CAR": G.g("""
+........
+........
+XXXXXXXX
+owwowwoX
+owwowwoX
+ooooooox
+.X....X.
+........
+"""),
+"TRAIN_NOSE": G.g("""
+........
+........
+..XXXXXX
+.owwowoX
+owwwowoX
+ooooooox
+.X....X.
+........
+"""),
+}
+
+
+def train_bank():
+    out = {}
+    for name, rows in TRAIN.items():
+        cv = Canvas(8, 8, T)
+        cv.glyph(0, 0, [r.replace("x", "X") for r in rows])
+        out[name] = cv.tile(0, 0)
+    return out
+
+
+def train(s, frame):
+    """The subway on the Manhattan Bridge's lower deck, heading west: a nose
+    and three cars, 10 px further each frame; the code drops a car once it
+    passes the bridge's west end (x < 96) or the screen's right edge."""
+    tb = train_bank()
+    x0 = 108 + (3 - frame) * 10
+    for k in range(4):
+        x = x0 + k * 8
+        if 96 <= x <= 152:
+            s.spr(x, MAN_DECK - 1, tb["TRAIN_NOSE" if k == 0 else "TRAIN_CAR"])
+
+
 def firework_bank():
     return {"FW_SPARK": burst_quadrant(0), "FW_BURST": burst_quadrant(1),
             "FW_FADE": burst_quadrant(2), "FW_SHELL": shell_tile()}
@@ -630,7 +753,7 @@ def firework_bank():
 # burst one phase behind the last; -1 = a rising shell under it
 BURSTS = {                 # burst centres per city, found clear of every building
     "MIAMI": ((24, 32), (136, 34)),
-    "NEW YORK": ((22, 32), (88, 34), (136, 36)),
+    "NEW YORK": ((20, 36), (144, 36)),
     "SEOUL": ((20, 36), (80, 36), (142, 36)),
     "MOSCOW": ((12, 36), (92, 36), (140, 32)),
 }
@@ -692,7 +815,9 @@ def win_screen(city, frame=2, bake=True):
     button(cv, 96, 136, "BTN_B")
     text(cv, 104, 136, "HOME", W)
     fireworks(s, firework_bank(), frame, city)
-    check_sky(s)
+    check_sky(s)                       # the fireworks only; the train rides the bridge
+    if city == "NEW YORK":
+        train(s, frame)
     return s
 
 
