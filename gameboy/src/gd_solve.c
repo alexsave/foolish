@@ -66,7 +66,10 @@ typedef struct {
 #define ST_BASE ((gd_sim *)0xA000u)
 #define FR_BASE ((sol_frame *)(0xA000u + SOLVE_FRAMES * sizeof(gd_sim)))
 #define MV_BASE ((sol_move *)(0xA000u + SOLVE_FRAMES * sizeof(gd_sim) + SOLVE_FRAMES * sizeof(sol_frame)))
-#define RAM_BANK(b) (*(volatile uint8_t *)0x4000u = (b))
+// The shadow first, then the register: the live-think handler (live.c) runs
+// from an interrupt, switches the RAM bank for its own stack and puts back
+// gd_ram_bank, so a switch it lands between ends on the bank meant.
+#define RAM_BANK(b) (gd_ram_bank = (b), *(volatile uint8_t *)0x4000u = gd_ram_bank)
 #define TT_TAGS ((uint8_t *)0xA000u)
 #define TT_VALS ((int8_t *)0xB000u)
 #else
@@ -86,6 +89,9 @@ static uint8_t   ram_bank;
 #if defined(__SDCC)
 // the stack must fit bank 0 of the cart's RAM (0xA000 to 0xBFFF)
 typedef char sol_fits[(SOLVE_FRAMES * sizeof(gd_sim) + SOLVE_FRAMES * sizeof(sol_frame) + SOLVE_SLOTS * sizeof(sol_move) <= 0x1F00u) ? 1 : -1];   /* 0xBF00: the hash table */
+// the table's values end below the live-think handler's stack, in banks 1 to 3
+#include "live.h"
+typedef char tt_below_live[(0xB000u + TT_ENTRIES <= LIVE_STACK_FLOOR && LIVE_RAM_BANK >= 1 && LIVE_RAM_BANK <= 3) ? 1 : -1];
 #endif
 
 static sol_move *mv_top;
