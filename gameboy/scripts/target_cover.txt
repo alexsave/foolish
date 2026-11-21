@@ -9,7 +9,12 @@
 # trumps and my ten of diamonds beats either. Hand: 7s Kh 9c Tc Ac Td.
 @99  poke _sys_time 01 00
 @100 press A
-+1   until _G+74 02
+# Miami leads, but only once the deal has landed (README "The deal"): the
+# table is still empty while the trump turns up
++1   until _fly_n 01
++0   until _dl_seat 02
++0   expect _G+74 00
++0   until _G+74 02
 # the attack's cards land first (they fly for 12 frames)
 +0   until _fly_n 00
 +0   shot shots/10_defend.png 3

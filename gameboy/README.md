@@ -20,6 +20,8 @@ make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
 
+On Linux (mGBA from the distribution, `apt-get install libmgba-dev libpng-dev`): `make GBDK=<gbdk> MGBA_CFLAGS="-D_GNU_SOURCE -include limits.h" MGBA_LIBS="-lmgba -lpng"` (libmgba's headers need `PATH_MAX`, gbrun `strdup`).
+
 ## Hypotheses (written before measuring) and measurements
 
 - ROM: about 14 KB of the 32 KB ROM-only cart (code about 10 KB, as SDCC pulls in its 32-bit multiply and divide helpers; the binomial table 2.8 KB; tiles about 1.3 KB).
@@ -384,6 +386,7 @@ Edge cases, as the website does them:
 
 - With A or SELECT held, UP and DOWN do nothing, so a held modifier never plays.
 - Up or down with no cursor does nothing, except DOWN, which takes or says done without a cursor.
+- While cards are dealt (the opening, a refill), presses are kept and act once the last card has landed; START still leaves at once.
 - After my move the cursor keeps its index (pulled back to the last card if it fell off the end, gone when the hand is empty) and TARGET mode ends.
 - A bot move ends TARGET mode only if it changed the table (a silent good, the bot no longer adding, leaves the aim alone).
 - The hand keeps the website's sticky order: a card that comes back to the hand (a pickup) returns to its old place; new cards join at the end in the order they arrive (from the table in battle order, then from the stock in draw order).
@@ -435,21 +438,62 @@ The opening deal and every refill from the stock fly, one card at a time, throug
 - ROM: bank 1 grows by about 600 bytes. Falsifier: over 1.2 KB.
 - RAM: 5 bytes of static state, nothing on the stack beyond a few bytes of locals in the main loop's own calls. Falsifier: the gap between the data and the stack's top shrinks by more than 8 bytes.
 
+### Measured (marking the hypothesis)
+
+On a Linux VM's mGBA 0.10.2 (frame and scanline counts are the emulated Game Boy's; the Mac re-measures).
+
+| | predicted | measured |
+| --- | --- | --- |
+| the opening, first card's first frame to the trump's landing | about 125 frames (110 to 140) | 128 frames (2.13 s), seed 0x1f: right |
+| a card | 8 frames + about 1.5 of redraw | 10 frames: 8 of flight, then 2 on its place while the board redraws under it |
+| a landing's board redraw | 150 to 300 scanlines | 309 to 387 scanlines (2.0 to 2.5 frames): wrong, the range was low, but under the 460 falsifier |
+| ROM bank 1 | about +600 bytes | +1362 bytes (13579 to 14941; 1443 free): wrong, over the 1.2 KB falsifier; SDCC's code for the deal's 16-bit pixel arithmetic and the board's extra conditions is about twice my guess |
+| RAM | 5 bytes static, the stack about the same | 5 bytes (WRAM free 539 to 534); the stack's deepest reach over a whole `game_lose.txt` game 268 bytes before, 270 after: the gap shrank by 7 bytes, under the 8-byte falsifier, just |
+
+So `DEAL_FRAMES` stays 8: 2.1 s for the opening, and each quarter of the flip shows for exactly two frames.
+A landing draws the flight once more on its place before the board's redraw, so the redraw puts the card under its own sprite; without that the landed card showed beside the sprite a step short for the two frames of the redraw (seen in the frame-by-frame shots).
+
+### The proof
+
+`scripts/deal.txt` (77 checks), seed 0x1f:
+- the flip of my first card, frame by frame: a back (six sprites; the ring and the sprig, `pixelspr`), the narrow back (three sprites, the fourth's OAM slot empty), the edge (black, white, black, the table either side), the face (the six of spades); shots `deal_1_back` to `deal_4_face`; a bot's card mid-flight is a back (`deal_0_bot_back`);
+- my king of clubs in flight: its eight seam pixels light grey (OBP1 and the club's sprite copies, `deal_5_club`);
+- the trump turning up (its edge frame, three sprites, `deal_6_trump_edge`; its face, `deal_7_trump_face`);
+- every one of the 13 landings, where the board draws the card: when the next card takes off, `_fly_pos` still holds the place the last flight was drawn at (the bot's backs at columns 6 to 11 of row 1, mine at columns 4 to 14 of row 13, the trump at (0, 4));
+- the settled board equals the old instant deal's board for the same seed, every pixel (`same shots/deal_instant_ref.png`, the old ROM's `02_deal.png`; the new `02_deal.png` is byte for byte the same file).
+
+`scripts/dashboard.txt` checks that RIGHT pressed mid-deal acts only once the deal has landed, and `scripts/target_cover.txt` that the bot leads only after it.
+`scripts/done.txt` checks a refill: after DONE, my card (I attacked) leaves the deck while the bot's waits (`_dl_n` 0 and 1), then the bot's, each landing in its place.
+
+Mutants, each built into the ROM and run, each failing on the check named:
+
+| Mutant | Fails |
+| --- | --- |
+| the edge frame skipped (the narrow back drawn in its place) | `deal.txt`, the edge's pixels at frame 130 |
+| my cards land one column right | `deal.txt`, `_fly_pos` at each of my landings (28 68 for 20 68) |
+| the bot's backs land one slot right | `deal.txt`, `_fly_pos` at each bot landing |
+| a club in the deal on OBP0 | `deal.txt`, the king of clubs' seams read dark grey |
+| the settled board draws the bot's hand one column right (flights untouched) | `deal.txt`, `same`: 475 pixels differ, the first at (49, 8) |
+| a refill draws the defender first | `done.txt`, `_dl_n` at the first refill card |
+| presses during the deal dropped, not kept | `dashboard.txt`, `_cur` still none after the deal |
+| presses act during the deal | `dashboard.txt`, `_cur` set while the cards still fly |
+| the bot does not wait for the deal | `target_cover.txt`, two attacks on the table while the trump turns up |
+
 ## gbrun, the headless runner
 
-`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
+`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame; `same PNG`, every pixel of the screen against a shot), from a plain text script (the format is at the top of the file).
 Every script in `scripts/` sets the seed by poking `sys_time` just before its first press, so its deal does not depend on how long the ROM takes to start, and waits for the bot with `until` rather than counting frames.
 
 | Script | What it proves | Shots |
 | --- | --- | --- |
-| `deal.txt` | the dashboard, a deal, the cursor appearing, an attack, the bot's answer | `01` to `05` |
+| `deal.txt` | the dashboard, the deal card by card (the flip pinned frame by frame, a club in flight, the trump turned up, every landing, the settled board against the old instant deal's), the cursor appearing, an attack, the bot's answer | `01` to `05`, `deal_*` |
 | `target_cover.txt` | TARGET mode over two attacks, moving the aim (watched frame by frame: never the old arrowhead beside the new arrow's dots), DOWN backing out, the cover | `10` to `13` |
 | `cover_or_pass.txt` | TARGET mode with the pass space, passing | `20` to `22` |
 | `single_moves.txt` | UP passes at once with a pass-only card | `30`, `31` |
 | `cover_now.txt` | UP covers at once with a one-way cover | `32`, `33` |
 | `take.txt` | DOWN picks up | `40`, `41` |
 | `selection.txt` | A toggles, B clears, A held sweeps (and deselects), UP plays three sixes, the bot takes | `50` to `52`, `55` |
-| `done.txt` | DOWN says DONE over a covered table, the bout ends | `53`, `54` |
+| `done.txt` | DOWN says DONE over a covered table, the bout ends, the refill flies in the rules' order | `53`, `54` |
 | `rearrange.txt` | SELECT held + RIGHT moves a card twice, UP with SELECT held does nothing | `60`, `61` |
 | `game_lose.txt` | a whole game by an input loop, a 27-card hand with tabs, the lose picture, home | `70`, `72`, `73` |
 | `game_win.txt` | a whole game won by an input loop, the Miami win picture with fireworks, a rematch | `80`, `81` |
@@ -482,7 +526,6 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 
 - Moscow's solver runs at 8.2 ms a node, most of it SDCC's code for move generation; assembly there (as for the hash) would buy it bigger endgames, though the measurements above say the worlds matter more at two players.
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
-- The deal is not animated (the art has the frames); played and picked-up cards fly (below).
 - A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.
