@@ -222,9 +222,9 @@ def dashboard(lang, cont=True):
         # 16 px text: a shorter sky (the skyline stands on y = 64), the
         # ticket two tiles tall, the board's rows 16 px; DEPARTURES and FLY
         # move onto the ticket row's right when no game is open
-        big(cv, 80, 1, t["title"], lang, 1, K, W, D)
-        text(cv, 8, 1, t["subtitle"], lang, K)
         SF.skyline(cv, 64)
+        big(cv, 38, 4, t["title"], lang, 2, K, W, D)       # a logo over the city's left
+        text(cv, 84, 6, t["subtitle"], lang, K)
         cv.rect(0, 64, 160, 80, K)
         rows = []
         if cont:
