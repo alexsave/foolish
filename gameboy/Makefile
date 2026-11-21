@@ -1,0 +1,59 @@
+# Game Boy Durak. `make` builds the ROM, `make test` runs the differential test
+# against foolish's engine and the RNG ban, `make gbrun` builds the headless
+# runner. Nothing in ../foolish is written: its engine is compiled into build/.
+GBDK    ?= /Users/alex/Dev/gb-hello/toolchain/dl/gbdk
+LCC      = $(GBDK)/bin/lcc
+HOSTCC  ?= clang
+B        = build
+FOOLISH  = ../foolish/c/src
+SHARED   = ../shared/c
+
+CORE     = src/gd_rules.c src/gd_play.c src/gd_rng.c
+CORE_H   = src/gd_rules.h src/gd_play.h src/gd_rng.h $(B)/gd_binom.h
+ROM_SRC  = src/main.c src/gfx.c $(CORE)
+ROM_H    = src/gfx.h src/input.h src/ui.h $(CORE_H)
+
+HOSTFLAGS = -std=c11 -O2 -g -Wall -Wextra -Wno-unused-parameter
+# foolish's production caps (its README): a menu as wide as the shipped one.
+FOOLISH_DEFS = -DMAX_LEGAL_MOVES=65536 -DMAX_MOVE_CARDS=40 -DMAX_LOGS=64
+FOOLISH_SRC  = $(FOOLISH)/game.c $(FOOLISH)/legal.c $(FOOLISH)/card.c $(SHARED)/deal_rng.c
+
+all: $(B)/durak.gb
+
+$(B):
+	mkdir -p $(B)
+
+$(B)/gen_binom: tools/gen_binom.c | $(B)
+	$(HOSTCC) -O2 -o $@ $<
+
+$(B)/gd_binom.h: $(B)/gen_binom
+	$(B)/gen_binom > $@
+
+# ---- the ROM ------------------------------------------------------------------
+$(B)/durak.gb: $(ROM_SRC) $(ROM_H) | $(B)
+	$(LCC) -Wa-l -Wl-m -Wl-j -I$(B) -Wm-yn"DURAK" -o $@ $(ROM_SRC)
+
+romusage: $(B)/durak.gb
+	$(GBDK)/bin/romusage $(B)/durak.map -g
+
+# ---- the differential test -------------------------------------------------------
+$(B)/difftest: tests/difftest.c $(CORE) $(CORE_H) | $(B)
+	$(HOSTCC) $(HOSTFLAGS) $(FOOLISH_DEFS) -I$(B) -I$(FOOLISH) -o $@ tests/difftest.c $(CORE) $(FOOLISH_SRC)
+
+test: $(B)/difftest
+	sh tests/rng_ban.sh
+	$(B)/difftest 3000 1
+
+mutants: $(B)/gd_binom.h
+	sh tests/mutants.sh
+
+# ---- the headless runner ------------------------------------------------------------
+$(B)/gbrun: tools/gbrun.c | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
+
+gbrun: $(B)/gbrun
+
+clean:
+	rm -rf $(B)
+
+.PHONY: all test mutants gbrun romusage clean

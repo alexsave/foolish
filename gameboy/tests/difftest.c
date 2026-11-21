@@ -1,0 +1,422 @@
+// difftest - plays seeded two-player games on BOTH engines at once: this one
+// (src/gd_rules.c, src/gd_play.c) and foolish's production kernel
+// (../foolish/c/src/game.c, legal.c, read-only, compiled into build/). Both
+// seats choose uniformly random legal moves from the one RNG (src/gd_rng.c);
+// every move is applied to both engines, and after every move the test checks
+// that the two agree on:
+//   - each seat's legal move SET (this engine's count + unrank against
+//     foolish's enumerated menu, as sorted canonical keys),
+//   - hands, the stock in draw order, the trump card and suit, the table in
+//     battle order, the leader, the defender, the goods, the outs, the
+//     discard count, the status and the result (fool, or the repetition draw),
+//   - on random probes: the handlers' accept/reject (gd_legal vs handle_*),
+//     menu membership, and the gesture rules the d-pad is built on (pills,
+//     coverable battles, the Cover button's aim and the move it resolves to).
+//
+// usage: difftest [games] [first_seed]
+#include "../src/gd_rules.h"
+#include "../src/gd_play.h"
+#include "../src/gd_rng.h"
+
+#include "game.h"
+#include "legal.h"
+
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+// ---- the two card encodings, mapped explicitly ----------------------------------
+// gd: id = suit * 9 + rank, rank 0..8 = 6..A.
+// foolish: Card {suit 0..3, value 5..13 = 6..A} (36-card deck, min value 5);
+// foolish suits are the same 0..3 (spades, hearts, clubs, diamonds).
+static Card f_of(uint8_t id) {
+    Card c;
+    c.suit = (int8_t)(id / 9);
+    c.value = (int8_t)(id % 9 + MIN_VALUE_SMALL);
+    return c;
+}
+static uint8_t gd_of(Card c) {
+    if (c.suit < 0 || c.suit > 3 || c.value < MIN_VALUE_SMALL || c.value > ACE_VALUE) return 0xEE;
+    return (uint8_t)(c.suit * 9 + (c.value - MIN_VALUE_SMALL));
+}
+
+// ---- failure reporting ----------------------------------------------------------
+static unsigned long g_seed_now, g_move_now;
+static int g_fail;
+#define CHECK(cond, ...) do { if (!(cond)) { \
+    fprintf(stderr, "MISMATCH seed %lu move %lu: ", g_seed_now, g_move_now); \
+    fprintf(stderr, __VA_ARGS__); fprintf(stderr, "\n"); g_fail = 1; return 0; } } while (0)
+
+// ---- canonical move keys ------------------------------------------------------------
+#define KEYLEN 40
+typedef struct { uint8_t k[KEYLEN]; } Key;
+
+static void key_make(Key *k, uint8_t type, uint8_t n, const uint8_t *cards, const uint8_t *atts) {
+    uint8_t pc[GD_MAXB * 2 + 2], i, j;
+    memset(k, 0, sizeof *k);
+    k->k[0] = type;
+    k->k[1] = n;
+    // pairs sorted by card id
+    for (i = 0; i < n; i++) { pc[2 * i] = cards[i]; pc[2 * i + 1] = type == GD_COVER ? atts[i] : 0xFF; }
+    for (i = 1; i < n; i++)
+        for (j = i; j > 0 && pc[2 * (j - 1)] > pc[2 * j]; j--) {
+            uint8_t t0 = pc[2 * j], t1 = pc[2 * j + 1];
+            pc[2 * j] = pc[2 * (j - 1)]; pc[2 * j + 1] = pc[2 * (j - 1) + 1];
+            pc[2 * (j - 1)] = t0; pc[2 * (j - 1) + 1] = t1;
+        }
+    memcpy(k->k + 2, pc, (size_t)2 * n);
+}
+static int key_cmp(const void *a, const void *b) { return memcmp(a, b, KEYLEN); }
+
+static void key_of_gd(Key *k, const gd_move *m) { key_make(k, m->type, m->n, m->cards, m->atts); }
+static void key_of_f(Key *k, const LegalMove *m) {
+    uint8_t c[64], a[64];
+    for (int i = 0; i < m->n_cards; i++) { c[i] = gd_of(m->cards[i]); a[i] = m->type == MOVE_COVER ? gd_of(m->attack_cards[i]) : 0xFF; }
+    key_make(k, (uint8_t)m->type, (uint8_t)m->n_cards, c, a);
+}
+
+static LegalMoves *g_lm;            // foolish's menu (heap: 65536 moves)
+static Key *g_ka, *g_kb;
+static unsigned char *g_wire;
+#define WIRE_CAP (MAX_LEGAL_MOVES * (2 + 2 * MAX_MOVE_CARDS) + 4)
+
+// stats
+static unsigned long st_games, st_moves, st_menus, st_probes, st_gest, st_truncated, st_cap;
+static unsigned long st_res[4], st_hist_types[5];
+static uint32_t st_max_menu, st_max_unc, st_max_hand;
+
+// ---- state comparison ------------------------------------------------------------------
+static int same_state(const gd_game *g, const Game *f) {
+    CHECK(f->power_suit == g->trump, "trump %d vs %d", f->power_suit, g->trump);
+    CHECK(f->deck_count == g->stock_n, "stock count %d vs %d", f->deck_count, g->stock_n);
+    for (int i = 0; i < g->stock_n; i++) CHECK(gd_of(f->deck[i]) == g->stock[i], "stock[%d]", i);
+    CHECK(f->has_flipped == (g->has_flipped != 0), "has_flipped");
+    if (g->has_flipped) CHECK(gd_of(f->flipped) == g->flipped, "flipped card");
+    CHECK(f->num_battles == g->nb, "battles %d vs %d", f->num_battles, g->nb);
+    for (int i = 0; i < g->nb; i++) {
+        CHECK(gd_of(f->table_battles[i].attack) == g->att[i], "attack %d", i);
+        uint8_t d = card_is_none(f->table_battles[i].defense) ? GD_NONE : gd_of(f->table_battles[i].defense);
+        CHECK(d == g->def[i], "cover %d", i);
+    }
+    for (int s = 0; s < 2; s++) {
+        gd_mask m;
+        memset(&m, 0, sizeof m);
+        for (int i = 0; i < f->players[s].hand_count; i++) {
+            uint8_t c = gd_of(f->players[s].hand[i]);
+            CHECK(c < 36, "bad foolish card");
+            GD_SET(m, c);
+        }
+        CHECK(memcmp(&m, &g->hand[s], sizeof m) == 0, "hand %d", s);
+        CHECK((f->players[s].status == PLAYER_STATUS_OUT) == ((g->out >> s) & 1u), "out %d", s);
+        if (gd_hand_n(g, s) > st_max_hand) st_max_hand = gd_hand_n(g, s);
+    }
+    CHECK(f->first_attacker == g->fa, "first attacker %d vs %d", f->first_attacker, g->fa);
+    CHECK(f->defender == g->defender, "defender %d vs %d", f->defender, g->defender);
+    CHECK((f->good_players_mask & 3u) == g->good, "goods %u vs %u", f->good_players_mask, g->good);
+    CHECK(f->discard_pile_length == g->discard, "discard %d vs %d", f->discard_pile_length, g->discard);
+    CHECK((f->status == GAME_STATUS_GAME_OVER) == (g->status == GD_OVER), "status %d vs %d", f->status, g->status);
+    uint8_t want = GD_RESULT_NONE;
+    if (f->status == GAME_STATUS_GAME_OVER) {
+        uint32_t fools = game_fools(f);
+        want = fools == 3 ? GD_RESULT_DRAW : fools == 1 ? GD_RESULT_FOOL0 : fools == 2 ? GD_RESULT_FOOL1 : 0xEE;
+    }
+    CHECK(want == gd_result(g), "result %d vs %d", want, gd_result(g));
+    return 1;
+}
+
+// Hand order is no part of the rules; sorting foolish's hands into card id
+// order (which is this engine's hand order) makes its first-match menu order,
+// which play_resolve reads, comparable.
+static void sort_foolish_hands(Game *f) {
+    for (int s = 0; s < 2; s++) {
+        Player *p = &f->players[s];
+        unsigned char idx[MAX_HAND_SIZE];
+        for (int i = 0; i < p->hand_count; i++) idx[i] = (unsigned char)i;
+        for (int i = 1; i < p->hand_count; i++)
+            for (int j = i; j > 0 && gd_of(p->hand[idx[j - 1]]) > gd_of(p->hand[idx[j]]); j--) {
+                unsigned char t = idx[j]; idx[j] = idx[j - 1]; idx[j - 1] = t;
+            }
+        if (!game_rearrange_hand(f, s, idx, p->hand_count)) { fprintf(stderr, "rearrange failed\n"); exit(2); }
+    }
+}
+
+// ---- the menus -----------------------------------------------------------------------
+// Returns the count, or -1 on mismatch. Leaves foolish's menu in g_lm.
+static long same_menu(const gd_game *g, const Game *f, uint8_t seat) {
+    uint32_t n = gd_menu_count(g, seat);
+    calculate_legal_moves(f, seat, g_lm);
+    st_menus++;
+    if (n > st_max_menu) st_max_menu = n;
+    if (gd_uncovered(g) > st_max_unc) st_max_unc = gd_uncovered(g);
+    if (g_lm->n >= MAX_LEGAL_MOVES) {
+        // foolish truncated its menu at its cap: the sets cannot be compared.
+        st_truncated++;
+        if (n < (uint32_t)g_lm->n) { CHECK(0, "count %u below foolish's truncated %d", n, g_lm->n); }
+        return (long)n;
+    }
+    if (n != (uint32_t)g_lm->n) { CHECK(0, "seat %d menu count %u vs foolish %d", seat, n, g_lm->n); }
+    for (uint32_t i = 0; i < n; i++) {
+        gd_move m;
+        gd_menu_move(g, seat, i, &m);
+        if (!gd_in_menu(g, seat, &m)) { CHECK(0, "unranked move %u not in menu", i); }
+        if (!gd_legal(g, seat, &m)) { CHECK(0, "unranked move %u not legal", i); }
+        key_of_gd(&g_ka[i], &m);
+        key_of_f(&g_kb[i], &g_lm->moves[i]);
+    }
+    qsort(g_ka, n, sizeof(Key), key_cmp);
+    qsort(g_kb, n, sizeof(Key), key_cmp);
+    for (uint32_t i = 0; i < n; i++) {
+        if (i > 0 && memcmp(&g_ka[i], &g_ka[i - 1], sizeof(Key)) == 0) { CHECK(0, "seat %d duplicate move in unrank", seat); }
+        if (memcmp(&g_ka[i], &g_kb[i], sizeof(Key)) != 0) { CHECK(0, "seat %d menu sets differ at %u (type %d vs %d)", seat, i, g_ka[i].k[0], g_kb[i].k[0]); }
+    }
+    return (long)n;
+}
+
+static int f_menu_index(const LegalMoves *lm, const gd_move *m) {
+    Key a, b;
+    key_of_gd(&a, m);
+    for (int i = 0; i < lm->n; i++) { key_of_f(&b, &lm->moves[i]); if (!memcmp(&a, &b, sizeof a)) return i; }
+    return -1;
+}
+
+static bool f_apply(Game *f, uint8_t seat, const gd_move *m) {
+    Card c[GD_MAXB], a[GD_MAXB];
+    for (int i = 0; i < m->n; i++) { c[i] = f_of(m->cards[i]); a[i] = f_of(m->atts[i] < 36 ? m->atts[i] : 0); }
+    switch (m->type) {
+    case GD_ATTACK: return handle_attack(f, seat, c, m->n);
+    case GD_COVER:  return handle_cover(f, seat, c, a, m->n);
+    case GD_PASS:   return handle_pass(f, seat, c, m->n);
+    case GD_PICKUP: return handle_pickup(f, seat);
+    case GD_GOOD:   return handle_good(f, seat);
+    }
+    return false;
+}
+
+// ---- probes ------------------------------------------------------------------------
+static uint8_t rnd(uint32_t n) { return (uint8_t)gd_rng_below(n); }
+
+static uint8_t hand_list(const gd_game *g, uint8_t seat, uint8_t *out) {
+    uint8_t n = 0;
+    for (uint8_t c = 0; c < 36; c++) if (GD_HAS(g->hand[seat], c)) out[n++] = c;
+    return n;
+}
+
+// A random selection from the seat's hand, 0..3 cards (mostly 1).
+static uint8_t random_sel(const gd_game *g, uint8_t seat, uint8_t *sel) {
+    uint8_t h[36], hn = hand_list(g, seat, h), n, i, k = 0;
+    static const uint8_t sizes[8] = { 0, 1, 1, 1, 1, 2, 2, 3 };
+    n = sizes[rnd(8)];
+    if (n > hn) n = hn;
+    for (i = 0; i < n; i++) {
+        uint8_t j = rnd(hn - i), t = h[j];
+        h[j] = h[hn - i - 1]; h[hn - i - 1] = t;
+        sel[k++] = t;
+    }
+    return k;
+}
+
+static int probe_gestures(const gd_game *g, const Game *f, uint8_t seat) {
+    // foolish's board, from its own menu for this seat
+    calculate_legal_moves(f, seat, g_lm);
+    if (g_lm->n >= MAX_LEGAL_MOVES) return 1;
+    int len = legal_menu_write(g_lm, 0, -1, g_wire, WIRE_CAP);
+    CHECK(len > 0, "menu write");
+    unsigned char table[2 * MAX_BATTLES];
+    for (int i = 0; i < f->num_battles; i++) {
+        table[2 * i] = (unsigned char)card_to_id(f->table_battles[i].attack);
+        table[2 * i + 1] = card_is_none(f->table_battles[i].defense) ? LEGAL_WIRE_NONE
+                                                                      : (unsigned char)card_to_id(f->table_battles[i].defense);
+    }
+    PlayBoard b = { .menu = g_wire, .menu_len = len, .table = table, .n_battles = f->num_battles,
+                    .power_suit = f->power_suit, .my_seat = seat, .defender = f->defender,
+                    .my_status = f->players[seat].status, .game_status = f->status };
+    for (int rep = 0; rep < 3; rep++) {
+        uint8_t sel[4];
+        uint8_t n = random_sel(g, seat, sel);
+        unsigned char fsel[4];
+        for (int i = 0; i < n; i++) fsel[i] = (unsigned char)card_to_id(f_of(sel[i]));
+        st_gest++;
+        unsigned fp = play_pills(&b, fsel, n, 0);
+        uint8_t gp = gd_pills(g, seat, sel, n);
+        CHECK(fp == gp, "seat %d pills %#x vs %#x (n %d)", seat, fp, gp, n);
+        uint64_t fc = play_coverable_battles(&b, fsel, n);
+        uint32_t gc = gd_coverable(g, seat, sel, n);
+        CHECK(fc == gc, "coverable %#llx vs %#x", (unsigned long long)fc, gc);
+        int fb = play_best_cover_target(&b, fsel, n);
+        int gb = gd_best_cover(g, seat, sel, n);
+        CHECK(fb == gb, "best cover %d vs %d", fb, gb);
+        if (fb >= 0) {
+            int idx = play_resolve(&b, fsel, n, fb);
+            gd_move m;
+            uint8_t ok = gd_resolve_cover(g, seat, sel, n, (uint8_t)gb, &m);
+            CHECK((idx >= 0) == (ok != 0), "resolve found %d vs %d", idx, ok);
+            if (idx >= 0) {
+                Key a, k2;
+                key_of_gd(&a, &m);
+                key_of_f(&k2, &g_lm->moves[idx]);
+                CHECK(!memcmp(&a, &k2, sizeof a), "resolved cover differs");
+            }
+        }
+    }
+    return 1;
+}
+
+static Game *g_scratch;
+static int g_cycle_seek;
+
+static int probe_legal(const gd_game *g, const Game *f) {
+    for (int rep = 0; rep < 4; rep++) {
+        gd_move m;
+        uint8_t seat = rnd(2), h[36], hn = hand_list(g, seat, h);
+        m.type = rnd(5);
+        m.n = (uint8_t)(m.type == GD_PICKUP || m.type == GD_GOOD ? 0 : 1 + rnd(3));
+        for (int i = 0; i < m.n; i++) {
+            // mostly own cards, sometimes any card (not held, or on the table)
+            m.cards[i] = (hn && rnd(5)) ? h[rnd(hn)] : rnd(36);
+            m.atts[i] = (g->nb && rnd(5)) ? g->att[rnd(g->nb)] : rnd(36);
+        }
+        st_probes++;
+        memcpy(g_scratch, f, sizeof *f);
+        bool fok = f_apply(g_scratch, seat, &m);
+        CHECK(fok == (gd_legal(g, seat, &m) != 0), "probe type %d n %d seat %d: foolish %d gd %d", m.type, m.n, seat, fok, !fok);
+        calculate_legal_moves(f, seat, g_lm);
+        if (g_lm->n < MAX_LEGAL_MOVES) {
+            bool fin = f_menu_index(g_lm, &m) >= 0;
+            CHECK(fin == (gd_in_menu(g, seat, &m) != 0), "menu membership type %d: foolish %d", m.type, fin);
+        }
+    }
+    return 1;
+}
+
+
+// THE CYCLE-SEEKING POLICY, which steers play into the repetition draw (uniform
+// play almost never reaches it): the defender transfers one card when it can and
+// takes otherwise, never covers; an attacker leads one card of a rank the
+// defender also holds (so it can come back), and otherwise says good. Cards then
+// rotate between the hands with no discard, and positions recur. Every choice
+// is still a draw from the one RNG, and still applied to both engines.
+static void cycle_seek_pick(const gd_game *g, long n0, long n1, uint8_t *seat, gd_move *m) {
+    uint8_t s = (g->nb > 0 && (g->defender ? n1 : n0) > 0) ? g->defender : (n0 > 0 ? 0 : 1);
+    uint32_t cnt = s ? (uint32_t)n1 : (uint32_t)n0, i, npass = 0, nlead = 0, nany = 0;
+    gd_move c;
+    int have_pickup = 0, have_good = 0;
+    for (i = 0; i < cnt; i++) {
+        gd_menu_move(g, s, i, &c);
+        if (c.type == GD_PASS && c.n == 1) npass++;
+        if (c.type == GD_PICKUP) have_pickup = 1;
+        if (c.type == GD_GOOD) have_good = 1;
+        if (c.type == GD_ATTACK && c.n == 1) {
+            nany++;
+            for (uint8_t q = 0; q < 4; q++)
+                if (GD_HAS(g->hand[s ^ 1], q * 9 + gd_rank_of[c.cards[0]])) { nlead++; break; }
+        }
+    }
+    uint8_t want; uint32_t k;
+    if (npass) { want = GD_PASS; k = gd_rng_below(npass); }
+    else if (have_pickup) { want = GD_PICKUP; k = 0; }
+    else if (g->nb > 0 && have_good) { want = GD_GOOD; k = 0; }
+    else if (nlead) { want = 0xF0; k = gd_rng_below(nlead); }
+    else if (nany) { want = GD_ATTACK; k = gd_rng_below(nany); }
+    else return;   // keep the uniform pick
+    for (i = 0; i < cnt; i++) {
+        gd_menu_move(g, s, i, &c);
+        int hit = 0;
+        if (want == GD_PASS) hit = c.type == GD_PASS && c.n == 1;
+        else if (want == GD_PICKUP || want == GD_GOOD) hit = c.type == want;
+        else if (c.type == GD_ATTACK && c.n == 1) {
+            if (want == GD_ATTACK) hit = 1;
+            else for (uint8_t q = 0; q < 4; q++) if (GD_HAS(g->hand[s ^ 1], q * 9 + gd_rank_of[c.cards[0]])) { hit = 1; break; }
+        }
+        if (hit && k-- == 0) { *m = c; *seat = s; return; }
+    }
+}
+
+// ---- one game --------------------------------------------------------------------------
+#define MOVE_CAP 20000
+
+static int play_game(unsigned long seed, Game *f) {
+    gd_game g;
+    gd_rep rep;
+    uint8_t deck[36];
+    Card fdeck[36];
+    g_seed_now = seed;
+    g_move_now = 0;
+    gd_rng_seed((uint16_t)seed);
+    for (int i = 0; i < 36; i++) deck[i] = (uint8_t)i;
+    for (int i = 35; i > 0; i--) { uint8_t j = (uint8_t)gd_rng_below((uint32_t)i + 1u), t = deck[i]; deck[i] = deck[j]; deck[j] = t; }
+    uint8_t fallback = (uint8_t)gd_rng_below(2);
+    gd_deal(&g, &rep, deck, fallback);
+
+    memset(f, 0, sizeof *f);
+    f->num_players = 2;
+    for (int i = 0; i < 36; i++) fdeck[i] = f_of(deck[i]);
+    game_force_first_attacker(fallback);
+    start_game_with_deck(f, fdeck, 36);
+    game_force_first_attacker(-1);
+    sort_foolish_hands(f);
+    if (!same_state(&g, f)) return 0;
+
+    for (;;) {
+        long n0, n1;
+        if ((n0 = same_menu(&g, f, 0)) < 0) return 0;
+        if ((n1 = same_menu(&g, f, 1)) < 0) return 0;
+        if (g.status != GD_PLAYING) break;
+        if (!probe_gestures(&g, f, 0) || !probe_gestures(&g, f, 1)) return 0;
+        if (!probe_legal(&g, f)) return 0;
+        if (n0 + n1 == 0) { CHECK(0, "nobody can move in a live game"); }
+        if (g_move_now >= MOVE_CAP) { st_cap++; break; }
+        uint32_t pick = gd_rng_below((uint32_t)(n0 + n1));
+        uint8_t seat = pick < (uint32_t)n0 ? 0 : 1;
+        gd_move m;
+        gd_menu_move(&g, seat, seat ? pick - (uint32_t)n0 : pick, &m);
+        if (g_cycle_seek && gd_rng_below(4) != 0) cycle_seek_pick(&g, n0, n1, &seat, &m);
+        calculate_legal_moves(f, seat, g_lm);
+        int fi = f_menu_index(g_lm, &m);
+        if (g_lm->n < MAX_LEGAL_MOVES) CHECK(fi >= 0, "picked move not on foolish's menu");
+        bool ok = fi >= 0 ? legal_move_apply(f, seat, &g_lm->moves[fi]) : f_apply(f, seat, &m);
+        CHECK(ok, "foolish refused the move (reject %d)", engine_last_reject);
+        game_settle_status(f);
+        CHECK(gd_apply(&g, &rep, seat, &m), "gd refused its own menu move");
+        sort_foolish_hands(f);
+        g_move_now++;
+        st_moves++;
+        st_hist_types[m.type]++;
+        if (!same_state(&g, f)) return 0;
+    }
+    if (getenv("DT_VERBOSE")) fprintf(stderr, "seed %lu mode %d: %lu moves result %d\n", seed, g_cycle_seek, g_move_now, gd_result(&g));
+    st_res[gd_result(&g)]++;
+    st_games++;
+    return 1;
+}
+
+int main(int argc, char **argv) {
+    unsigned long games = argc > 1 ? strtoul(argv[1], 0, 10) : 2000;
+    unsigned long first = argc > 2 ? strtoul(argv[2], 0, 10) : 1;
+    Game *f = calloc(1, sizeof(Game));
+    g_scratch = calloc(1, sizeof(Game));
+    g_lm = malloc(sizeof(LegalMoves));
+    g_ka = malloc(sizeof(Key) * MAX_LEGAL_MOVES);
+    g_kb = malloc(sizeof(Key) * MAX_LEGAL_MOVES);
+    g_wire = malloc(WIRE_CAP);
+    if (!f || !g_scratch || !g_lm || !g_ka || !g_kb || !g_wire) return 2;
+    // Uniform random play, then the same number of games again steered toward
+    // the repetition draw (which uniform play almost never reaches).
+    for (g_cycle_seek = 0; g_cycle_seek < 2; g_cycle_seek++)
+        for (unsigned long s = first; s < first + games; s++) {
+            if (!play_game(s, f)) {
+                printf("FAIL after %lu games, %lu moves (%s play)\n", st_games, st_moves,
+                       g_cycle_seek ? "cycle-seeking" : "uniform");
+                return 1;
+            }
+        }
+    printf("difftest: %lu games, %lu moves, %lu menus compared, %lu handler probes, %lu gesture probes\n",
+           st_games, st_moves, st_menus, st_probes, st_gest);
+    printf("  moves: attack %lu cover %lu pass %lu pickup %lu good %lu\n",
+           st_hist_types[0], st_hist_types[1], st_hist_types[2], st_hist_types[3], st_hist_types[4]);
+    printf("  results: seat0 fool %lu, seat1 fool %lu, repetition draw %lu; move cap hit %lu\n",
+           st_res[GD_RESULT_FOOL0], st_res[GD_RESULT_FOOL1], st_res[GD_RESULT_DRAW], st_cap);
+    printf("  largest menu %u, most uncovered attacks %u, largest hand %u, foolish menus truncated %lu\n",
+           st_max_menu, st_max_unc, st_max_hand, st_truncated);
+    printf("PASS\n");
+    return 0;
+}
