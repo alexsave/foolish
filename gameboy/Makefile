@@ -17,7 +17,18 @@ SHARED   = ../shared/c
 CORE     = src/gd_rules.c src/gd_play.c src/gd_rng.c
 CORE_H   = src/gd_rules.h src/gd_play.h src/gd_rng.h $(B)/gd_binom.h
 ROM_SRC  = src/main.c src/gfx.c src/input.c $(CORE)
-ROM_H    = src/gfx.h src/input.h $(B)/tiles.h $(CORE_H)
+ROM_H    = src/gfx.h src/input.h $(CORE_H) $(wildcard art/gbdk/*.h)
+ART      = art/gbdk
+# The table's tile banks sit with the code; the four full-screen pictures
+# (about 9.5 KB) go to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with them
+# the ROM no longer fits the 32 KB ROM-only cart. _HOME (the library's
+# interrupt-safe routines and gfx.c's bank loader) is placed first, in bank 0,
+# because the loader maps bank 2 over 0x4000-0x7FFF while it runs; the check
+# script fails the build if _HOME ever lands past 0x3FFF.
+ART_TABLE = $(ART)/cards.c $(ART)/ui.c $(ART)/sprites.c
+ART_FULL  = $(ART)/dashboard.c $(ART)/dashboard_new.c $(ART)/win.c $(ART)/lose.c
+ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC) $(ART_TABLE))) \
+            $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ART_FULL)))
 
 HOSTFLAGS = -std=c11 -O2 -g -Wall -Wextra -Wno-unused-parameter
 # foolish's production caps (its README): a menu as wide as the shipped one.
@@ -35,15 +46,18 @@ $(B)/gen_binom: tools/gen_binom.c | $(B)
 $(B)/gd_binom.h: $(B)/gen_binom
 	$(B)/gen_binom > $@
 
-$(B)/gen_tiles: tools/gen_tiles.c | $(B)
-	$(HOSTCC) -O2 -o $@ $<
+$(B)/rom:
+	mkdir -p $@
 
-$(B)/tiles.h: $(B)/gen_tiles
-	$(B)/gen_tiles > $@
+$(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h | $(B)/rom
+	$(LCC) $(LCCFLAGS) -I$(B) -I$(ART) -c -o $@ $<
 
-# ---- the ROM ------------------------------------------------------------------
-$(B)/durak.gb: $(ROM_SRC) $(ROM_H) | $(B)
-	$(LCC) $(LCCFLAGS) -Wa-l -Wl-m -Wl-j -I$(B) -Wm-yn"DURAK" -o $@ $(ROM_SRC)
+$(B)/rom/%.o: $(ART)/%.c | $(B)/rom
+	$(LCC) $(LCCFLAGS) $(if $(filter $(notdir $<),$(notdir $(ART_FULL))),-Wf-bo2) -c -o $@ $<
+
+$(B)/durak.gb: $(ROM_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x01 -Wm-yo4 -Wm-yn"DURAK" -o $@ $(ROM_OBJ)
+	sh tests/home_in_bank0.sh $(B)/durak.map
 
 romusage: $(B)/durak.gb
 	$(GBDK)/bin/romusage $(B)/durak.map -g

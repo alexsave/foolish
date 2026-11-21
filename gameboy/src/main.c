@@ -11,6 +11,7 @@
 #include "gd_rng.h"
 #include "gfx.h"
 #include "input.h"
+#include "art_tiles.h"
 
 // THE GAME'S ONE ENTROPY SOURCE: the frame count when a button is first
 // pressed on the home screen seeds the one RNG (gd_rng.c), and every deal and
@@ -27,8 +28,10 @@
 
 #define TGT_PASS 0xFEu
 
-static gd_game G;
-static gd_rep  R;
+// The game and the hand state are not static so tools/gbrun scripts can read
+// them by name (peek _G, expect _cur ...).
+gd_game G;
+gd_rep  R;
 static uint8_t live;            // a game has been dealt
 static uint8_t seeded;
 
@@ -37,18 +40,29 @@ static uint8_t seeded;
 // every card ever held keeps its slot, so a card that comes back (a pickup)
 // returns to where it was; new cards join at the end in the order they arrive.
 static uint8_t mem[GD_NCARDS], mem_n;
-static uint8_t disp[GD_NCARDS], disp_n;
-static int8_t  cur = -1;        // the cursor, an index into disp; -1 none
-static gd_mask selm;            // the selection (the website's selectedCards)
-static uint8_t in_target;       // the cover/pass TARGET mode
-static uint8_t tgt[GD_MAXB + 1], tgt_n, tgt_i;
+uint8_t disp[GD_NCARDS], disp_n;
+int8_t  cur = -1;        // the cursor, an index into disp; -1 none
+gd_mask selm;            // the selection (the website's selectedCards)
+uint8_t in_target;       // the cover/pass TARGET mode
+uint8_t tgt[GD_MAXB + 1], tgt_n, tgt_i;
 static uint8_t view_off;        // first shown card when the hand is wider than the screen
 
 static uint8_t idle;            // frames since the board last changed
 static uint8_t flash_t;
 static const char *flash_msg;
 static uint8_t dirty;
-static uint8_t home = 1, home_item;
+#define SCREEN_DASH  0
+#define SCREEN_TABLE 1
+#define SCREEN_END   2      // the win or lose picture
+uint8_t screen = SCREEN_DASH, dash_item;
+// The bots on the dashboard. Only the random brain exists so far, so every
+// city plays it; the city is the name the board shows (README.md "Not done").
+static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "WARSAW" };
+uint8_t bot_city;
+// The finished table stays up this long before the win or lose picture.
+#define END_DELAY 90
+static uint8_t end_t;
+static char flash_buf[21];
 
 // How long the bot's last decision took, in scanlines (1 line = 108.7 us):
 // count + unrank + apply. Read by tools/gbrun (peek _bot_lines_max).
@@ -98,6 +112,17 @@ static void note_new_cards(const gd_game *b) {
 
 static void flash(const char *s) { flash_msg = s; flash_t = FLASH_FRAMES; }
 
+// "<CITY> <verb>" on the foot rail.
+static void flash_bot(const char *verb) {
+    uint8_t n = 0;
+    const char *p = bot_names[bot_city];
+    while (*p && n < 20) flash_buf[n++] = *p++;
+    if (n < 20) flash_buf[n++] = ' ';
+    while (*verb && n < 20) flash_buf[n++] = *verb++;
+    flash_buf[n] = 0;
+    flash(flash_buf);
+}
+
 static gd_game before;
 
 // Apply a move for a seat; 1 if it was legal.
@@ -110,14 +135,14 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
     in_target = 0;      // the website's afterMove (and a stale target after a bot move)
     if (seat == BOT) {
         switch (m->type) {
-        case GD_ATTACK: flash(before.nb ? "BOT ADDS" : "BOT ATTACKS"); break;
-        case GD_COVER:  flash("BOT COVERS"); break;
-        case GD_PASS:   flash("BOT PASSES IT ON"); break;
-        case GD_PICKUP: flash("BOT TAKES"); break;
+        case GD_ATTACK: flash_bot(before.nb ? "ADDS" : "ATTACKS"); break;
+        case GD_COVER:  flash_bot("COVERS"); break;
+        case GD_PASS:   flash_bot("PASSES"); break;
+        case GD_PICKUP: flash_bot("TAKES"); break;
         case GD_GOOD:
             // A good over an uncovered attack is a silent one (foolish
             // game_shown_good_mask): the bot just stops adding. Not shown.
-            if (before.nb && !gd_uncovered(&before)) flash("BOT: DONE");
+            if (before.nb && !gd_uncovered(&before)) flash_bot("IS DONE");
             break;
         }
     } else if (m->type == GD_PICKUP) {
@@ -145,6 +170,7 @@ static void new_game(void) {
     idle = 0;
     flash_t = 0;
     live = 1;
+    end_t = 0;
     dirty = 1;
     rebuild_disp();
 }
@@ -267,11 +293,8 @@ static void sweep(int8_t step) {
 
 static void human_input(void) {
     const int8_t step = in_lr_step();
-    if (in_pressed(J_START)) { home = 1; home_item = 0; dirty = 1; return; }
-    if (G.status != GD_PLAYING) {
-        if (in_pressed(J_A)) new_game();
-        return;
-    }
+    if (in_pressed(J_START)) { screen = SCREEN_DASH; dash_item = 0; dirty = 1; return; }
+    if (G.status != GD_PLAYING) return;
     if (in_pressed(J_A) || in_pressed(J_B) || in_pressed(J_UP) || in_pressed(J_DOWN) || step) dirty = 1;
     // A is the website's Shift press: toggle the cursor card in or out of the selection.
     if (in_pressed(J_A) && cur >= 0 && !in_target && (uint8_t)cur < disp_n) toggle(disp[(uint8_t)cur]);
@@ -308,140 +331,366 @@ static void bot_turn(void) {
     if (bot_lines_last > bot_lines_max) bot_lines_max = bot_lines_last;
 }
 
-// ---- drawing ---------------------------------------------------------------------------
-#define HAND_Y 15
-#define TABLE_Y 3
+// ---- drawing: the table (gameboy/art/README.md "The table screen") ----------------------
+#define ROW_BOTHAND 1
+#define ROW_RAISE   12
+#define ROW_HAND    13
+#define ROW_UNDER   16
+#define ROW_FOOT    17
+#define HAND_SHOWN  19      // the most cards shown at once; more scroll
 
-static void battle_xy(uint8_t i, uint8_t *x, uint8_t *y) {
-    *x = (uint8_t)(1u + 3u * (i % 6u));
-    *y = (uint8_t)(TABLE_Y + 3u * (i / 6u));
+// Battle i of n: its attack card's tile. Up to six follow the art (one row of
+// up to three centred at row 6, else three over the rest at rows 4 and 8, four
+// columns a battle). A bout can hold up to 18 battles; past six they pack
+// three columns apart, six a row, in rows 4 and 8, and past twelve a third row
+// at 10 overlaps (rare: the most the differential test saw was a few more than six).
+static void battle_xy(uint8_t i, uint8_t n, uint8_t *x, uint8_t *y) {
+    uint8_t per, row, k, m, step;
+    if (n <= 3) { per = 3; step = 4; }
+    else if (n <= 6) { per = 3; step = 4; }
+    else { per = 6; step = 3; }
+    row = (uint8_t)(i / per);
+    k = (uint8_t)(i % per);
+    m = (uint8_t)(n - row * per);
+    if (m > per) m = per;
+    *x = (uint8_t)((SCR_W - (step * m - 1u)) / 2u + step * k);
+    *y = n <= 3 ? 6 : (uint8_t)(4u + 4u * row);
+    if (row >= 2) *y = 10;
+}
+
+static void pass_xy(uint8_t n, uint8_t *x, uint8_t *y) {
+    battle_xy((uint8_t)(n - 1u), n, x, y);
+    *x = (uint8_t)(*x + (n > 6 ? 3u : 4u));
+    if (*x > SCR_W - 2u) *x = SCR_W - 2u;
+}
+
+// The hand's columns (the art's hand_columns): up to 10 cards two columns each,
+// 11 to 19 one column each, both centred; 20 or more show 19 and scroll.
+static uint8_t hand_x0, hand_step, hand_shown;
+
+static void hand_layout(void) {
+    if (disp_n <= 10) { hand_step = 2; hand_shown = disp_n; hand_x0 = (uint8_t)((SCR_W - 2u * disp_n) / 2u); }
+    else if (disp_n <= HAND_SHOWN) { hand_step = 1; hand_shown = disp_n; hand_x0 = (uint8_t)((SCR_W - (disp_n + 1u)) / 2u); }
+    else { hand_step = 1; hand_shown = HAND_SHOWN; hand_x0 = 0; }
+    if (disp_n <= HAND_SHOWN) view_off = 0;
+    else {
+        if (cur >= 0 && (uint8_t)cur < view_off) view_off = (uint8_t)cur;
+        if (cur >= 0 && (uint8_t)cur >= view_off + HAND_SHOWN) view_off = (uint8_t)(cur - HAND_SHOWN + 1);
+        if (view_off + HAND_SHOWN > disp_n) view_off = (uint8_t)(disp_n - HAND_SHOWN);
+    }
+}
+
+// Where hand card i is drawn, and how many columns of it show.
+static void hand_place(uint8_t i, uint8_t *x, uint8_t *y, uint8_t *w) {
+    const uint8_t k = (uint8_t)(i - view_off);
+    *x = (uint8_t)(hand_x0 + hand_step * k);
+    *y = GD_HAS(selm, disp[i]) ? ROW_RAISE : ROW_HAND;
+    *w = (hand_step == 2 || k + 1u == hand_shown) ? 2 : 1;
 }
 
 static const char *role_text(void) {
-    if (G.nb == 0) return G.fa == HUMAN ? "YOUR ATTACK" : "BOT TO ATTACK";
-    if (G.defender == HUMAN) return gd_uncovered(&G) ? "DEFEND" : "BOT MAY ADD";
-    return gd_uncovered(&G) ? "BOT DEFENDS" : "ADD OR DONE";
+    static char buf[21];
+    const char *verb;
+    const char *p = bot_names[bot_city];
+    uint8_t n = 0;
+    if (G.nb == 0) { if (G.fa == HUMAN) return "YOUR ATTACK"; verb = " ATTACKS"; }
+    else if (G.defender == HUMAN) { if (gd_uncovered(&G)) return "YOU DEFEND"; verb = " MAY ADD"; }
+    else { if (!gd_uncovered(&G)) return "ALL COVERED"; verb = " DEFENDS"; }
+    while (*p) buf[n++] = *p++;
+    while (*verb) buf[n++] = *verb++;
+    buf[n] = 0;
+    return buf;
 }
 
-static void draw_game(void) {
-    uint8_t i, n, x, y, w, x0, s[GD_NCARDS], sn, pills;
-    gfx_clear();
-    // the bot's hand: backs and a count
+// The move UP makes for the selection, or for the cursor card alone; then the
+// move DOWN makes. The foot rail shows the first there is.
+static const char *action_text(void) {
+    uint8_t s[GD_NCARDS], n = sel_list(s), pills;
+    if (n == 0 && cur >= 0) { s[0] = disp[(uint8_t)cur]; n = 1; }
+    if (n) {
+        pills = gd_pills(&G, HUMAN, s, n);
+        if (pills & GD_PILL_ATTACK) return IC_UP "PLAY";
+        if (pills & GD_PILL_COVER) return IC_UP "COVER";
+        if (pills & GD_PILL_PASS) return IC_UP "PASS";
+    }
+    n = sel_list(s);
+    pills = gd_pills(&G, HUMAN, s, n);
+    if (pills & GD_PILL_PICKUP) return IC_DOWN "PICK UP";
+    if (pills & GD_PILL_GOOD) return IC_DOWN "DONE";
+    return "";
+}
+
+static char rail_buf[21];
+
+static const char *top_left(void) {
+    const char *p = bot_names[bot_city];
+    uint8_t n = 0, c = gd_hand_n(&G, BOT);
+    while (*p) rail_buf[n++] = *p++;
+    rail_buf[n++] = ' ';
+    rail_buf[n++] = IC_BACK[0];
+    if (c >= 10) rail_buf[n++] = (char)('0' + c / 10);
+    rail_buf[n++] = (char)('0' + c % 10);
+    rail_buf[n] = 0;
+    return rail_buf;
+}
+
+static void draw_table(void) {
+    uint8_t i, n, x, y, w, deck;
+    char right[8], foot_left[21];
+    const char *fr;
+    gfx_clear_table();
+    // the top rail: the bot and its count; the deck and the trump suit
+    deck = (uint8_t)(G.stock_n + (G.has_flipped ? 1u : 0u));
+    n = 0;
+    if (deck) {
+        right[n++] = IC_DECK[0];
+        if (deck >= 10) right[n++] = (char)('0' + deck / 10);
+        right[n++] = (char)('0' + deck % 10);
+        right[n++] = ' ';
+    }
+    right[n++] = (char)(IC_SUIT0 + G.trump);
+    right[n] = 0;
+    gfx_rail(0, top_left(), right);
+    // the bot's hand: backs one column apart, centred, 18 at most
     n = gd_hand_n(&G, BOT);
-    for (i = 0; i < n && i < 15; i++) gfx_tile(i, 0, 2);
-    gfx_text(16, 0, "x");
-    gfx_num(17, 0, n);
-    // the trump card under the stock, and the stock
-    if (G.has_flipped) gfx_card(0, 1, G.flipped, 0);
-    else gfx_suit(0, 2, G.trump);
-    if (G.stock_n) { gfx_tile(1, 1, 3); gfx_tile(1, 2, 4); }
-    gfx_num(3, 1, (uint8_t)(G.stock_n + (G.has_flipped ? 1u : 0u)));
-    gfx_text(3, 2, "LEFT");
+    if (n > 18) n = 18;
+    x = (uint8_t)((SCR_W - (n + 1u)) / 2u);
+    for (i = 0; i < n; i++) gfx_back((uint8_t)(x + i), ROW_BOTHAND);
+    // the trump card under the deck, and the discard pile
+    if (G.has_flipped) gfx_card(0, 4, G.flipped);
+    if (G.stock_n) gfx_back(1, 4);
+    if (G.discard) { gfx_back(0, 8); if (G.discard >= 12) gfx_back(1, 8); }
     // the table
     for (i = 0; i < G.nb; i++) {
-        battle_xy(i, &x, &y);
-        gfx_card(x, y, G.att[i], 0);
-        if (G.def[i] != GD_NONE) gfx_card((uint8_t)(x + 1u), (uint8_t)(y + 1u), G.def[i], 0);
+        battle_xy(i, G.nb, &x, &y);
+        gfx_card(x, y, G.att[i]);
+        if (G.def[i] != GD_NONE) gfx_card((uint8_t)(x + 1u), (uint8_t)(y + 1u), G.def[i]);
     }
-    if (in_target && tgt[tgt_i] == TGT_PASS && G.nb < GD_MAXB) {
-        battle_xy(G.nb, &x, &y);
-        gfx_tile(x, y, 5); gfx_tile(x, (uint8_t)(y + 1u), 6);
+    if (in_target && tgt[tgt_i] == TGT_PASS) { pass_xy(G.nb, &x, &y); gfx_pass_slot(x, y); }
+    // my hand: unraised cards first, then raised ones over them, left to right
+    hand_layout();
+    for (i = view_off; i < view_off + hand_shown; i++) {
+        hand_place(i, &x, &y, &w);
+        gfx_card(x, y, disp[i]);
     }
-    // status and hints
-    if (G.status != GD_PLAYING) {
-        const uint8_t r = gd_result(&G);
-        gfx_text(0, 12, r == GD_RESULT_FOOL1 ? "YOU WIN!" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED");
-        gfx_text(0, 13, "A:AGAIN START:HOME");
-    } else {
-        gfx_text(0, 12, flash_t ? flash_msg : role_text());
-        if (in_target) {
-            gfx_text(0, 13, tgt[tgt_i] == TGT_PASS ? "<> AIM ^PASS vBACK" : "<> AIM ^COVER vBACK");
-        } else {
-            sn = sel_list(s);
-            if (sn == 0 && cur >= 0) { s[0] = disp[(uint8_t)cur]; pills = gd_pills(&G, HUMAN, s, 1); }
-            else pills = gd_pills(&G, HUMAN, s, sn);
-            if (pills & GD_PILL_ATTACK) gfx_text(0, 13, "^ATTACK");
-            else if (pills & GD_PILL_COVER) gfx_text(0, 13, "^COVER");
-            else if (pills & GD_PILL_PASS) gfx_text(0, 13, "^PASS");
-            pills = gd_pills(&G, HUMAN, s, sel_list(s));
-            if (pills & GD_PILL_PICKUP) gfx_text(14, 13, "vTAKE");
-            else if (pills & GD_PILL_GOOD) gfx_text(14, 13, "vDONE");
+    if (disp_n > HAND_SHOWN) {
+        // tabs counting the hidden cards each side
+        char t[5];
+        uint8_t k = 0;
+        if (view_off) {
+            t[k++] = IC_LEFT[0];
+            if (view_off >= 10) t[k++] = (char)('0' + view_off / 10);
+            t[k++] = (char)('0' + view_off % 10);
+            t[k] = 0;
+            gfx_text(0, ROW_UNDER, t);
+        }
+        n = (uint8_t)(disp_n - view_off - HAND_SHOWN);
+        if (n) {
+            k = 0;
+            if (n >= 10) t[k++] = (char)('0' + n / 10);
+            t[k++] = (char)('0' + n % 10);
+            t[k++] = IC_RIGHT[0];
+            t[k] = 0;
+            gfx_text((uint8_t)(SCR_W - k), ROW_UNDER, t);
         }
     }
-    // my hand, centred; scrolled when wider than the screen
-    w = disp_n <= SCR_W ? disp_n : (uint8_t)(SCR_W - 2u);
-    x0 = disp_n <= SCR_W ? (uint8_t)((SCR_W - disp_n) / 2u) : 1u;
-    if (disp_n <= SCR_W) view_off = 0;
-    else {
-        if (cur >= 0 && (uint8_t)cur < view_off) view_off = (uint8_t)cur;
-        if (cur >= 0 && (uint8_t)cur >= view_off + w) view_off = (uint8_t)(cur - w + 1);
-        if (view_off + w > disp_n) view_off = (uint8_t)(disp_n - w);
-        if (view_off) gfx_text(0, HAND_Y, "<");
-        if (view_off + w < disp_n) gfx_text(SCR_W - 1u, HAND_Y, ">");
+    // the foot rail
+    if (G.status != GD_PLAYING) {
+        const uint8_t r = gd_result(&G);
+        gfx_rail(ROW_FOOT, r == GD_RESULT_FOOL1 ? "YOU WIN" : r == GD_RESULT_FOOL0 ? "YOU ARE THE FOOL" : "DRAW: REPEATED",
+                 r == GD_RESULT_DRAW ? IC_A "AGAIN" : "");
+    } else if (in_target) {
+        gfx_rail(ROW_FOOT, IC_LEFT IC_RIGHT "TARGET", tgt[tgt_i] == TGT_PASS ? IC_UP "PASS" : IC_UP "COVER");
+    } else if (in_select_held() && cur >= 0) {
+        gfx_rail(ROW_FOOT, "SELECT+" IC_LEFT IC_RIGHT, "MOVE CARD");
+    } else {
+        uint8_t s[GD_NCARDS];
+        n = sel_list(s);
+        fr = flash_t ? flash_msg : role_text();
+        if (n && !flash_t) {
+            foot_left[0] = n >= 10 ? (char)('0' + n / 10) : (char)('0' + n);
+            i = 1;
+            if (n >= 10) foot_left[i++] = (char)('0' + n % 10);
+            foot_left[i] = 0;
+            {
+                const char *sel = " SELECTED";
+                while (*sel) foot_left[i++] = *sel++;
+                foot_left[i] = 0;
+            }
+            fr = foot_left;
+        }
+        gfx_rail(ROW_FOOT, fr, action_text());
     }
-    for (i = 0; i < w; i++) gfx_card((uint8_t)(x0 + i), HAND_Y, disp[view_off + i], GD_HAS(selm, disp[view_off + i]));
     gfx_flush();
-    // sprites: the cursor's underline, and the target frame
-    gfx_sprite(SPR_CURSOR, cur >= 0, (uint8_t)(x0 + (uint8_t)cur - view_off), HAND_Y + 2);
 }
 
-static void draw_sprites_blink(void) {
-    uint8_t x, y, show;
-    show = in_target && (sys_time & 16u) == 0;
-    if (in_target) {
-        if (tgt[tgt_i] == TGT_PASS) battle_xy(G.nb, &x, &y);
-        else battle_xy(tgt[tgt_i], &x, &y);
-    } else { x = 0; y = 0; }
-    gfx_sprite(SPR_FRAME_TOP, show, x, y);
-    gfx_sprite(SPR_FRAME_BOT, show, x, (uint8_t)(y + 1u));
+// ---- sprites on the table ------------------------------------------------------------------
+static uint16_t isqrt(uint16_t v) {
+    uint16_t r = 0, b = 0x4000;
+    while (b > v) b >>= 2;
+    while (b) {
+        if (v >= r + b) { v -= r + b; r = (r >> 1) + b; } else r >>= 1;
+        b >>= 2;
+    }
+    return r;
 }
 
-static void draw_home(void) {
-    gfx_clear();
-    gfx_text(7, 3, "DURAK");
-    gfx_text(4, 5, "THE FOOL GAME");
-    gfx_text(5, 9, "NEW GAME");
-    if (live && G.status == GD_PLAYING) gfx_text(5, 10, "CONTINUE");
-    gfx_text(3, home_item ? 10 : 9, ">");
-    gfx_text(3, 13, "BOT: RANDOM");
-    gfx_text(1, 16, "A:CHOOSE  ^v:MOVE");
+// The cover/pass arrow: dots from the cursor card's top to just under the
+// target, and a head (the art's arrow()).
+static void arrow(int16_t sx, int16_t sy, int16_t dx, int16_t dy, uint8_t dashed) {
+    const int16_t ax = dx - sx, ay = dy - sy;
+    const uint16_t adx = (uint16_t)(ax < 0 ? -ax : ax), ady = (uint16_t)(ay < 0 ? -ay : ay);
+    const uint16_t len = isqrt((uint16_t)(adx * adx + ady * ady));
+    const uint8_t step = dashed ? 10 : 6;
+    uint16_t k, nd;
+    if (len < 10) return;
+    nd = (uint16_t)((len - 9u) / step);
+    for (k = 1; k <= nd; k++) {
+        const int16_t f = (int16_t)(k * step);
+        gfx_spr(sx + (int16_t)((int32_t)ax * f / (int16_t)len) - 2, sy + (int16_t)((int32_t)ay * f / (int16_t)len) - 2, T_SP_DOT, 0);
+    }
+    if (ay <= 0 && adx * 5u < ady * 2u) gfx_spr(dx - 4, dy - 4, T_SP_HEAD_N, 0);
+    else if (ay <= 0) gfx_spr(dx - 4, dy - 4, T_SP_HEAD_NE, ax < 0 ? S_FLIPX : 0);
+    else gfx_spr(dx - 4, dy - 4, T_SP_HEAD_N, S_FLIPY);
+}
+
+static void draw_table_sprites(void) {
+    uint8_t x = 0, y = 0, w = 1, tx, ty;
+    gfx_spr_begin();
+    if (G.status == GD_PLAYING && cur >= 0 && (uint8_t)cur < disp_n) {
+        hand_layout();
+        hand_place((uint8_t)cur, &x, &y, &w);
+        // the underline, 1 px under the card
+        if (w == 1) gfx_spr(x * 8, (y + 3) * 8 + 1, T_SP_UL_ONE, 0);
+        else { gfx_spr(x * 8, (y + 3) * 8 + 1, T_SP_UL_LEFT, 0); gfx_spr(x * 8 + 8, (y + 3) * 8 + 1, T_SP_UL_RIGHT, 0); }
+        if (in_select_held()) {
+            gfx_spr(x * 8 - 6, (y + 3) * 8 - 1, T_SP_NUDGE, 0);
+            gfx_spr(x * 8 + w * 8 - 2, (y + 3) * 8 - 1, T_SP_NUDGE, S_FLIPX);
+        }
+        if (in_target) {
+            const int16_t sx = x * 8 + (w == 1 ? 4 : 8), sy = y * 8 - 1;
+            if (tgt[tgt_i] == TGT_PASS) {
+                pass_xy(G.nb, &tx, &ty);
+                arrow(sx, sy, tx * 8 + 8, ty * 8 + 32, 1);
+                gfx_spr_text(tx * 8 - 8, ty * 8 - 9, "PASS");
+            } else {
+                battle_xy(tgt[tgt_i], G.nb, &tx, &ty);
+                arrow(sx, sy, tx * 8 + 8, ty * 8 + 32, 0);
+                gfx_spr(tx * 8 - 3, ty * 8 - 3, T_SP_BRACKET, 0);
+                gfx_spr(tx * 8 + 11, ty * 8 - 3, T_SP_BRACKET, S_FLIPX);
+                gfx_spr(tx * 8 - 3, ty * 8 + 19, T_SP_BRACKET, S_FLIPY);
+                gfx_spr(tx * 8 + 11, ty * 8 + 19, T_SP_BRACKET, S_FLIPX | S_FLIPY);
+            }
+        }
+    }
+    gfx_spr_end();
+}
+
+// ---- the dashboard, and the end of a game ---------------------------------------------
+#define DASH_CONTINUE 0
+#define DASH_ROW_CONTINUE 11
+#define DASH_ROW_BOT0 13
+#define DASH_LACQUER 74       // the plain black tile of the dashboard picture
+#define WIN_BLACK 2           // and of the win picture
+
+static uint8_t can_continue(void) { return live && G.status == GD_PLAYING; }
+
+// `full`: load the picture (entering the screen); otherwise only the pointer moves.
+static void draw_dash(uint8_t full) {
+    uint8_t row;
+    if (full) {
+        gfx_load_full(can_continue() ? FULL_DASHBOARD : FULL_DASHBOARD_NEW);
+        if (can_continue()) {
+            // the open game's city, printed over the picture's sample name
+            for (row = 11; row < SCR_W; row++) gfx_tile(row, DASH_ROW_CONTINUE, DASH_LACQUER);
+            gfx_text(11, DASH_ROW_CONTINUE, bot_names[bot_city]);
+        }
+        gfx_flush();
+    }
+    row = dash_item == DASH_CONTINUE ? DASH_ROW_CONTINUE : (uint8_t)(DASH_ROW_BOT0 + dash_item - 1u);
+    gfx_spr_begin();
+    gfx_spr(6, row * 8, 230, 0);
+    gfx_spr_end();
+}
+
+static void draw_end(void) {
+    uint8_t x;
+    const uint8_t won = gd_result(&G) == GD_RESULT_FOOL1;
+    gfx_load_full(won ? FULL_WIN : FULL_LOSE);
+    if (won) {
+        // "<CITY> / IS THE DURAK", printed over the picture's sample name
+        for (x = 0; x < SCR_W; x++) { gfx_tile(x, 5, WIN_BLACK); gfx_tile(x, 6, WIN_BLACK); }
+        gfx_text((uint8_t)((SCR_W - gfx_text_len(bot_names[bot_city])) / 2u), 5, bot_names[bot_city]);
+        gfx_text(4, 6, "IS THE DURAK");
+    }
     gfx_flush();
-    gfx_sprite(SPR_CURSOR, 0, 0, 0);
-    gfx_sprite(SPR_FRAME_TOP, 0, 0, 0);
-    gfx_sprite(SPR_FRAME_BOT, 0, 0, 0);
+    gfx_spr_begin();
+    gfx_spr_end();
 }
 
-static void home_input(void) {
-    const uint8_t can_continue = live && G.status == GD_PLAYING;
+static void go_table(void) {
+    screen = SCREEN_TABLE;
+    dirty = 1;
+}
+
+static void dash_input(void) {
+    const uint8_t first = can_continue() ? DASH_CONTINUE : 1u;
     if (in_any_pressed() && !seeded) {
         gd_rng_seed(GD_SEED_FIXED ? (uint16_t)GD_SEED_FIXED : sys_time);
         seeded = 1;
     }
-    if (in_pressed(J_UP) || in_pressed(J_DOWN)) { if (can_continue) home_item ^= 1u; dirty = 1; }
+    if (dash_item < first) dash_item = first;
+    if (in_pressed(J_UP) && dash_item > first) { dash_item--; dirty = 1; }
+    if (in_pressed(J_DOWN) && dash_item < 4) { dash_item++; dirty = 1; }
     if (in_pressed(J_A) || in_pressed(J_START)) {
-        if (home_item == 1 && can_continue) { home = 0; dirty = 1; return; }
+        if (dash_item == DASH_CONTINUE) { go_table(); return; }
+        bot_city = (uint8_t)(dash_item - 1u);
         new_game();
-        home = 0;
-        dirty = 1;
+        go_table();
     }
 }
 
+static void end_input(void) {
+    if (in_pressed(J_A)) { new_game(); go_table(); }
+    else if (in_pressed(J_B) || in_pressed(J_START)) { screen = SCREEN_DASH; dash_item = 1; dirty = 1; }
+}
+
 void main(void) {
+    uint8_t shown = 0xFF, was_select = 0;
     gfx_init();
     dirty = 1;
     for (;;) {
         vsync();
         in_update();
-        if (home) {
-            home_input();
-            if (dirty) { dirty = 0; if (home) draw_home(); else draw_game(); }
-            continue;
+        if (screen == SCREEN_DASH) {
+            dash_input();
+        } else if (screen == SCREEN_END) {
+            end_input();
+        } else {
+            if (idle < 255) idle++;
+            if (flash_t) { flash_t--; if (!flash_t) dirty = 1; }
+            if (G.status != GD_PLAYING) {
+                // the finished table, then the picture; a draw has no picture
+                if (gd_result(&G) == GD_RESULT_DRAW) { if (in_pressed(J_A)) new_game(); }
+                else if (++end_t >= END_DELAY) { screen = SCREEN_END; dirty = 1; }
+                if (in_pressed(J_START)) { screen = SCREEN_DASH; dash_item = 1; dirty = 1; }
+            } else {
+                human_input();
+                if (screen == SCREEN_TABLE) bot_turn();
+            }
+            if (in_select_held() != was_select) { was_select = in_select_held(); dirty = 1; }
         }
-        if (idle < 255) idle++;
-        if (flash_t) { flash_t--; if (!flash_t) dirty = 1; }
-        human_input();
-        if (!home) bot_turn();
-        if (dirty) { dirty = 0; if (home) draw_home(); else draw_game(); }
-        if (!home) draw_sprites_blink();
+        if (screen != shown) dirty = 1;
+        if (dirty) {
+            dirty = 0;
+            if (screen == SCREEN_DASH) draw_dash(shown != SCREEN_DASH);
+            else if (screen == SCREEN_END) draw_end();
+            else {
+                if (shown != SCREEN_TABLE) gfx_load_table();
+                draw_table();
+                draw_table_sprites();
+            }
+            shown = screen;
+        }
     }
 }
