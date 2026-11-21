@@ -7,6 +7,7 @@
 #include "cards.h"
 #include "ui.h"
 #include "sprites.h"
+#include "pile.h"
 #include "dashboard.h"
 #include "dashboard_new.h"
 #include "win_miami.h"
@@ -42,6 +43,7 @@ void gfx_load_table(void) {
     from_bank(BANK(cards), VRAM_TILE(ART_CARDS_BASE), cards_tiles, 16u * ART_CARDS_COUNT);
     from_bank(BANK(ui), VRAM_TILE(ART_UI_BASE), ui_tiles, 16u * ART_UI_COUNT);
     from_bank(BANK(sprites), VRAM_TILE(ART_SPRITES_BASE), sprites_tiles, 16u * ART_SPRITES_COUNT);
+    from_bank(BANK(pile), VRAM_TILE(ART_PILE_BASE), pile_tiles, 16u * ART_PILE_COUNT);
     font_base = ART_UI_BASE;
     // Never show new tiles under the old screen's map, even for a frame: the
     // map goes out (plain wool) before the display comes back.

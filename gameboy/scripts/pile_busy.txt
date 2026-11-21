@@ -1,0 +1,23 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+#
+# The bot's hand and the pile share the top rows: the backs keep to columns 0-16
+# (pixels 0..135) however many cards the bot holds, and the pile (columns 17-19)
+# stays whole beside them. I give the bot 32 cards and the pile a card, then
+# attack so the board is redrawn: 16 backs are shown (the rail has the count),
+# the last ends at pixel 135 (its dark edge), the wool 136..138 beside the pile is
+# clear, and the pile's black is at (141, 20) and (156, 20).
+@99  poke _sys_time 1f 00
+@100 press A
++19  poke _G+5 ff ff ff ff 00
++0   poke _G+80 02
++1   press RIGHT
++6   press UP
++10  expect _G+74 01
++0   pixel 135 20 2
++0   pixel 137 20 1
++0   pixel 141 20 3
++0   pixel 156 20 3
++0   shot shots/pile_busy.png 3
