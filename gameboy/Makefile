@@ -10,6 +10,10 @@ LCC      = $(GBDK)/bin/lcc
 # SDCC must play identical games - is the check that keeps codegen honest.
 LCCFLAGS =
 HOSTCC  ?= clang
+# mGBA for the headless runner: Homebrew's paths by default (the Mac); on Linux
+# libmgba-dev is on the default paths, so MGBA_CFLAGS= MGBA_LIBS='-lmgba -lpng'.
+MGBA_CFLAGS ?= -I/opt/homebrew/include
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
 B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
@@ -123,7 +127,7 @@ rom-mutants: $(B)/durak.gb $(B)/gbrun
 
 # ---- the headless runner ------------------------------------------------------------
 $(B)/gbrun: tools/gbrun.c | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
+	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -D_GNU_SOURCE $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
 
 gbrun: $(B)/gbrun
 
