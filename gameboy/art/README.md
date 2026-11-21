@@ -52,6 +52,7 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 | 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
 | 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
 | 140..157 | `sprites` | 18 | underline, arrow, brackets, nudge, pointer, deal flip, the club's sprite copies |
+| 160..168 | `pile` | 9 | the discard pile (`pile.c`), a 3x3 tile box |
 
 That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
@@ -151,8 +152,8 @@ Cost: 3 sprite tiles (155..157) and the OBP1 slot.
 | Row | What |
 | --- | --- |
 | 0 | top rail: bot name, `IC_MINIBACK` + bot card count; right: `IC_MINIDECK` + deck count, trump suit icon (the suit stays after the deck runs out) |
-| 1-3 | bot hand: backs one column apart, centred (18 at most; the rail has the true count) |
-| 4-11 | table: trump at (0,4) under the deck at (1,4); discard pile at (0,8) |
+| 1-3 | bot hand: backs one column apart, centred in columns 0-16 (16 at most shown; the rail has the true count); the discard pile at columns 17-19 |
+| 4-11 | table: trump at (0,4) under the deck at (1,4); the battles |
 | 12 | raise row: a selected card moves up one tile |
 | 13-15 | your hand |
 | 16 | underline row (wool); hidden-card tabs when the hand scrolls |
@@ -161,6 +162,15 @@ Cost: 3 sprite tiles (155..157) and the OBP1 slot.
 There is no rail across the middle of the screen: the status lives in the foot rail, under the hand.
 Rails are rows of `ui` font tiles (white on dark grey); everything else on the table is `WOOL` (one tile, repeated).
 The foot rail can be the window layer (`WY = 136`) if that is easier to update; it uses the same BGP.
+
+### The discard pile
+
+Top right, where the website draws it: a 3x3 tile box at columns 17-19, rows 1-3 (`ART_DISCARD_X`, `ART_DISCARD_Y`), tiles `T_PILE_00`..`T_PILE_22` in row-major order from `ART_PILE_BASE` (160).
+Two upright backs, the top one 4 px right of the one under it so the lower one's edge shows, over the wool (`gen_art.pile_canvas`); the backs keep their full 24 px height, so the offset is sideways and the box stays three columns wide (rows 1-3; a vertical offset would reach row 4, where battles go).
+Draw it once the first bout is swept; the table above is empty before that.
+It clears every battle layout (up to six use columns 4-14 at rows 4-11; past six the code packs them from column 1 to 18 at rows 4-13), the TARGET arrow and its brackets, and the bot's hand, which keeps to columns 0-16 (`ART_BOT_HAND_LAST_COL`: 16 backs at most shown).
+A swept table flies there: each card's flight ends with its top left at pixel (`ART_DISCARD_LAND_PX`, `ART_DISCARD_LAND_PY`) = (143, 8), exactly on the top back, and the pile's tiles stay as they are (no count is drawn, as the rail has the numbers).
+Before and after on the busiest table: `mockups/33_discard_right_before_after.png`.
 
 ### Battles
 
@@ -208,11 +218,12 @@ Unique background tiles each screen uses (all banks together are 133, so every t
 | Screen | File | Unique BG tiles | Sprites | Max per line |
 | --- | --- | --- | --- | --- |
 | You attack | `mockups/t1_attack.png` | 56 | 2 | 2 |
-| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 59 | 0 | 0 |
+| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 68 | 0 | 0 |
 | Target mode, cover | `mockups/t3_target_cover.png` | 56 | 10 | 2 |
 | Target mode, pass | `mockups/t3b_target_pass.png` | 60 | 12 | 4 |
-| Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
-| Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
+| Pick up | `mockups/t4_pickup.png` | 56 | 0 | 0 |
+| Big hand (22), two selected | `mockups/t5_big_hand.png` | 60 | 1 | 1 |
+| Six battles, TARGET, the pile | `mockups/t7_busy.png` | 69 | 10 | 3 |
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 57 | 4 | 4 |
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
@@ -291,3 +302,52 @@ Taking cards after a turn (pick up, or refilling from the deck) uses the same fl
 - `export.py` also prints the names into the shipped (blank) dashboard and win maps the way the code will and asserts the result equals the mockups; mutation checked by printing the win name one column off.
 - The check ROM prints SEOUL on the dashboard and each bot's name on its win screen with the same rule.
 - `gbdk/check` builds with GBDK's `lcc` and runs in SameBoy, showing the table mockups composed at runtime from the exported banks.
+
+## Localised UI (design mockups only, nothing live)
+
+The dashboard, the table (defending), the target prompt, the loss screen and the Moscow win screen in Korean, Russian, Japanese and Chinese, beside English.
+Sheets: `mockups/28_ko.png`, `29_ru.png`, `30_ja.png`, `31_zh.png` (each screen at 4x with a true-size strip), and `32_all_languages.png` (the dashboard and the table in all five).
+Code: `loc/strings.py` (the words), `loc/extract.py` (glyphs from the fonts, run once), `loc/glyphs_*.txt` (the extracted glyphs as ASCII bitmaps, the editable source of truth), `loc/screens.py` (the screens).
+
+### Words
+
+Every term comes from the repo's own i18n tables (`foolish/c/i18n/strings_<lang>.c`, the same text the website and the iOS app show) where a key exists; `loc/strings.py` marks each one `repo:KEY` or `chosen`.
+From the repo: the game's and the fool's names (ДУРАК, 두락 as the game and 바보 as the fool, ドゥラーク, 傻瓜), attack, cover (КРЫТЬ, 막기, 受ける, 盖牌), pick up (ВЗЯТЬ, 가져오기, 取る, 拿牌), defending, thinking, trump, continue, rematch, home, the four cities, and the "<name> is the fool" pattern.
+Chosen here (no repo key): the airport words (departures, fly, pick a flight), BOSS, TARGET, "you win", and two Russian idioms that fit the rail: ВЫ ОСТАЛИСЬ В ДУРАКАХ and МОСКВА В ДУРАКАХ.
+Korean: the game is 두락 (the repo's transliteration, what Korean players of the Russian game call it) and the loser is 바보 (the repo's word for the fool).
+Chinese is Simplified; Traditional would differ in 继续, 选择航班, 出发, 登机, 头目, 迈阿密, 纽约, 首尔, 盖牌, 目标, 再来一局, 主页 and 胜利 (the list is in `loc/strings.py`); 傻瓜, 莫斯科, 拿牌, 思考中, 防守中 stay the same.
+
+### Glyphs
+
+| Language | Glyphs | Cell | Font (licence) |
+| --- | --- | --- | --- |
+| English | our 5x7 font | 8x8 | ours |
+| Russian | our 5x7 font plus hand-drawn Cyrillic capitals (`glyphs.FONT`) | 8x8 | ours |
+| Korean | Galmuri7, precomposed syllables | 8x8 | Galmuri 2.40.4, SIL OFL 1.1 |
+| Japanese | Misaki Gothic 2nd: kana, and the few kanji the repo's terms use | 8x8 | Misaki 2021-05-05, free (unlimited use, copying, distribution, with or without modification) |
+| Chinese | GNU Unifont | 16x16 (digits and Latin 8 wide) | Unifont 15.1.05, GPLv2+ with the font embedding exception, and SIL OFL 1.1 |
+
+Korean was tried three ways (the strip under `28_ko.png`): Galmuri7 on 8x8, Galmuri11 (11 px) on a 16 px grid, and Unifont 16x16.
+8x8 reads, keeps the English layout and costs a quarter of the tiles, so the mockups use it.
+Composed (jamo drawn into syllable tiles at run time) against precomposed (each syllable stored whole) changes the ROM, not VRAM: on screen every syllable is still its own tile(s).
+Japanese fits 8x8 because Misaki carries kana and the JIS kanji at 7x7; the mockups prefer kana where the repo does.
+Chinese needs 16x16, so its screens are laid out again: the rails are two tiles tall, the board's rows 16 px, the dashboard's skyline stands lower and the title is a 2x logo over it.
+
+### Tiles per screen
+
+Unique background tiles of each mockup screen:
+
+| Language | Dashboard | Table | Target | Lose | Win (Moscow) |
+| --- | --- | --- | --- | --- | --- |
+| English | 170 | 58 | 59 | 104 | 163 |
+| Korean | 138 | 55 | 55 | 82 | 151 |
+| Russian | 176 | 57 | 59 | 132 | 175 |
+| Japanese | 163 | 53 | 57 | 107 | 153 |
+| Chinese | **210** | 87 | 91 | 131 | 189 |
+
+The table is composed from the resident banks (133 tiles) plus the text tiles a language adds: English 1, Korean 17, Russian 11, Japanese 17, Chinese 68, so the table's whole set is 152 to 219 of 256 with the 18 sprite tiles; all fit.
+Flags:
+- Chinese dashboard: 210 tiles, under 256 but over the 200 the dashboard leaves before the boarding-pass font at tile 200; a Chinese build would put that font at 216 (or draw the logo smaller).
+- Names printed by the code need their glyphs in the printing font: the win screen's lacquer font and the ticket's paper font would carry the city names' Hangul, kana or Hanzi tiles (Chinese 莫斯科: 12 tiles; Korean 모스크바 and Japanese モスクワ: 4 each).
+- Korean particles follow the name's last syllable (모스크바가, 서울이), so a code-printed "<name> 님이 바보입니다" keeps the repo's 님이 form, which needs no particle choice.
+- Russian: ПРОДОЛЖИТЬ is ten letters, so the ticket's city starts at column 12, not 11 (`ART_DASH_CITY_COL` would be per language); ЕЩЁ РАЗ and НА ГЛАВНУЮ go on two lines on the win screen.

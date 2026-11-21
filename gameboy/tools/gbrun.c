@@ -1,5 +1,3 @@
-#define _GNU_SOURCE
-#include <limits.h>
 // gbrun - a headless Game Boy runner over libmgba.
 //
 //   gbrun ROM SCRIPT [SYMBOLS.noi]

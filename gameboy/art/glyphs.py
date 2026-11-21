@@ -558,6 +558,126 @@ XX...
 X.X..
 X..X.
 X...X""",
+"Ё": """
+.X.X.
+XXXXX
+X....
+XXXX.
+X....
+X....
+XXXXX""",
+"Б": """
+XXXXX
+X....
+X....
+XXXX.
+X...X
+X...X
+XXXX.""",
+"Г": """
+XXXXX
+X....
+X....
+X....
+X....
+X....
+X....""",
+"Ж": """
+X.X.X
+X.X.X
+.XXX.
+..X..
+.XXX.
+X.X.X
+X.X.X""",
+"З": """
+.XXX.
+X...X
+....X
+..XX.
+....X
+X...X
+.XXX.""",
+"И": """
+X...X
+X...X
+X..XX
+X.X.X
+XX..X
+X...X
+X...X""",
+"Й": """
+.X.X.
+..X..
+X...X
+X..XX
+X.X.X
+XX..X
+X...X""",
+"Л": """
+..XXX
+.X..X
+.X..X
+.X..X
+.X..X
+X...X
+X...X""",
+"П": """
+XXXXX
+X...X
+X...X
+X...X
+X...X
+X...X
+X...X""",
+"Ц": """
+X..X.
+X..X.
+X..X.
+X..X.
+X..X.
+XXXXX
+....X""",
+"Щ": """
+X.X.X
+X.X.X
+X.X.X
+X.X.X
+X.X.X
+XXXXX
+....X""",
+"Ы": """
+X...X
+X...X
+X...X
+XXX.X
+X..XX
+X..XX
+XXX.X""",
+"Ь": """
+X....
+X....
+X....
+XXXX.
+X...X
+X...X
+XXXX.""",
+"Ю": """
+X..X.
+X.X.X
+X.X.X
+XXX.X
+X.X.X
+X.X.X
+X..X.""",
+"Я": """
+.XXXX
+X...X
+X...X
+.XXXX
+..X.X
+.X..X
+X...X""",
 "+": """
 .....
 ..X..
