@@ -4,7 +4,7 @@
 # with room left for the sprites).
 
 import glyphs as G
-from gen_art import Canvas, Screen, T, W, D, K, card_face, card_back, flip
+from gen_art import Canvas, Screen, T, W, D, K, card_face, card_back, flip, ui_bank
 
 # ---- fonts ---------------------------------------------------------------
 
@@ -177,7 +177,11 @@ def dashboard(sp, cont="SEOUL", cursor=0):
     rows = []
     if cont:
         text(cv, 16, 88, "CONTINUE", W)
-        text(cv, 16 + 9 * 8, 88, cont, D)
+        # the city is printed by the code with the rail font (ui bank, white
+        # on dark grey) at row 11, columns 11..19, so any city fits
+        ui = ui_bank()
+        for i, ch in enumerate(cont):
+            cv.set_tile(11 + i, 11, ui["CH_" + ch])
         rows.append(88)
     y = 104
     for name, level in CITIES:

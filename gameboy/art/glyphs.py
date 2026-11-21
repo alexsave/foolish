@@ -165,32 +165,33 @@ XXXXXXX
 }
 
 # Card back: pixel khokhloma (the website's back: black lacquer, gold
-# vines, red berries; the website lays the pattern on its side, so the stem
-# runs across the card).  Kept to one simple sprig: in four greys '.' black
-# lacquer, 'w' white = the gold stem and two berry clusters, 'o' dark grey =
-# leaves.  This is the 12x20 field inside the card's black border and its
-# one-pixel dark grey frame.
+# vines, red berries), as one rich motif: a rowan sprig with a curled gold
+# tendril, two veined leaves and a bunch of six round berries, each berry
+# ringed in lacquer so the bunch reads as separate fruit.  In four greys:
+# '.' black lacquer, 'w' white = gold and the berries (khokhloma's brightest),
+# 'o' dark grey = leaf veins and each berry's shaded underside.  This is the
+# 12x20 field inside the card's black border and its dark grey frame.
 BACK_FIELD = g("""
-............
-............
-.ww.........
-wwww....oo..
-wwww...oooo.
-.ww.....oo..
-..w......w..
-..w..oo..w..
-...w.ooo.w..
-....w.o..w..
-.wwwwwwwwwww
-..w..w....w.
-..ww..w...w.
-.oooo..w..w.
-..oo...w.ww.
-.......wwww.
-......wwww..
-.......ww...
-............
-............
+......ww....
+.....w..w...
+....w.w.w...
+....w..w....
+.....w......
+.www.w......
+wwwowww..www
+wowww.wwwoww
+..ww..w.wwwo
+......w..ww.
+.......w....
+.ww..ww..ww.
+www.www.wwww
+www..ww..wwo
+.o.ww..ww.o.
+..www..www..
+..ww.ww.wo..
+....wwww....
+....wwwo....
+.....oo.....
 """)
 
 # UI font, 5x7 in an 8x8 tile at x1..5, y0..6.
