@@ -49,11 +49,11 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 
 | Tiles | Bank | Count | Used by |
 | --- | --- | --- | --- |
-| 0..69 | `cards` | 70 | background cards, and the flying card as sprites |
-| 70..130 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
+| 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
+| 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
 | 140..154 | `sprites` | 15 | underline, arrow, brackets, nudge, pointer, deal flip |
 
-That is 131 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
+That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
 Load:
 
@@ -81,7 +81,7 @@ A card is 2 tiles wide and 3 tall: big enough for a legible rank and suit, small
 - `RANK_r`: the rank (6, 7, 8, 9, 10, J, Q, K, A) at the top left, with the top-left round corner.
 - `SUIT_s`: the small suit under it (s = S, H, C, D in the kernel's suit order: spade, heart, club, diamond).
 - The big 7x7 pip sits low in the middle, across `PIPT_s`, `PIPL_s` and `PIPR_s`.
-- A face costs 1 rank tile + 5 tiles that depend on the suit only, so all 36 faces come from 70 tiles instead of 216 (the limit served: 256 background tiles).
+- A face costs 1 rank tile + 5 tiles that depend on the suit only, so all 36 faces and the back come from 72 tiles (36 faces alone would need 216) (the limit served: 256 background tiles).
 
 The left column alone (rank, small suit, half the pip) names the card, which is what an overlapped hand shows.
 
@@ -99,17 +99,17 @@ Because cards are tile aligned, that pixel is the only thing that changes when a
 | bottom left | the card to its left in the same row (its black bottom border) | `_u3` |
 | bottom left | a raised card's corner over its left neighbour's pip top: pixel (8,15) of that neighbour, which is white for a heart (`_u1`), dark grey for a diamond (`_u2`) and black for a spade or club (`_u3`) | `_u1`/`_u2`/`_u3` |
 
-The card back (`BACK_*`) needs only `_u0` and `_u3` (bot hand overlap, the deck over the trump).
+The card back (`BACK_*`) needs `_u0`, `_u3` (the deck over the trump's black border) and `_u2` (a back over another back's dark grey ring, the bot hand).
 `FACE_TR`, `PIPR_s`, `BACK_TR` and `BACK_BR` only ever sit over the table.
 `gen_art.py` composes every mockup pixel by pixel and fails if any resulting tile is missing from the banks, so the rule above is checked, not just stated.
 
 ### The back
 
 Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two spiral curls off the stem in the Khokhloma manner, two large veined leaves (8x8) and two round berries (5x5).
-A dark grey inner frame sits one pixel inside the black border, and the sprig keeps a pixel of lacquer clear of it (checked in `sprig.final_2b_framed`).
+The edge is two rings: dark grey outermost (it parts the bot's overlapped backs), then black; the sprig has the whole 12x20 field inside them.
 Each berry has a white body, a dark grey shaded underside and a black calyx, and is ringed in lacquer, drawn back to front, so the two read as separate fruit.
 The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in three layouts (`hanging`, `diagonal`, `arching`); a minimal version of each (`hanging_min`, `diagonal_min`, `arching_min`: one leaf, one vine ending in a spiral curl, one 5x5 berry) sits beside them.
-`BACK_LAYOUT` in `gen_art.py` picks one; it is `final_2b_framed` (Alex's picks: the diagonal minimal sprig 2B with option a's curl, option d's uneven one-pixel vine, the serrated veined leaf, the small shaded berry with its calyx, and an intricate small leaf with midrib, side veins and a serrated edge in the bottom-left corner, fitted inside the dark grey inner frame with a pixel of lacquer all round; the frame also gives the bot's overlapped backs their dividing line; `mockups/12_back_framed.png`, alone and overlapped).
+`BACK_LAYOUT` in `gen_art.py` picks one; it is `final_2b_framed` (Alex's picks: the diagonal minimal sprig 2B with option a's curl, option d's uneven one-pixel vine, the serrated veined leaf, the small shaded berry with its calyx, and an intricate small leaf with midrib, side veins and a serrated edge in the bottom-left corner, inside two rings, dark grey outermost and black inside, the motif grown into the freed pixel all round (the big curl, the full corner leaf); the grey edge gives the bot's overlapped backs their dividing line; `mockups/12_back_framed.png`, alone and overlapped).
 The options that led there are kept as sheets: `06_back_rotations.png`, `07_back_vine_options.png`, `10_back_combo.png`.
 Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
 
@@ -176,17 +176,17 @@ A flying card is 2 sprites wide, so even two cards in flight stay at 4 per line 
 
 ## Screen mockups and tile counts
 
-Unique background tiles each screen uses (all banks together are 131, so every table screen fits by construction):
+Unique background tiles each screen uses (all banks together are 133, so every table screen fits by construction):
 
 | Screen | File | Unique BG tiles | Sprites | Max per line |
 | --- | --- | --- | --- | --- |
-| You attack | `mockups/t1_attack.png` | 54 | 2 | 2 |
-| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 57 | 0 | 0 |
-| Target mode, cover | `mockups/t3_target_cover.png` | 54 | 10 | 2 |
-| Target mode, pass | `mockups/t3b_target_pass.png` | 58 | 12 | 4 |
+| You attack | `mockups/t1_attack.png` | 56 | 2 | 2 |
+| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 59 | 0 | 0 |
+| Target mode, cover | `mockups/t3_target_cover.png` | 56 | 10 | 2 |
+| Target mode, pass | `mockups/t3b_target_pass.png` | 60 | 12 | 4 |
 | Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
 | Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
-| Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 55 | 4 | 4 |
+| Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 57 | 4 | 4 |
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
 | Win over Miami | `mockups/w_miami.png` | 152 (map shipped: 151) | 12 | 4 |

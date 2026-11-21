@@ -12,11 +12,11 @@
 #define cards_TILE_W 8
 #define cards_TILE_H 8
 #define cards_WIDTH 8
-#define cards_HEIGHT 560
-#define cards_TILE_COUNT 70
+#define cards_HEIGHT 576
+#define cards_TILE_COUNT 72
 
 BANKREF_EXTERN(cards)
 
-extern const uint8_t cards_tiles[1120];
+extern const uint8_t cards_tiles[1152];
 
 #endif

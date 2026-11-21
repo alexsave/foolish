@@ -110,14 +110,14 @@ CW, CH = 16, 24
 PIP_X, PIP_Y = 5, 15
 
 
-def card_outline(cv, fill):
+def card_outline(cv, fill, border=K):
     for y in range(CH):
         for x in range(CW):
             corner = (x in (0, CW - 1)) and (y in (0, CH - 1))
             if corner:
                 cv.px[y][x] = None
             elif x in (0, CW - 1) or y in (0, CH - 1):
-                cv.px[y][x] = K
+                cv.px[y][x] = border
             else:
                 cv.px[y][x] = fill
 
@@ -133,13 +133,13 @@ def card_face(rank, suit):
 
 
 def card_back(layout=None):
-    """Black lacquer; a "_framed" layout sits inside the dark grey inner frame
-    (12x20 field), the others fill the whole 14x22 inside the border."""
+    """Black lacquer; a "_framed" layout has a dark grey outer ring and a black
+    ring inside it round its 12x20 field; the others fill 14x22 inside a black border."""
     layout = layout or BACK_LAYOUT
     cv = Canvas(CW, CH, None)
     if layout.endswith("_framed"):
-        card_outline(cv, D)
-        cv.rect(2, 2, CW - 4, CH - 4, K)
+        # two rings: dark grey outermost (it parts overlapped backs), black inside
+        card_outline(cv, K, border=D)
         cv.glyph(2, 2, sprig.LAYOUTS[layout]())
     else:
         card_outline(cv, K)
@@ -270,12 +270,12 @@ def card_bank():
         for c in BL_UNDER:
             bank["PIPL_%s_u%d" % (s, c)] = fill_none(faces[("6", s)].tile(0, 2), c)
     b = card_back()
-    for c in (T, K):
+    for c in (T, K, D):        # table; a face's black border; another back's grey ring
         bank["BACK_TL_u%d" % c] = fill_none(b.tile(0, 0), c)
     bank["BACK_TR"] = fill_none(b.tile(1, 0), T)
     bank["BACK_ML"] = b.tile(0, 1)
     bank["BACK_MR"] = b.tile(1, 1)
-    for c in (T, K):
+    for c in (T, K, D):
         bank["BACK_BL_u%d" % c] = fill_none(b.tile(0, 2), c)
     bank["BACK_BR"] = fill_none(b.tile(1, 2), T)
     p = pass_slot()

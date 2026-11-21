@@ -24,7 +24,7 @@ PNG2ASSET = os.path.join(GBDK, "bin", "png2asset")
 # VRAM: one 256-tile space at 0x8000 shared by the background, the window
 # and the sprites (LCDC bit 4 = 1, GBDK's default).  Card tiles double as
 # sprite tiles for a flying card; font tiles double as sprite 'chips'.
-BASE = {"cards": 0, "ui": 70, "sprites": 140}
+BASE = {"cards": 0, "ui": 72, "sprites": 140}
 PALETTE = [A.SHADE[i] for i in (A.T, A.W, A.D, A.K)]   # index order
 
 
