@@ -544,6 +544,23 @@ static void fly_from(uint8_t seat, const gd_move *m) {
 // ended under it) does not fly.
 static void fly_to(uint8_t seat) {
     uint8_t k, j, i, x, y, found;
+    // The bout ended on the discard: the sweep. My move's own cards (a last
+    // cover) fly to the pile from where they were, and then the table's cards
+    // as `before` laid them out, the top of the table (the last battle's cover,
+    // then its attack, then the battle before) first, until FLY_MAX fly; the
+    // rest vanish when the flight starts, as a pickup's do.
+    const uint8_t swept = G.discard > before.discard;
+    if (swept) {
+        for (i = before.nb; i > 0 && fly_n < FLY_MAX; i--) {
+            battle_xy((uint8_t)(i - 1u), before.nb, &x, &y);
+            if (before.def[i - 1u] != GD_NONE) {
+                fly_card[fly_n] = before.def[i - 1u]; fly_x0[fly_n] = (int16_t)(x * 8 + 8); fly_y0[fly_n] = (int16_t)(y * 8 + 8); fly_n++;
+            }
+            if (fly_n < FLY_MAX) {
+                fly_card[fly_n] = before.att[i - 1u]; fly_x0[fly_n] = (int16_t)(x * 8); fly_y0[fly_n] = (int16_t)(y * 8); fly_n++;
+            }
+        }
+    }
     for (k = 0, j = 0; k < fly_n; k++) {
         const uint8_t c = fly_card[k];
         found = 0;
@@ -557,6 +574,7 @@ static void fly_to(uint8_t seat) {
             else { fly_x1[k] = BOT_PX; fly_y1[k] = BOT_PY; }
             found = 1;
         }
+        if (!found && swept) { fly_x1[k] = ART_DISCARD_LAND_PX; fly_y1[k] = ART_DISCARD_LAND_PY; found = 1; }
         if (!found) continue;
         fly_card[j] = c;
         fly_x0[j] = fly_x0[k]; fly_y0[j] = fly_y0[k]; fly_x1[j] = fly_x1[k]; fly_y1[j] = fly_y1[k];
@@ -655,15 +673,19 @@ static void draw_table(void) {
     right[n++] = (char)(IC_SUIT0 + G.trump);
     right[n] = 0;
     gfx_rail(0, top_left(), right);
-    // the bot's hand: backs one column apart, centred, 18 at most
+    // the bot's hand: backs one column apart, centred in columns 0..16 (the
+    // discard pile has 17..19); 16 at most are shown, the rail has the count
     n = gd_hand_n(&G, BOT);
-    if (n > 18) n = 18;
-    x = (uint8_t)((SCR_W - (n + 1u)) / 2u);
+    if (n > ART_BOT_HAND_LAST_COL) n = ART_BOT_HAND_LAST_COL;
+    x = (uint8_t)((ART_BOT_HAND_LAST_COL + 1u - (n + 1u)) / 2u);
     for (i = 0; i < n; i++) gfx_back((uint8_t)(x + i), ROW_BOTHAND);
     // the trump card under the deck, and the discard pile
     if (G.has_flipped) gfx_card(0, 4, G.flipped);
     if (G.stock_n) gfx_back(1, 4);
-    if (G.discard) { gfx_back(0, 8); if (G.discard >= 12) gfx_back(1, 8); }
+    // the discard pile, top right (nothing while it is empty)
+    if (G.discard)
+        for (i = 0; i < 9; i++)
+            gfx_tile((uint8_t)(ART_DISCARD_X + i % 3u), (uint8_t)(ART_DISCARD_Y + i / 3u), (uint8_t)(ART_PILE_BASE + i));
     // the table
     for (i = 0; i < G.nb; i++) {
         battle_xy(i, G.nb, &x, &y);

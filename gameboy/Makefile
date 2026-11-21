@@ -41,7 +41,7 @@ ART      = art/gbdk
 # Bank 2: the table's banks, the fonts and small sprites, the dashboards and
 # the lose picture; bank 3: the four win pictures. gfx.c reads each file's bank
 # with BANK(), so this list is the one place that decides it.
-ART_BANK2 = cards ui sprites lacquer paper plane fireworks dashboard dashboard_new lose
+ART_BANK2 = cards ui sprites pile lacquer paper plane fireworks dashboard dashboard_new lose
 ART_BANK3 = win_miami win_new_york win_seoul win_moscow
 ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC))) \
             $(patsubst %,$(B)/rom/%.o,$(ART_BANK2) $(ART_BANK3))
