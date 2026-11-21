@@ -84,6 +84,19 @@ I wrote no hypothesis before the first playout measurement (a slip against the r
 Before the phase split I predicted the counts at about 60% and the unrank at about 10%: the unrank is much dearer than I thought, and the draw (11%) is not free either.
 So a bot that runs even 10 playouts a decision would think for 20 seconds on this engine as it stands; Seoul and Moscow need a rollout engine of their own (a bitboard simulation without the menu, as foolish's `cordite_sim.c` is for cordite), sized from this number.
 
+## The rollout engine (gd_sim): hypothesis, written before any code
+
+What it ports: foolish's two-player rollout, `cd_sim_playout` in `foolish/c/src/cordite_sim.c`, whose policy is the arena handwritten bot computed directly on bitboards (`sim_handwritten_move`; foolish's own comment explains espresso is never reached at two players).
+It plays no menu: each ply asks the policy for its one move, the lowest eligible seat first, and applies it; the stock is drawn at a random index; there is no repetition rule.
+Design: a 32-byte state (two hands, the stock, the uncovered attacks and every table card as 5-byte masks; the ranks on the table; a few counters and a flag byte), table-driven bit operations (no variable shifts), in a bank of its own.
+
+Predictions for the Game Boy, against the lite-menu playout's 2.12 s (20.9 ms a move):
+- one move (policy, apply and draws): about 1.2 ms;
+- one playout: about 120 ms on average (about 100 moves), about 300 ms at worst (about 210 moves);
+- phase split of a move: the policy about 50%, apply and refill about 35%, the deck draws about 15%.
+
+Falsifiers: an average playout over 150 ms or a worst over 400 ms (the targets) means the masks or the policy are too slow as written; a policy share under 30% would mean the state handling, not the decisions, is the cost.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
