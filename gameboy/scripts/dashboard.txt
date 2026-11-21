@@ -28,11 +28,17 @@
 +1   press A
 +1   until _screen 01
 +0   expect _bot_city 01
-+0   until _fly_n 00
-+4   shot shots/93_new_york.png 3
 # A quick tap while a screen loads (the LCD is off) is kept, not dropped:
-# START, then at once a two-frame DOWN during the dashboard's load.
+# START while the table loads, then at once a two-frame DOWN during the
+# dashboard's load.
 +1   press START
 +2   press DOWN
 +1   until _screen 00
 +20  expect _dash_item 01
+# UP, A: CONTINUE, and the deal left mid-way goes on where it was
++1   press UP
++6   press A
++1   until _screen 01
++0   until _fly_n 00
++4   expect _G+79 01
++0   shot shots/93_new_york.png 3
