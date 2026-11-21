@@ -23,6 +23,10 @@ import os
 from PIL import Image
 
 import glyphs as G
+from sprig import sprig
+
+# The card back's sprig layout (sprig/sprig.py): "hanging", "diagonal" or "arching".
+BACK_LAYOUT = "final_2b_framed"   # Alex picked 2B, then its curl, vine and corner leaf, and the frame back
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_PNG = os.path.join(HERE, "png")
@@ -106,14 +110,14 @@ CW, CH = 16, 24
 PIP_X, PIP_Y = 5, 15
 
 
-def card_outline(cv, fill):
+def card_outline(cv, fill, border=K):
     for y in range(CH):
         for x in range(CW):
             corner = (x in (0, CW - 1)) and (y in (0, CH - 1))
             if corner:
                 cv.px[y][x] = None
             elif x in (0, CW - 1) or y in (0, CH - 1):
-                cv.px[y][x] = K
+                cv.px[y][x] = border
             else:
                 cv.px[y][x] = fill
 
@@ -128,11 +132,18 @@ def card_face(rank, suit):
     return cv
 
 
-def card_back():
+def card_back(layout=None):
+    """Black lacquer; a "_framed" layout has a dark grey outer ring and a black
+    ring inside it round its 12x20 field; the others fill 14x22 inside a black border."""
+    layout = layout or BACK_LAYOUT
     cv = Canvas(CW, CH, None)
-    card_outline(cv, D)            # the gold frame is the fill's outer ring
-    cv.rect(2, 2, CW - 4, CH - 4, K)
-    cv.glyph(2, 2, G.BACK_FIELD)
+    if layout.endswith("_framed"):
+        # two rings: dark grey outermost (it parts overlapped backs), black inside
+        card_outline(cv, K, border=D)
+        cv.glyph(2, 2, sprig.LAYOUTS[layout]())
+    else:
+        card_outline(cv, K)
+        cv.glyph(1, 1, sprig.LAYOUTS[layout]())
     return cv
 
 
@@ -215,6 +226,18 @@ def ui_bank():
     return bank
 
 
+def lacquer_font_bank():
+    """The font for the black lacquer screens (white on black), same order as
+    the rail font: the code prints the bot's name on the win screen with it."""
+    bank = {}
+    for ch in FONT_CHARS:
+        if ch == " ":
+            bank["LQ_ "] = tuple([K] * 64)
+        else:
+            bank["LQ_" + ch] = rail_glyph_tile(G.FONT[ch], fg=W, bg=K)
+    return bank
+
+
 # --------------------------------------------------------------------------
 # Card bank: every card tile and its round-corner variants.
 #   A round-corner pixel shows whatever is beneath it.  Beneath is always
@@ -247,12 +270,12 @@ def card_bank():
         for c in BL_UNDER:
             bank["PIPL_%s_u%d" % (s, c)] = fill_none(faces[("6", s)].tile(0, 2), c)
     b = card_back()
-    for c in (T, K):
+    for c in (T, K, D):        # table; a face's black border; another back's grey ring
         bank["BACK_TL_u%d" % c] = fill_none(b.tile(0, 0), c)
     bank["BACK_TR"] = fill_none(b.tile(1, 0), T)
     bank["BACK_ML"] = b.tile(0, 1)
     bank["BACK_MR"] = b.tile(1, 1)
-    for c in (T, K):
+    for c in (T, K, D):
         bank["BACK_BL_u%d" % c] = fill_none(b.tile(0, 2), c)
     bank["BACK_BR"] = fill_none(b.tile(1, 2), T)
     p = pass_slot()
@@ -422,6 +445,21 @@ class Screen:
                     if v not in (None, T):
                         cv.put(x + i, y + j, v)
         return cv
+
+    def check_sprites(self, banks):
+        """Sprites only (full-screen pictures ship their own tile maps)."""
+        lookup = {t for bank in banks.values() for t in bank.values()}
+        lines = [0] * 144
+        for (x, y, t) in self.sprites:
+            assert any(flip(t, fx, fy) in lookup for fx in (0, 1) for fy in (0, 1)), \
+                "%s: sprite tile not in a bank" % self.name
+            for j in range(8):
+                if 0 <= y + j < 144:
+                    lines[y + j] += 1
+        assert len(self.sprites) <= 40, self.name
+        assert max(lines + [0]) <= 10, "%s: %d sprites on one line" % (self.name, max(lines))
+        self.sprite_count, self.max_line = len(self.sprites), max(lines + [0])
+        return self
 
     def check(self, banks):
         lookup = {}
@@ -852,6 +890,23 @@ def main():
         s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
         print("%-18s unique bg tiles %3d  sprites %2d" % (s.name, s.unique_bg, len(s.sprites)))
     contact([s.name for s in full], os.path.join(OUT_MOCK, "03_dashboard_win_lose.png"))
+    import wins
+    fw = {"fireworks": wins.firework_bank()}
+    for s in wins.win_screens():
+        tiles = set(s.bg.tile(tx, ty) for ty in range(18) for tx in range(20))
+        assert len(tiles) <= wins.TILESET_MAX, (s.name, len(tiles))
+        s.check_sprites(fw)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        print("%-18s unique bg tiles %3d  sprites %2d  max/line %d" % (s.name, len(tiles), s.sprite_count, s.max_line))
+    contact(["w_miami", "w_new_york", "w_seoul", "w_warsaw"], os.path.join(OUT_MOCK, "08_win_cities.png"))
+    strip = []
+    for f in range(len(wins.SCHEDULE)):
+        s = wins.win_screen("SEOUL", frame=f)
+        s.name = "w_seoul_frame%d" % f
+        s.check_sprites(fw)
+        s.compose().image().save(os.path.join(OUT_MOCK, s.name + ".png"))
+        strip.append(s.name)
+    contact(strip, os.path.join(OUT_MOCK, "09_fireworks_frames.png"), cols=4)
 
 
 if __name__ == "__main__":

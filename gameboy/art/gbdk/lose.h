@@ -13,13 +13,13 @@
 #define lose_TILE_H 8
 #define lose_WIDTH 160
 #define lose_HEIGHT 144
-#define lose_TILE_COUNT 122
+#define lose_TILE_COUNT 123
 #define lose_MAP_ATTRIBUTES 0
 extern const unsigned char lose_map[360];
 #define lose_map_attributes lose_map
 
 BANKREF_EXTERN(lose)
 
-extern const uint8_t lose_tiles[1952];
+extern const uint8_t lose_tiles[1968];
 
 #endif

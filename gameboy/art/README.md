@@ -8,11 +8,13 @@ The website is the reference: its card faces, its khokhloma card back, its wool 
 - `glyphs.py`: every shape as ASCII art (ranks, suits, pips, the khokhloma back, the font, the icons).
   This is the editable source of truth for the pixels.
 - `gen_art.py`: draws the tile banks from `glyphs.py`, composes every screen mockup from those same tiles, and checks the hardware limits.
-- `screens_full.py`: the full-screen pictures (dashboard, win, lose) and the city skyline.
+- `screens_full.py`: the full-screen pictures (dashboard, lose) and the city skyline.
+- `travel.py`: the traveller dashboard (title + departures board + boarding pass).
+- `wins.py`: the four per-bot win screens (each city at night, the fool's cap on its landmark) and the fireworks sprites.
 - `export.py`: writes the indexed PNGs, runs GBDK's `png2asset` on them, decodes its bytes back and asserts they equal the drawn tiles, and writes `gbdk/art_tiles.h`.
 - `png/`: the indexed 4-shade PNGs (palette in index order), one per bank and one per full screen.
   `cards.png`, `ui.png` and `sprites.png` are one tile wide so `png2asset` keeps their order; the `*_sheet.png` files are the same tiles 16 wide for looking at.
-- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `dashboard.c/.h`, `dashboard_new.c/.h`, `win.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
+- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `paper.c/.h` (the black-on-white font), `plane.c/.h`, `dashboard.c/.h`, `dashboard_new.c/.h`, `win_miami.c/.h`, `win_new_york.c/.h`, `win_seoul.c/.h`, `win_warsaw.c/.h`, `fireworks.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
   All generated; do not edit them by hand.
 - `gbdk/check/`: a check ROM that loads the banks the way the game will and shows every table mockup composed from them (A or right: next, left: previous, B: the full screens).
 - `mockups/`: every screen at 4x with nearest neighbour (640x576), and contact sheets.
@@ -47,11 +49,11 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 
 | Tiles | Bank | Count | Used by |
 | --- | --- | --- | --- |
-| 0..69 | `cards` | 70 | background cards, and the flying card as sprites |
-| 70..130 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
+| 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
+| 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
 | 140..154 | `sprites` | 15 | underline, arrow, brackets, nudge, pointer, deal flip |
 
-That is 131 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
+That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
 Load:
 
@@ -79,7 +81,7 @@ A card is 2 tiles wide and 3 tall: big enough for a legible rank and suit, small
 - `RANK_r`: the rank (6, 7, 8, 9, 10, J, Q, K, A) at the top left, with the top-left round corner.
 - `SUIT_s`: the small suit under it (s = S, H, C, D in the kernel's suit order: spade, heart, club, diamond).
 - The big 7x7 pip sits low in the middle, across `PIPT_s`, `PIPL_s` and `PIPR_s`.
-- A face costs 1 rank tile + 5 tiles that depend on the suit only, so all 36 faces come from 70 tiles instead of 216 (the limit served: 256 background tiles).
+- A face costs 1 rank tile + 5 tiles that depend on the suit only, so all 36 faces and the back come from 72 tiles (36 faces alone would need 216) (the limit served: 256 background tiles).
 
 The left column alone (rank, small suit, half the pip) names the card, which is what an overlapped hand shows.
 
@@ -97,16 +99,19 @@ Because cards are tile aligned, that pixel is the only thing that changes when a
 | bottom left | the card to its left in the same row (its black bottom border) | `_u3` |
 | bottom left | a raised card's corner over its left neighbour's pip top: pixel (8,15) of that neighbour, which is white for a heart (`_u1`), dark grey for a diamond (`_u2`) and black for a spade or club (`_u3`) | `_u1`/`_u2`/`_u3` |
 
-The card back (`BACK_*`) needs only `_u0` and `_u3` (bot hand overlap, the deck over the trump).
+The card back (`BACK_*`) needs `_u0`, `_u3` (the deck over the trump's black border) and `_u2` (a back over another back's dark grey ring, the bot hand).
 `FACE_TR`, `PIPR_s`, `BACK_TR` and `BACK_BR` only ever sit over the table.
 `gen_art.py` composes every mockup pixel by pixel and fails if any resulting tile is missing from the banks, so the rule above is checked, not just stated.
 
 ### The back
 
-Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two veined leaves and a bunch of six round berries.
-Each berry is ringed in lacquer, drawn back to front, so the bunch reads as separate fruit.
-Gold and the berries are white (khokhloma's brightest colours), the leaf veins and each berry's shaded underside are dark grey, inside a black border and a dark grey frame.
-An overlapped back still shows the tendril, a leaf and half the bunch.
+Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two spiral curls off the stem in the Khokhloma manner, two large veined leaves (8x8) and two round berries (5x5).
+The edge is two rings: dark grey outermost (it parts the bot's overlapped backs), then black; the sprig has the whole 12x20 field inside them.
+Each berry has a white body, a dark grey shaded underside and a black calyx, and is ringed in lacquer, drawn back to front, so the two read as separate fruit.
+The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in three layouts (`hanging`, `diagonal`, `arching`); a minimal version of each (`hanging_min`, `diagonal_min`, `arching_min`: one leaf, one vine ending in a spiral curl, one 5x5 berry) sits beside them.
+`BACK_LAYOUT` in `gen_art.py` picks one; it is `final_2b_framed` (Alex's picks: the diagonal minimal sprig 2B with option a's curl, option d's uneven one-pixel vine, the serrated veined leaf, the small shaded berry with its calyx, and an intricate small leaf with midrib, side veins and a serrated edge in the bottom-left corner, inside two rings, dark grey outermost and black inside, the motif grown into the freed pixel all round (the big curl, the full corner leaf); the grey edge gives the bot's overlapped backs their dividing line; `mockups/12_back_framed.png`, alone and overlapped).
+The options that led there are kept as sheets: `06_back_rotations.png`, `07_back_vine_options.png`, `10_back_combo.png`.
+Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
 
 ### The pass slot
 
@@ -171,20 +176,23 @@ A flying card is 2 sprites wide, so even two cards in flight stay at 4 per line 
 
 ## Screen mockups and tile counts
 
-Unique background tiles each screen uses (all banks together are 131, so every table screen fits by construction):
+Unique background tiles each screen uses (all banks together are 133, so every table screen fits by construction):
 
 | Screen | File | Unique BG tiles | Sprites | Max per line |
 | --- | --- | --- | --- | --- |
-| You attack | `mockups/t1_attack.png` | 54 | 2 | 2 |
-| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 57 | 0 | 0 |
-| Target mode, cover | `mockups/t3_target_cover.png` | 54 | 10 | 2 |
-| Target mode, pass | `mockups/t3b_target_pass.png` | 58 | 12 | 4 |
+| You attack | `mockups/t1_attack.png` | 56 | 2 | 2 |
+| Bot defends, all covered, DONE | `mockups/t2_bot_defends.png` | 59 | 0 | 0 |
+| Target mode, cover | `mockups/t3_target_cover.png` | 56 | 10 | 2 |
+| Target mode, pass | `mockups/t3b_target_pass.png` | 60 | 12 | 4 |
 | Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
 | Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
-| Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 55 | 4 | 4 |
-| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 146 | 1 | 1 |
-| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 139 | 1 | 1 |
-| Win | `mockups/e1_win.png` | 97 | 0 | 0 |
+| Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 57 | 4 | 4 |
+| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
+| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
+| Win over Miami | `mockups/w_miami.png` | 141 | 12 | 4 |
+| Win over New York | `mockups/w_new_york.png` | 156 | 12 | 4 |
+| Win over Seoul | `mockups/w_seoul.png` | 132 | 12 | 4 |
+| Win over Warsaw | `mockups/w_warsaw.png` | 162 | 12 | 4 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
 
 Contact sheets: `mockups/01_cards_sheet.png`, `02_table_layouts.png`, `03_dashboard_win_lose.png`, `04_fly.png`, `05_deal.png`.
@@ -195,22 +203,35 @@ The dashboard, win and lose screens are single pictures; `png2asset -map` dedupe
 Load the tileset at tile 0 and the map at (0,0); reload the three banks when going back to the table.
 Each is under 160 tiles because the sky, the lacquer and the black areas repeat (the limit served: a full-screen picture needs 360 tiles unless it repeats).
 
-### Dashboard (title + bot picker)
+### Dashboard (title + bot picker): the traveller
 
-- A city skyline from Miami to Moscow (palms, the Empire State, N Seoul Tower, the Palace of Culture in Warsaw, the Kremlin's Spasskaya tower) under the DURAK title.
-- On black lacquer with a khokhloma vine edge: CONTINUE (when a game is open), then the bots Miami, New York, Seoul and Warsaw (the boss), with difficulty pips.
-- The menu rows sit on the tile grid (CONTINUE at row 11, the bots at rows 13 to 16).
-- The CONTINUE city is printed by the code with the rail font at row 11, columns 11 onwards (a dark pill, like the website's); `dashboard_new` is the same screen with no CONTINUE row.
-- The pointer is `SP_POINTER` at x = 6, on the selected row's y.
-- VRAM while the dashboard is up: its tileset takes tiles 0..145, which overlaps the usual sprite bank at 140, so load the `ui` bank at tile 160 (160..220) for the city name and copy `SP_POINTER` alone to tile 230.
+After the blind designer's departures board, in our style (`travel.py`; `mockups/13_dashboard_travel.png`, with and without a game open).
+
+- Rows 0-9: ДУРАК with FOOLISH under it, over the city skyline from Miami to Moscow; a dotted flight route runs across the sky behind the towers.
+- Moscow is the real top bot, but the Game Boy is too weak to run it, so it stands in the skyline only and has no row on the board.
+- Row 10: with a game open, CONTINUE is a boarding pass (a paper ticket with punched ends and a tear line); without one, "PICK A FLIGHT".
+- Row 11: DEPARTURES, with the move (A FLY) on the right.
+- Rows 13-16: a split-flap board, one row per bot in our order: MIAMI 06:10 (1 pip), NEW YORK 09:45 (2), SEOUL 17:20 (3), WARSAW 23:55 (BOSS); the later the flight, the harder the bot.
+- Sprites: `SP_POINTER` at x = 0 on the selected row (the ticket is the first row when there is one), and the plane (`plane.c`) on the route at y = `ART_DASH_ROUTE_Y` over the selected city (x from `travel.CITY_X`: Miami 14, New York 44, Seoul 75, Warsaw 112), gliding between cities as the pointer moves.
+- The CONTINUE city is printed by the code with the paper font (`paper.c`, black on white, the same characters as the rail font) loaded at `ART_PAPER_BASE` (200), on row `ART_DASH_CITY_ROW` (10) from column `ART_DASH_CITY_COL` (11); the shipped `dashboard` map leaves those cells as blank paper.
+- VRAM while the dashboard is up: its tileset from 0 (at most 200 tiles, checked; 172 and 175 now), the paper font at 200, `SP_POINTER` copied to tile 250 and the plane at 251.
 
 ### Win and lose
 
-- Win: "YOU WIN", "SEOUL IS THE DURAK" (the bot's name is baked into the mockup; four aces fan below).
+- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: each drawn from reference photos (Wikimedia Commons) for true proportions and signature details: Miami's Freedom Tower (arcaded base, tiered tower, belfry, domed cupola, lantern) among art deco hotels and palms; New York's Empire State (podium, slim shaft of vertical piers, setbacks, the long mast) with the Chrysler building (terraced sunburst arches, needle) and a Brooklyn Bridge tower (twin pointed arches, cable fans); Seoul's N Seoul Tower (slim shaft, barrel pod, striped antenna) on wooded Namsan, Lotte World Tower (slender cone, split crown) and Namdaemun (stone gate base, two-tier roof with upturned eaves); Warsaw's Palace of Culture (wings, stepped tower with pinnacles, clock, long spire) with the Old Town, the Royal Castle's clock tower, Sigismund's Column and the new towers (`mockups/14_win_before_after.png`).
+  Under it the bot's name, then "IS THE DURAK".
+  The shipped map leaves the name row black: the code loads `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
+  Each win tileset is at most 206 tiles (checked), so the tileset, the lacquer font and the fireworks fit one 256-tile space.
 - Lose: "ДУРАК!" in Cyrillic, "YOU ARE THE FOOL", the fool's cap and the cards left in your hand.
 - Both offer A rematch, B home.
 
 ## Motion
+
+### Fireworks on the win screens (`mockups/09_fireworks_frames.png`)
+
+Sprites, loaded from `fireworks.c` at `ART_FW_BASE` (252): `T_FW_SPARK`, `T_FW_BURST`, `T_FW_FADE` are the top-left quarter of a 16x16 burst (draw it four times with X and Y flips), `T_FW_SHELL` is a rising shell.
+Three bursts at fixed points in the sky (`wins.BURSTS`), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
+At most 12 sprites on screen and 4 on one line.
 
 ### A card flying from the hand to the table (`mockups/04_fly.png`)
 
@@ -232,4 +253,6 @@ Taking cards after a turn (pick up, or refilling from the deck) uses the same fl
 - `gen_art.py` fails if any table screen has a background tile that is not in a bank, a sprite tile not in a bank (with flips), more than 40 sprites, or more than 10 on a scanline; it also checks that every face is one rank tile plus five suit tiles, and that the wool's corner pixels are index 0.
 - `export.py` decodes `png2asset`'s 2bpp bytes back to pixels and asserts they equal the drawn tiles (banks) and the drawn screens (full maps, tile by tile).
   Mutation checked: corrupting one pixel of the PNG before conversion makes it fail with "png2asset bytes differ from the drawn tiles".
+- `export.py` also prints the names into the shipped (blank) dashboard and win maps the way the code will and asserts the result equals the mockups; mutation checked by printing the win name one column off.
+- The check ROM prints SEOUL on the dashboard and each bot's name on its win screen with the same rule.
 - `gbdk/check` builds with GBDK's `lcc` and runs in SameBoy, showing the table mockups composed at runtime from the exported banks.

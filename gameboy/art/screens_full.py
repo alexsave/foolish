@@ -4,7 +4,7 @@
 # with room left for the sprites).
 
 import glyphs as G
-from gen_art import Canvas, Screen, T, W, D, K, card_face, card_back, flip, ui_bank
+from gen_art import Canvas, Screen, T, W, D, K, card_face, card_back, flip, ui_bank, lacquer_font_bank
 
 # ---- fonts ---------------------------------------------------------------
 
@@ -155,7 +155,7 @@ def lacquer(cv, y0, y1):
 CITIES = [("MIAMI", 1), ("NEW YORK", 2), ("SEOUL", 3), ("WARSAW", 4)]
 
 
-def dashboard(sp, cont="SEOUL", cursor=0):
+def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
     s = Screen("d1_dashboard" if cont else "d1b_dashboard_new", "Dashboard")
     cv = s.bg
     cv.rect(0, 0, 160, 144, T)
@@ -166,7 +166,7 @@ def dashboard(sp, cont="SEOUL", cursor=0):
         for i in range(9):
             if (i - 4) ** 2 + (j - 4) ** 2 <= 17:
                 cv.put(136 + i, 2 + j, W)
-    title = "DURAK"
+    title = "ДУРАК"
     bx = (160 - big_width(title)) // 2
     big_text(cv, bx, 4, title)
     text(cv, (160 - 7 * 8) // 2, 28, "FOOLISH", K)
@@ -179,9 +179,10 @@ def dashboard(sp, cont="SEOUL", cursor=0):
         text(cv, 16, 88, "CONTINUE", W)
         # the city is printed by the code with the rail font (ui bank, white
         # on dark grey) at row 11, columns 11..19, so any city fits
-        ui = ui_bank()
-        for i, ch in enumerate(cont):
-            cv.set_tile(11 + i, 11, ui["CH_" + ch])
+        if bake:              # the mockup; the exported map leaves these cells black
+            ui = ui_bank()
+            for i, ch in enumerate(cont):
+                cv.set_tile(11 + i, 11, ui["CH_" + ch])
         rows.append(88)
     y = 104
     for name, level in CITIES:
@@ -198,7 +199,10 @@ def dashboard(sp, cont="SEOUL", cursor=0):
     return s
 
 
-def outcome(win, bot="SEOUL"):
+NAME_ROW = 5     # win screen: the bot's name, printed by the code, centred
+
+
+def outcome(win, bot="SEOUL", bake=True):
     s = Screen("e1_win" if win else "e2_lose", "Win" if win else "Lose")
     cv = s.bg
     cv.rect(0, 0, 160, 144, T)
@@ -216,9 +220,18 @@ def outcome(win, bot="SEOUL"):
         fan = None
     scale = 2 if len(big) > 6 else 3
     big_text(cv, (160 - big_width(big, scale)) // 2, 14, big, scale=scale, fg=W, outline=K, shadow=D)
-    yb = 14 + 7 * scale + 8
-    text(cv, (160 - len(sub1) * 8) // 2, yb, sub1, W)
-    text(cv, (160 - len(sub2) * 8) // 2, yb + 10, sub2, W)
+    if win:
+        # tile-aligned: the name at row NAME_ROW, columns (20 - len) / 2, in
+        # the lacquer font; the exported map leaves that row black
+        if bake:
+            lq = lacquer_font_bank()
+            for i, ch in enumerate(sub1):
+                cv.set_tile((20 - len(sub1)) // 2 + i, NAME_ROW, lq["LQ_" + ch])
+        text(cv, (20 - len(sub2)) // 2 * 8, (NAME_ROW + 1) * 8, sub2, W)
+    else:
+        yb = 14 + 7 * scale + 8
+        text(cv, (160 - len(sub1) * 8) // 2, yb, sub1, W)
+        text(cv, (160 - len(sub2) * 8) // 2, yb + 10, sub2, W)
     if fan:
         x0 = (160 - (len(fan) * 16 + 8)) // 2
         for i, c in enumerate(fan):
@@ -266,5 +279,10 @@ def fool_cap(cv, cx, top):
         cv.put(x + 1, base + 2, D)
 
 
-def screens_full(sp):
-    return [dashboard(sp, "SEOUL", 0), dashboard(sp, None, 3), outcome(True), outcome(False)]
+def screens_full(sp, bake=True):
+    """The win screens are per bot now (wins.py).
+    bake=True: the mockups, names printed as the code will print them.
+    bake=False: what export.py ships, those cells left black for the code."""
+    import travel
+    return [travel.dashboard(sp, "SEOUL", 0, bake), travel.dashboard(sp, None, 3, bake),
+            outcome(False, bake=bake)]
