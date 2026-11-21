@@ -4,6 +4,6 @@
 #include <stdint.h>
 typedef struct { uint8_t x, y, tile, flags; } check_sprite;
 typedef struct { const uint8_t *map; const check_sprite *spr; uint8_t nspr; } check_screen;
-#define CHECK_SCREENS 15
+#define CHECK_SCREENS 7
 extern const check_screen check_screens[CHECK_SCREENS];
 #endif

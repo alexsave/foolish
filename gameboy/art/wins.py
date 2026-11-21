@@ -220,162 +220,317 @@ def miami(cv):
     return cx, top
 
 
+# ---- layered cities (like Miami): a back layer of towers on the 8 px tile
+# grid with fixed window patterns (so their tiles repeat), the capped landmark
+# in front behind a lacquer gap, a street layer, and a river with reflections.
+RIVER = GROUND - 8          # buildings stand here; the river runs below to y 111
+
+
+def back_tower(cv, x, top, style, roof, base=RIVER):
+    """One back-layer tower, 7 px wide at an 8 px column, windows by a fixed
+    pattern per style so the same tiles repeat across the skyline."""
+    cv.rect(x, top, 7, base - top, D)
+    for y in range(top + 2, base - 1):
+        for i in range(7):
+            xx = x + i
+            if style == "grid" and y % 3 == 0 and i % 2 == 1:
+                cv.put(xx, y, T)
+            elif style == "glass" and i in (1, 3, 5) and y % 4 != 0:
+                cv.put(xx, y, T)
+            elif style == "slab" and y % 3 == 1 and 0 < i < 6:
+                cv.put(xx, y, T)                    # the apartment's balcony rows
+            elif style == "lit" and y % 4 == 2 and i % 3 == 1:
+                cv.put(xx, y, W)
+    if roof == "setback":
+        cv.rect(x + 1, top - 3, 5, 3, D)
+        cv.rect(x + 2, top - 5, 3, 2, D)
+    elif roof == "water":                           # a New York roof water tower
+        cv.rect(x + 2, top - 4, 3, 3, D)
+        cv.put(x + 2, top - 1, D)
+        cv.put(x + 4, top - 1, D)
+        cv.put(x + 3, top - 5, D)
+    elif roof == "spire":
+        cv.rect(x + 3, top - 8, 1, 8, D)
+    elif roof == "number":                          # a Seoul apartment's rooftop sign
+        cv.rect(x + 1, top - 2, 5, 2, D)
+        cv.put(x + 3, top - 2, W)
+
+
+def gap(cv, x0, y0, x1, y1):
+    """A lacquer gap: what follows reads in front of the back layer."""
+    cv.rect(x0, y0, x1 - x0, y1 - y0, K)
+
+
+def river(cv, ferry=None):
+    """The river from RIVER down: black water, lit reflections of the skyline
+    above it broken into ripples, and swell lines."""
+    cv.rect(0, RIVER, 160, 112 - RIVER, K)
+    for d in range(1, 112 - RIVER):
+        y = RIVER + d
+        if d % 3 == 0:
+            continue                                # a ripple gap
+        for x in range(160):
+            v = cv.get(x, RIVER - d)
+            if v in (W, T) and (x + d) % 2 == 0:
+                cv.put(x, y, T if d > 2 or v == T else W)
+    for x in range(0, 160, 7):
+        cv.rect(x, RIVER + 10, 3, 1, D)
+    if ferry:
+        fx, fy = ferry
+        cv.rect(fx, fy, 14, 3, D)
+        cv.rect(fx + 3, fy - 2, 7, 2, D)
+        for k in range(4):
+            cv.put(fx + 2 + k * 3, fy + 1, W)
+        cv.put(fx + 5, fy - 1, W)
+        cv.put(fx + 7, fy - 1, W)
+
+
 def new_york(cv):
-    g = GROUND
-    for (x, w, h, s) in ((40, 10, 26, 1), (92, 9, 30, 2), (148, 12, 22, 3)):
-        filler(cv, x, w, h, s)
-    # the Brooklyn Bridge: a stone tower with twin pointed arches, cable fans
-    tx = 18
-    cv.rect(tx - 7, g - 36, 15, 36, D)
+    st = RIVER
+    # Manhattan behind: setbacks, water towers, glass; repeating columns
+    for (x, h, style, roof) in ((0, 34, "grid", "water"), (8, 46, "glass", "setback"), (16, 30, "grid", "water"),
+                                (48, 40, "lit", "setback"), (56, 52, "grid", "flat"), (88, 44, "glass", "flat"),
+                                (96, 30, "grid", "water"), (104, 50, "lit", "setback"), (136, 36, "grid", "water"),
+                                (144, 48, "glass", "setback"), (152, 32, "lit", "water")):
+        back_tower(cv, x, st - h, style, roof)
+    # One World Trade Center: a tapered prism of triangular facets, the spire
+    ox = 28
+    gap(cv, ox - 1, st - 66, ox + 14, st)
+    for j in range(56):
+        half = 6 - j * 4 // 56
+        y = st - 1 - j
+        cv.rect(ox + 6 - half, y, 2 * half + 1, 1, D)
+        cv.put(ox + 6 - half + (j % 7 == 0), y, T)            # the lit facet edge
+        if j % 2 == 0:
+            cv.put(ox + 6 + (j // 8) % 3 - 1, y, T)            # the facets' diagonal
+    cv.rect(ox + 6, st - 68, 1, 12, D)                       # the spire
+    # the Empire State building, front and centre
+    cx = 72
+    gap(cv, cx - 16, st - 9, cx + 16, st)
+    gap(cv, cx - 11, st - 75, cx + 11, st - 8)
+    cv.rect(cx - 15, st - 8, 30, 8, D)
+    lit(cv, cx - 13, st - 6, cx + 14, st - 1, 3, 3, 4)
+    cv.rect(cx - 10, st - 44, 20, 36, D)
+    column(cv, cx - 8, cx + 9, st - 42, st - 9, 3, 1)
+    cv.rect(cx - 8, st - 49, 16, 5, D)
+    column(cv, cx - 6, cx + 7, st - 48, st - 45, 3, 2)
+    cv.rect(cx - 6, st - 53, 12, 4, D)
+    cv.rect(cx - 4, st - 57, 8, 4, D)
+    cv.rect(cx - 3, st - 56, 6, 1, W)
+    cv.rect(cx - 2, st - 61, 4, 4, D)
+    cv.rect(cx - 1, st - 66, 2, 5, D)
+    cv.put(cx - 1, st - 63, T)
+    top = st - 66
+    # the Chrysler building
+    x = 114
+    gap(cv, x - 1, st - 66, x + 17, st)
+    cv.rect(x, st - 38, 16, 38, D)
+    column(cv, x + 2, x + 15, st - 36, st - 2, 3, 5)
+    for k in range(5):
+        w = 16 - k * 3
+        y0 = st - 40 - k * 4
+        cv.rect(x + (16 - w) // 2, y0, w, 4, D)
+        for t in range(x + (16 - w) // 2 + 1, x + (16 - w) // 2 + w - 1, 2):
+            cv.put(t, y0 + 1, W)
+    cv.rect(x + 7, st - 64, 2, 4, D)
+    cv.put(x + 7, st - 66, D)
+    cv.put(x + 7, st - 65, D)
+    # the Brooklyn Bridge, low across the left of the river
+    tx = 12
+    gap(cv, tx - 8, st - 30, tx + 9, st)
+    cv.rect(tx - 7, st - 29, 15, 29, D)
     for ax in (tx - 5, tx + 1):
-        cv.rect(ax, g - 28, 4, 14, K)
-        cv.put(ax + 1, g - 29, K)
-        cv.put(ax + 2, g - 29, K)
-        cv.put(ax + 1, g - 30, K)
-    cv.rect(tx - 8, g - 37, 17, 1, D)                      # its cornice
-    cv.rect(0, g - 12, 40, 1, T)                           # the deck
-    for k in range(4):                                     # cable fans to the deck
+        cv.rect(ax, st - 22, 4, 12, K)
+        cv.put(ax + 1, st - 23, K)
+        cv.put(ax + 2, st - 23, K)
+        cv.put(ax + 1, st - 24, K)
+    cv.rect(tx - 8, st - 30, 17, 1, D)
+    cv.rect(0, st - 8, 27, 1, T)                             # the deck
+    for x in range(0, 27, 3):
+        cv.put(x, st - 7, W)                                 # its lamps
+    for k in range(4):                                       # the cable fans, on its own span
         for sign in (-1, 1):
-            x0, y0 = tx + sign * 7, g - 35
-            x1, y1 = tx + sign * (10 + k * 6), g - 12
+            x0, y0 = tx + sign * 7, st - 29
+            x1, y1 = max(0, min(26, tx + sign * (9 + k * 2))), st - 8 - k * 4
             n = max(abs(x1 - x0), abs(y1 - y0))
             for step in range(0, n + 1, 2):
                 cv.put(round(x0 + (x1 - x0) * step / n), round(y0 + (y1 - y0) * step / n), T)
-    # the Empire State building: a podium, a tall slim shaft with vertical
-    # piers, setbacks, the observation deck, a long mast
-    cx = 72
-    cv.rect(cx - 15, g - 8, 30, 8, D)                      # podium
-    lit(cv, cx - 13, g - 6, cx + 14, g - 1, 3, 3, 4)
-    cv.rect(cx - 10, g - 44, 20, 36, D)                    # the shaft
-    column(cv, cx - 8, cx + 9, g - 42, g - 9, 3, 1)
-    cv.rect(cx - 8, g - 49, 16, 5, D)                      # setbacks
-    column(cv, cx - 6, cx + 7, g - 48, g - 45, 3, 2)
-    cv.rect(cx - 6, g - 53, 12, 4, D)
-    cv.rect(cx - 4, g - 57, 8, 4, D)                       # observation floors
-    cv.rect(cx - 3, g - 56, 6, 1, W)
-    cv.rect(cx - 2, g - 61, 4, 4, D)                       # the crown
-    cv.rect(cx - 1, g - 74, 2, 13, D)                      # the mast
-    cv.put(cx - 1, g - 66, T)
-    # the Chrysler building: terraced arches with sunburst windows, the needle
-    x = 118
-    cv.rect(x, g - 40, 16, 40, D)
-    column(cv, x + 2, x + 15, g - 38, g - 2, 3, 5)
-    for k in range(5):
-        w = 16 - k * 3
-        y0 = g - 42 - k * 4
-        cv.rect(x + (16 - w) // 2, y0, w, 4, D)
-        for t in range(x + (16 - w) // 2 + 1, x + (16 - w) // 2 + w - 1, 2):
-            cv.put(t, y0 + 1, W)                           # the sunburst triangles
-    cv.rect(x + 7, g - 72, 2, 10, D)                       # the needle
-    cv.put(x + 7, g - 74, D)
-    return cx, g - 74
+    # the Statue of Liberty, small on her island at the right
+    lx = 150
+    cv.rect(lx - 4, st - 3, 9, 3, D)                         # the island fort
+    cv.rect(lx - 2, st - 10, 5, 7, D)                        # the pedestal
+    cv.rect(lx - 1, st - 16, 3, 6, T)                        # the figure
+    cv.put(lx, st - 17, T)
+    cv.rect(lx + 2, st - 20, 1, 5, T)                        # the raised arm
+    cv.put(lx + 2, st - 21, W)                               # the torch
+    river(cv, ferry=(76, RIVER + 5))
+    return cx, top
 
 
 def seoul(cv):
-    g = GROUND
-    for (x, w, h, s) in ((96, 10, 22, 2), (106, 12, 16, 3), (150, 10, 18, 4)):
-        filler(cv, x, w, h, s)
-    # Namsan: a wooded hill, tree crowns along its rim
-    for i in range(80):
-        h = int(26 * math.sin(math.pi * i / 80))
-        cv.rect(22 + i, g - h, 1, h, D)
-        if h > 2 and i % 3 == 0:
-            cv.put(22 + i, g - h - 1, D)                   # the trees' bumps
-    # N Seoul Tower: its foot building, a slim white shaft, the barrel pod,
-    # a long striped antenna
+    st = RIVER
+    # the mountains behind (Bukhansan): a jagged far ridge in dither
+    for x in range(160):
+        h = 30 + int(8 * math.sin(x / 9.0) + 5 * math.sin(x / 3.7 + 1))
+        for y in range(st - h + 1, st - 20):
+            if (x + y) % 2 == 0:
+                cv.put(x, y, D)
+        cv.put(x, st - h, T)                                  # the moonlit ridge line
+    # apartment slabs and glass towers on the tile grid
+    for (x, h, style, roof) in ((0, 26, "slab", "number"), (8, 30, "slab", "number"), (16, 22, "slab", "flat"),
+                                (96, 28, "slab", "number"), (104, 36, "glass", "flat"), (112, 24, "slab", "number"),
+                                (144, 30, "slab", "number"), (152, 38, "glass", "spire")):
+        back_tower(cv, x, st - h, style, roof)
+    # Namsan: wooded, its trees as texture, the cable car line
+    for i in range(76):
+        h = int(28 * math.sin(math.pi * i / 76))
+        x = 25 + i
+        cv.rect(x, st - h, 1, h, D)
+        if h > 2:
+            cv.put(x, st - h - (1 if i % 3 == 0 else 0), D)      # tree crowns on the rim
+        for y in range(st - h + 2, st, 3):
+            if (x + y) % 4 == 0:
+                cv.put(x, y, K)                                  # trees in the wood
+    for k in range(0, 26):
+        cv.put(34 + k, st - 6 - k * 22 // 26, T)                  # the cable car line
+    cv.rect(46, st - 15, 3, 2, W)                                # its cabin
+    # N Seoul Tower
     cx = 62
-    cv.rect(cx - 6, g - 30, 13, 4, D)                      # the foot building
-    cv.rect(cx - 1, g - 52, 3, 22, W)                      # the shaft
-    cv.rect(cx - 3, g - 54, 7, 2, T)                       # pod: base ring
-    cv.rect(cx - 5, g - 58, 11, 4, D)                      # the observation barrel
-    cv.rect(cx - 4, g - 57, 9, 1, W)                       # its window band
-    cv.rect(cx - 4, g - 59, 9, 1, T)
-    cv.rect(cx - 3, g - 61, 7, 2, D)                       # the roof
-    for y in range(g - 74, g - 61):                        # the antenna, striped
-        w = 2 if y > g - 68 else 1
-        cv.rect(cx, y, w, 1, W if (y // 2) % 2 else D)
-    # Lotte World Tower: a smooth slender cone, split at the crown
-    x = 132
+    cv.rect(cx - 6, st - 32, 13, 4, D)
+    cv.rect(cx - 1, st - 52, 3, 20, W)
+    cv.rect(cx - 3, st - 54, 7, 2, T)
+    cv.rect(cx - 5, st - 58, 11, 4, D)
+    cv.rect(cx - 4, st - 57, 9, 1, W)
+    cv.rect(cx - 4, st - 59, 9, 1, T)
+    cv.rect(cx - 3, st - 61, 7, 2, D)
+    for y in range(st - 66, st - 61):
+        cv.rect(cx, y, 1, 1, W if (y // 2) % 2 else D)
+    top = st - 66
+    # Lotte World Tower
+    x = 124
     for j in range(64):
         w = max(2, 14 - j * 12 // 64)
-        cv.rect(x + (14 - w) // 2, g - 1 - j, w, 1, D)
-        cv.put(x + (14 - w) // 2, g - 1 - j, T)            # the lit edge
-    cv.put(x + 7, g - 63, K)
-    cv.put(x + 7, g - 62, K)                               # the split crown
-    # Namdaemun: a stone base with its arched gate, a two-tier hipped roof
-    gx = 2
-    cv.rect(gx, g - 8, 28, 8, D)
-    for yy in range(g - 7, g, 2):
-        cv.rect(gx, yy, 28, 1, T if yy % 4 else D)         # stone courses
-    cv.rect(gx + 12, g - 5, 4, 5, K)
-    cv.put(gx + 13, g - 6, K)
-    cv.put(gx + 14, g - 6, K)
+        cv.rect(x + (14 - w) // 2, st - 1 - j, w, 1, D)
+        cv.put(x + (14 - w) // 2, st - 1 - j, T)
+        if j % 6 == 3:
+            cv.rect(x + (14 - w) // 2 + 2, st - 1 - j, max(w - 4, 0), 1, T)
+    cv.put(x + 7, st - 63, K)
+    cv.put(x + 7, st - 62, K)
+    # Namdaemun, on the street at the right of the hill
+    gx = 100
+    cv.rect(gx, st - 8, 22, 8, D)
+    for yy in range(st - 7, st, 2):
+        cv.rect(gx, yy, 22, 1, T if yy % 4 else D)
+    cv.rect(gx + 9, st - 5, 4, 5, K)
+    cv.put(gx + 10, st - 6, K)
+    cv.put(gx + 11, st - 6, K)
     def roof(x0, w, y):
         cv.rect(x0, y, w, 2, D)
-        cv.put(x0 - 1, y - 1, D)                           # upturned eaves
+        cv.put(x0 - 1, y - 1, D)
         cv.put(x0 + w, y - 1, D)
         cv.rect(x0 + 2, y - 2, w - 4, 2, D)
-    cv.rect(gx + 6, g - 12, 16, 4, D)                      # lower hall
-    roof(gx + 2, 24, g - 14)
-    cv.rect(gx + 9, g - 19, 10, 3, D)                      # upper hall
-    roof(gx + 6, 16, g - 21)
-    return cx, g - 74
+    cv.rect(gx + 4, st - 12, 14, 4, D)
+    roof(gx, 22, st - 14)
+    cv.rect(gx + 6, st - 18, 10, 3, D)
+    roof(gx + 3, 16, st - 20)
+    river(cv)
+    # Banpo Bridge: a long low deck across the Han, its fountain arcs falling
+    cv.rect(0, RIVER + 3, 160, 1, T)
+    for x in range(4, 160, 12):
+        cv.rect(x, RIVER + 4, 1, 4, D)                       # piers
+        for k in range(5):
+            cv.put(x + 2 + k, RIVER + 4 + (k * k) // 4, W if k % 2 == 0 else T)
+    return cx, top
 
 
 def warsaw(cv):
-    g = GROUND
-    # Old Town: tall narrow houses with steep gables
+    st = RIVER
+    # the new towers behind: glass, Varso's spire, Złota 44's sail
+    for (x, h, style, roof) in ((96, 40, "glass", "flat"), (104, 30, "grid", "flat"), (136, 44, "glass", "flat"),
+                                (152, 34, "grid", "flat")):
+        back_tower(cv, x, st - h, style, roof)
+    vx = 144                                                    # Varso, the tallest, its long spire
+    cv.rect(vx, st - 58, 7, 58, D)
+    for y in range(st - 56, st, 2):
+        cv.rect(vx + 1, y, 5, 1, T if y % 4 else D)
+    cv.rect(vx + 3, st - 72, 1, 14, D)
+    zx = 120                                                    # Złota 44: the sail
+    cv.rect(zx, st - 50, 9, 50, D)
+    for j in range(8):
+        cv.rect(zx, st - 51 - j, max(9 - j, 1), 1, D)
+    for y in range(st - 48, st, 3):
+        cv.rect(zx + 1, y, 7, 1, T)
+    # the Old Town's coloured gabled row and the Royal Castle
+    gap(cv, 0, st - 44, 58, st)
     x = 0
-    for k, (w, h) in enumerate(((6, 22), (5, 26), (6, 20), (5, 24))):
-        cv.rect(x, g - h, w, h, D)
-        tri(cv, x + w // 2, g - h - w // 2, w // 2 + 1, D)
-        lit(cv, x + 1, g - h + 3, x + w - 1, g - 2, 2, 4, k)
+    shades = (D, T, D, W, D, T)
+    for k, (w, h) in enumerate(((6, 22), (5, 26), (6, 20), (5, 24), (6, 21))):
+        c = shades[k]
+        cv.rect(x, st - h, w, h, D)
+        for y in range(st - h + 1, st - 1, 2):                  # a coloured façade in dither
+            for xx in range(x + 1, x + w - 1):
+                if (xx + y) % 2 == 0 and c != D:
+                    cv.put(xx, y, c)
+        for y in range(st - h + 3, st - 2, 4):
+            for xx in range(x + 1, x + w - 1, 2):
+                cv.put(xx, y, K)                                # windows
+        tri(cv, x + w // 2, st - h - w // 2, w // 2 + 1, D)     # steep roof
+        cv.put(x + w // 2, st - h - w // 2 - 1, D)              # the scrolled gable top
         x += w
-    # the Royal Castle with its clock tower and spire
-    cv.rect(22, g - 16, 18, 16, D)
-    lit(cv, 23, g - 14, 39, g - 2, 3, 4, 3)
-    cv.rect(27, g - 30, 6, 14, D)
-    cv.put(29, g - 26, W)
-    cv.put(30, g - 26, W)
-    tri(cv, 30, g - 38, 8, D, 0.4)
-    # Sigismund's Column: a plinth, the slim column, the king with his cross
-    sx = 46
-    cv.rect(sx - 2, g - 6, 5, 6, D)
-    cv.rect(sx, g - 36, 1, 30, T)
-    cv.rect(sx - 1, g - 37, 3, 1, T)
-    cv.rect(sx, g - 41, 1, 4, W)
-    cv.rect(sx - 1, g - 40, 3, 1, W)
-    cv.rect(sx + 1, g - 44, 1, 4, W)                       # the cross
-    cv.rect(sx, g - 43, 3, 1, W)
-    # the Palace of Culture and Science: wide wings, a stepped tower with
-    # pinnacles at every tier, the clock, the long spire
-    cx = 86
-    cv.rect(cx - 26, g - 12, 53, 12, D)                    # the wings
-    for px in (cx - 26, cx - 20, cx + 20, cx + 26):        # their corner pinnacles
-        cv.rect(px, g - 16, 1, 4, D)
-    lit(cv, cx - 24, g - 10, cx + 26, g - 2, 3, 4, 5)
-    tiers = ((24, 18), (18, 12), (14, 10), (10, 6), (6, 4))
-    y = g - 12
+    cv.rect(28, st - 16, 18, 16, D)                             # the Royal Castle
+    lit(cv, 29, st - 14, 45, st - 2, 3, 4, 3)
+    cv.rect(33, st - 30, 6, 14, D)
+    cv.put(35, st - 26, W)
+    cv.put(36, st - 26, W)
+    tri(cv, 36, st - 38, 8, D, 0.4)
+    # Sigismund's Column
+    sx = 52
+    cv.rect(sx - 2, st - 6, 5, 6, D)
+    cv.rect(sx, st - 36, 1, 30, T)
+    cv.rect(sx - 1, st - 37, 3, 1, T)
+    cv.rect(sx, st - 41, 1, 4, W)
+    cv.rect(sx - 1, st - 40, 3, 1, W)
+    cv.rect(sx + 1, st - 44, 1, 4, W)
+    cv.rect(sx, st - 43, 3, 1, W)
+    # the Palace of Culture and Science, front and centre
+    cx = 84
+    gap(cv, cx - 27, st - 70, cx + 28, st)
+    cv.rect(cx - 26, st - 12, 53, 12, D)
+    for px in (cx - 26, cx - 20, cx + 20, cx + 26):
+        cv.rect(px, st - 16, 1, 4, D)
+    lit(cv, cx - 24, st - 10, cx + 26, st - 2, 3, 4, 5)
+    tiers = ((24, 16), (18, 11), (14, 9), (10, 6), (6, 4))
+    y = st - 12
     for k, (w, h) in enumerate(tiers):
         cv.rect(cx - w // 2, y - h, w, h, D)
-        cv.put(cx - w // 2, y - h - 1, D)                  # pinnacles
+        cv.put(cx - w // 2, y - h - 1, D)
         cv.put(cx + w // 2 - 1, y - h - 1, D)
         cv.put(cx - w // 2, y - h - 2, D)
         cv.put(cx + w // 2 - 1, y - h - 2, D)
         if h > 6:
             column(cv, cx - w // 2 + 2, cx + w // 2 - 1, y - h + 1, y - 1, 3, k)
         y -= h
-    cv.rect(cx - 1, y + 2, 2, 2, W)                        # the clock
-    for yy in range(g - 74, y):                            # the spire
+    cv.rect(cx - 1, y + 2, 2, 2, W)
+    for yy in range(st - 66, y):
         cv.rect(cx - (1 if yy > y - 6 else 0), yy, 2 if yy > y - 6 else 1, 1, D)
-    # Varso and the new towers
-    for (xx, w, h, s) in ((124, 10, 36, 6), (136, 9, 28, 7), (146, 13, 44, 8)):
-        filler(cv, xx, w, h, s)
-    cv.rect(152, g - 56, 1, 12, D)
-    return cx, g - 74
+    top = st - 66
+    river(cv)
+    # Świętokrzyski Bridge: one tilted pylon and its cable fan over the Vistula
+    py = RIVER + 4
+    cv.rect(96, py, 64, 1, T)                                   # the deck
+    for k in range(18):
+        cv.rect(116 + k // 4, py - 1 - k, 2, 1, W)              # the pylon, leaning
+    for k in range(6):
+        for sign in (-1, 1):
+            x1 = 120 + sign * (5 + k * 6)
+            n = max(abs(x1 - 120), 17)
+            for step in range(0, n + 1, 2):
+                cv.put(round(120 + (x1 - 120) * step / n), round(py - 17 + 17 * step / n), T)
+    return cx, top
 
 
 DRAW = {"MIAMI": miami, "NEW YORK": new_york, "SEOUL": seoul, "WARSAW": warsaw}
+
 
 
 
@@ -417,9 +572,9 @@ def firework_bank():
 # burst one phase behind the last; -1 = a rising shell under it
 BURSTS = {                 # burst centres per city, found clear of every building
     "MIAMI": ((24, 32), (136, 34)),
-    "NEW YORK": ((20, 40), (86, 36), (140, 40)),
-    "SEOUL": ((20, 40), (80, 40), (150, 40)),
-    "WARSAW": ((20, 40), (70, 40), (140, 40)),
+    "NEW YORK": ((22, 32), (88, 34), (136, 36)),
+    "SEOUL": ((20, 36), (80, 36), (142, 36)),
+    "WARSAW": ((20, 36), (68, 36), (112, 36)),
 }
 SCHEDULE = (            # frame -> phase per burst (None = not shown, "S" = shell)
     (0, "S", None),
@@ -466,8 +621,8 @@ def win_screen(city, frame=2, bake=True):
     big_text(cv, (160 - big_width("YOU WIN", 2)) // 2, 6, "YOU WIN", scale=2, fg=W, outline=K, shadow=D)
     cx, top = DRAW[city](cv)
     fool_cap(cv, cx, top + 1)
-    water(cv)
     if city == "MIAMI":
+        water(cv)
         surf(cv)
     if bake:
         lq = lacquer_font_bank()

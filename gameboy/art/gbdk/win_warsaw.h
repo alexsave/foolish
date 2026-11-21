@@ -13,13 +13,13 @@
 #define win_warsaw_TILE_H 8
 #define win_warsaw_WIDTH 160
 #define win_warsaw_HEIGHT 144
-#define win_warsaw_TILE_COUNT 160
+#define win_warsaw_TILE_COUNT 177
 #define win_warsaw_MAP_ATTRIBUTES 0
 extern const unsigned char win_warsaw_map[360];
 #define win_warsaw_map_attributes win_warsaw_map
 
 BANKREF_EXTERN(win_warsaw)
 
-extern const uint8_t win_warsaw_tiles[2560];
+extern const uint8_t win_warsaw_tiles[2832];
 
 #endif

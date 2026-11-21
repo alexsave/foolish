@@ -16,7 +16,7 @@ The website is the reference: its card faces, its khokhloma card back, its wool 
   `cards.png`, `ui.png` and `sprites.png` are one tile wide so `png2asset` keeps their order; the `*_sheet.png` files are the same tiles 16 wide for looking at.
 - `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `paper.c/.h` (the black-on-white font), `plane.c/.h`, `dashboard.c/.h`, `dashboard_new.c/.h`, `win_miami.c/.h`, `win_new_york.c/.h`, `win_seoul.c/.h`, `win_warsaw.c/.h`, `fireworks.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
   All generated; do not edit them by hand.
-- `gbdk/check/`: a check ROM that loads the banks the way the game will and shows every table mockup composed from them (A or right: next, left: previous, B: the full screens).
+- `gbdk/check/`: a check ROM that loads the banks the way the game will and shows the table mockups composed from them (A or right: next, left: previous, B: the full screens); the motion frames live on the mockup sheets only, to keep the ROM in 32 KB.
 - `mockups/`: every screen at 4x with nearest neighbour (640x576), and contact sheets.
 
 Regenerate everything:
@@ -190,9 +190,9 @@ Unique background tiles each screen uses (all banks together are 133, so every t
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
 | Win over Miami | `mockups/w_miami.png` | 191 (map shipped: 190) | 8 | 4 |
-| Win over New York | `mockups/w_new_york.png` | 156 (152) | 12 | 6 |
-| Win over Seoul | `mockups/w_seoul.png` | 132 (129) | 12 | 6 |
-| Win over Warsaw | `mockups/w_warsaw.png` | 162 (160) | 12 | 6 |
+| Win over New York | `mockups/w_new_york.png` | 197 (193) | 12 | 6 |
+| Win over Seoul | `mockups/w_seoul.png` | 191 (188) | 12 | 6 |
+| Win over Warsaw | `mockups/w_warsaw.png` | 179 (177) | 12 | 6 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
 
 Contact sheets: `mockups/01_cards_sheet.png`, `02_table_layouts.png`, `03_dashboard_win_lose.png`, `04_fly.png`, `05_deal.png`.
@@ -218,7 +218,11 @@ After the blind designer's departures board, in our style (`travel.py`; `mockups
 
 ### Win and lose
 
-- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: each drawn from reference photos (Wikimedia Commons) for true proportions and signature details: Miami Beach at night: the Brickell condo towers behind (slim glass towers with balcony bands on a shared row grid so their tiles repeat, sail, curved and lit-crown tops, two rising above the Freedom Tower), the Freedom Tower in front (arcaded base, tiered tower, belfry, domed cupola, lantern) with the art deco hotels and palms, then the beach (dithered sand, a striped lifeguard hut on stilts with its ramp and flag, two umbrellas), the surf and the moon's path on the water; New York's Empire State (podium, slim shaft of vertical piers, setbacks, the long mast) with the Chrysler building (terraced sunburst arches, needle) and a Brooklyn Bridge tower (twin pointed arches, cable fans); Seoul's N Seoul Tower (slim shaft, barrel pod, striped antenna) on wooded Namsan, Lotte World Tower (slender cone, split crown) and Namdaemun (stone gate base, two-tier roof with upturned eaves); Warsaw's Palace of Culture (wings, stepped tower with pinnacles, clock, long spire) with the Old Town, the Royal Castle's clock tower, Sigismund's Column and the new towers (`mockups/14_win_before_after.png`, and the current four in full in `mockups/15_win_after.png`).
+- Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_warsaw`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: each drawn from reference photos (Wikimedia Commons) for true proportions and signature details: Miami Beach at night: the Brickell condo towers behind (slim glass towers with balcony bands on a shared row grid so their tiles repeat, sail, curved and lit-crown tops, two rising above the Freedom Tower), the Freedom Tower in front (arcaded base, tiered tower, belfry, domed cupola, lantern) with the art deco hotels and palms, then the beach (dithered sand, a striped lifeguard hut on stilts with its ramp and flag, two umbrellas), the surf and the moon's path on the water; New York, Seoul and Warsaw in the same layers as Miami: a back layer of towers on the 8 px tile grid with fixed window patterns (so their tiles repeat, `wins.back_tower`), the capped landmark in front behind a lacquer gap, the street layer, and a river below with the lights above mirrored into ripples (`wins.river`).
+  New York: Manhattan behind (setbacks, roof water towers, glass), One World Trade Center's tapered prism and spire, the Empire State front and centre (podium, slim shaft of vertical piers, setbacks, the mast), the Chrysler building (terraced sunburst arches, needle), a Brooklyn Bridge tower (twin pointed arches, cable fans, the lit deck), the Statue of Liberty small on her island, the East River with a ferry.
+  Seoul: the Bukhansan ridges far behind in dither with a moonlit ridge line, apartment slabs with rooftop signs and glass towers, N Seoul Tower (slim shaft, barrel pod, striped antenna) on wooded Namsan with the cable car line and its cabin, Lotte World Tower (slender cone, split crown), Namdaemun (stone gate base, two-tier roof with upturned eaves), the Han with Banpo Bridge's fountain arcs.
+  Warsaw: Varso (with its spire), Złota 44's sail and other glass towers behind, the Old Town's coloured gabled row and the Royal Castle with its clock tower, Sigismund's Column, the Palace of Culture front and centre (wings, stepped tower with pinnacles, clock, long spire), the Vistula with the Świętokrzyski Bridge's leaning pylon and cable fan.
+  Each drawn from reference photos (Wikimedia Commons) for true proportions and signature details (the current four in full in `mockups/15_win_after.png`; `14_win_before_after.png` is the earlier round).
   Under it the bot's name, then "IS THE DURAK".
   The shipped map leaves the name row black: the code loads `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
   Each win tileset is at most 206 tiles (checked), so the tileset, the lacquer font and the fireworks fit one 256-tile space.
@@ -230,7 +234,7 @@ After the blind designer's departures board, in our style (`travel.py`; `mockups
 ### Fireworks on the win screens (`mockups/09_fireworks_frames.png`)
 
 Sprites, loaded from `fireworks.c` at `ART_FW_BASE` (252): `T_FW_SPARK`, `T_FW_BURST`, `T_FW_FADE` are the top-left quarter of a 16x16 burst (draw it four times with X and Y flips), `T_FW_SHELL` is a rising shell.
-Bursts at fixed points per city (`wins.BURSTS`: two over Miami, whose sky is full of condos, three elsewhere), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
+Bursts at fixed points per city (`wins.BURSTS`, found clear of every building: two over Miami, whose sky is full of condos, three elsewhere), each one phase behind the last, in a 4-frame loop (`wins.SCHEDULE`): shell, spark, burst, fade; about 8 vsyncs per frame.
 At most 12 sprites on screen and 6 on one line.
 `gen_art.py` renders every frame of every city and fails if any firework pixel lands on anything but black sky or a star (mutation checked: a burst moved onto N Seoul Tower fails at the first covered pixel).
 
