@@ -5,10 +5,9 @@
 #              selected city
 #   row 10     CONTINUE as a boarding pass (paper ticket); the city on it is
 #              printed by the code with the paper font (black on white)
-#   row 11     DEPARTURES
-#   rows 12-15: a split-flap board, one row per bot, a departure
+#   row 11     DEPARTURES, and A FLY on the right
+#   rows 13-16: a split-flap board, one row per bot, a departure
 #              time (later = harder; Warsaw, the boss, leaves at midnight)
-#   row 17     A FLY
 # Moscow stands in the skyline only: it is the real top bot, too big for the
 # Game Boy, so it has no row on the board.
 
@@ -17,7 +16,7 @@ from gen_art import Canvas, Screen, T, W, D, K, rail_glyph_tile
 from screens_full import big_text, big_width, text, button, skyline
 
 TICKET_ROW, TICKET_CITY_COL = 10, 11
-BOARD_ROW = 12                       # first city row
+BOARD_ROW = 13                       # first city row
 PAPER_BASE, POINTER_TILE, PLANE_TILE = 200, 250, 251
 TILESET_MAX = PAPER_BASE
 
@@ -119,7 +118,8 @@ def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
         text(cv, (160 - 13 * 8) // 2, 80, "PICK A FLIGHT", T)
     # DEPARTURES header
     text(cv, 8, 88, "DEPARTURES", W)
-    cv.glyph(152, 88, PLANE_ICON, W)
+    button(cv, 120, 88, "BTN_A")                       # the move, on the header
+    text(cv, 128, 88, " FLY", W)
     rows = [80] if cont else []
     for k, (name, when, pips) in enumerate(BOARD):
         ty = BOARD_ROW + k
@@ -131,8 +131,7 @@ def dashboard(sp, cont="SEOUL", cursor=0, bake=True):
         else:
             flaps(cv, 16, ty, "BOSS")
         rows.append(ty * 8)
-    button(cv, 64, 136, "BTN_A")
-    text(cv, 72, 136, " FLY", W)
+
     # sprites: the pointer at the selected row, the plane over its city
     s.spr(0, rows[cursor], sp["SP_POINTER"])
     sel = cont if (cont and cursor == 0) else BOARD[cursor - (1 if cont else 0)][0]

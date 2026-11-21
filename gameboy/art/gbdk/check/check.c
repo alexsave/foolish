@@ -18,6 +18,7 @@
 #include "../win_warsaw.h"
 #include "../lose.h"
 #include "../lacquer.h"
+#include "../paper.h"
 
 /* Print s with a font bank loaded at `base` whose character k is tile base + first + k
  * (k = index in ART_FONT_CHARS), as the README tells the game to. */
@@ -59,9 +60,9 @@ static void show_full(uint8_t k)
     DISPLAY_OFF;
     set_bkg_data(0, fulls[k].count, fulls[k].tiles);
     set_bkg_tiles(0, 0, 20, 18, fulls[k].map);
-    if (k == 0) {             /* dashboard: the CONTINUE city in the rail font */
-        set_bkg_data(160, ART_UI_COUNT, ui_tiles);
-        print_at(ART_DASH_CITY_COL, ART_DASH_CITY_ROW, "SEOUL", 160, ART_FONT_FIRST);
+    if (k == 0) {             /* dashboard: the CONTINUE city on the boarding pass */
+        set_bkg_data(ART_PAPER_BASE, ART_PAPER_COUNT, paper_tiles);
+        print_at(ART_DASH_CITY_COL, ART_DASH_CITY_ROW, "SEOUL", ART_PAPER_BASE, 0);
     } else if (k >= 2 && k <= 5) {   /* win: the bot's name in the lacquer font, centred */
         const char *name = win_names[k - 2];
         uint8_t len = 0;

@@ -9,11 +9,12 @@ The website is the reference: its card faces, its khokhloma card back, its wool 
   This is the editable source of truth for the pixels.
 - `gen_art.py`: draws the tile banks from `glyphs.py`, composes every screen mockup from those same tiles, and checks the hardware limits.
 - `screens_full.py`: the full-screen pictures (dashboard, lose) and the city skyline.
+- `travel.py`: the traveller dashboard (title + departures board + boarding pass).
 - `wins.py`: the four per-bot win screens (each city at night, the fool's cap on its landmark) and the fireworks sprites.
 - `export.py`: writes the indexed PNGs, runs GBDK's `png2asset` on them, decodes its bytes back and asserts they equal the drawn tiles, and writes `gbdk/art_tiles.h`.
 - `png/`: the indexed 4-shade PNGs (palette in index order), one per bank and one per full screen.
   `cards.png`, `ui.png` and `sprites.png` are one tile wide so `png2asset` keeps their order; the `*_sheet.png` files are the same tiles 16 wide for looking at.
-- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `dashboard.c/.h`, `dashboard_new.c/.h`, `win_miami.c/.h`, `win_new_york.c/.h`, `win_seoul.c/.h`, `win_warsaw.c/.h`, `fireworks.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
+- `gbdk/`: the `png2asset` output (`cards.c/.h`, `ui.c/.h`, `sprites.c/.h`, `lacquer.c/.h` (the white-on-black font), `paper.c/.h` (the black-on-white font), `plane.c/.h`, `dashboard.c/.h`, `dashboard_new.c/.h`, `win_miami.c/.h`, `win_new_york.c/.h`, `win_seoul.c/.h`, `win_warsaw.c/.h`, `fireworks.c/.h`, `lose.c/.h`) and the generated `art_tiles.h`.
   All generated; do not edit them by hand.
 - `gbdk/check/`: a check ROM that loads the banks the way the game will and shows every table mockup composed from them (A or right: next, left: previous, B: the full screens).
 - `mockups/`: every screen at 4x with nearest neighbour (640x576), and contact sheets.
@@ -186,8 +187,8 @@ Unique background tiles each screen uses (all banks together are 131, so every t
 | Pick up | `mockups/t4_pickup.png` | 47 | 0 | 0 |
 | Big hand (22), two selected | `mockups/t5_big_hand.png` | 53 | 1 | 1 |
 | Rearrange (SELECT held) | `mockups/t6_rearrange.png` | 55 | 4 | 4 |
-| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 145 (map shipped: 140) | 1 | 1 |
-| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 138 | 1 | 1 |
+| Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
+| Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
 | Win over Miami | `mockups/w_miami.png` | 152 (map shipped: 151) | 12 | 4 |
 | Win over New York | `mockups/w_new_york.png` | 152 (148) | 12 | 4 |
 | Win over Seoul | `mockups/w_seoul.png` | 139 (136) | 12 | 4 |
@@ -202,15 +203,18 @@ The dashboard, win and lose screens are single pictures; `png2asset -map` dedupe
 Load the tileset at tile 0 and the map at (0,0); reload the three banks when going back to the table.
 Each is under 160 tiles because the sky, the lacquer and the black areas repeat (the limit served: a full-screen picture needs 360 tiles unless it repeats).
 
-### Dashboard (title + bot picker)
+### Dashboard (title + bot picker): the traveller
 
-- A city skyline from Miami to Moscow (palms, the Empire State, N Seoul Tower, the Palace of Culture in Warsaw, the Kremlin's Spasskaya tower) under the ДУРАК title, with FOOLISH under it.
-- Moscow is the real top bot, but the Game Boy is too weak to run it, so it stands in the skyline only and has no picker row.
-- On black lacquer with a khokhloma vine edge: CONTINUE (when a game is open), then the bots Miami, New York, Seoul and Warsaw (the boss), with difficulty pips.
-- The menu rows sit on the tile grid (CONTINUE at row 11, the bots at rows 13 to 16).
-- The CONTINUE city is printed by the code with the rail font at row `ART_DASH_CITY_ROW` (11), from column `ART_DASH_CITY_COL` (11), tile = 160 + `ART_FONT_FIRST` + index in `ART_FONT_CHARS` (a dark pill, like the website's); the shipped `dashboard` map leaves those cells black, and `dashboard_new` is the same screen with no CONTINUE row.
-- The pointer is `SP_POINTER` at x = 6, on the selected row's y.
-- VRAM while the dashboard is up: its tileset takes tiles 0..145, which overlaps the usual sprite bank at 140, so load the `ui` bank at tile 160 (160..220) for the city name and copy `SP_POINTER` alone to tile 230.
+After the blind designer's departures board, in our style (`travel.py`; `mockups/13_dashboard_travel.png`, with and without a game open).
+
+- Rows 0-9: ДУРАК with FOOLISH under it, over the city skyline from Miami to Moscow; a dotted flight route runs across the sky behind the towers.
+- Moscow is the real top bot, but the Game Boy is too weak to run it, so it stands in the skyline only and has no row on the board.
+- Row 10: with a game open, CONTINUE is a boarding pass (a paper ticket with punched ends and a tear line); without one, "PICK A FLIGHT".
+- Row 11: DEPARTURES, with the move (A FLY) on the right.
+- Rows 13-16: a split-flap board, one row per bot in our order: MIAMI 06:10 (1 pip), NEW YORK 09:45 (2), SEOUL 17:20 (3), WARSAW 23:55 (BOSS); the later the flight, the harder the bot.
+- Sprites: `SP_POINTER` at x = 0 on the selected row (the ticket is the first row when there is one), and the plane (`plane.c`) on the route at y = `ART_DASH_ROUTE_Y` over the selected city (x from `travel.CITY_X`: Miami 14, New York 44, Seoul 75, Warsaw 112), gliding between cities as the pointer moves.
+- The CONTINUE city is printed by the code with the paper font (`paper.c`, black on white, the same characters as the rail font) loaded at `ART_PAPER_BASE` (200), on row `ART_DASH_CITY_ROW` (10) from column `ART_DASH_CITY_COL` (11); the shipped `dashboard` map leaves those cells as blank paper.
+- VRAM while the dashboard is up: its tileset from 0 (at most 200 tiles, checked; 172 and 175 now), the paper font at 200, `SP_POINTER` copied to tile 250 and the plane at 251.
 
 ### Win and lose
 
