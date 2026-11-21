@@ -103,8 +103,10 @@ The card back (`BACK_*`) needs only `_u0` and `_u3` (bot hand overlap, the deck 
 
 ### The back
 
-Pixel khokhloma, after the website's card back: black lacquer, a dark grey frame, one gold sprig with its stem running across the card (the website lays its pattern on its side), two berry clusters and dark grey leaves.
-Gold is the brightest colour in khokhloma, so gold and berries are white and the leaves dark grey.
+Pixel khokhloma, after the website's card back (black lacquer, gold, red berries), as one rich motif: a rowan sprig with a curled gold tendril, two veined leaves and a bunch of six round berries.
+Each berry is ringed in lacquer, drawn back to front, so the bunch reads as separate fruit.
+Gold and the berries are white (khokhloma's brightest colours), the leaf veins and each berry's shaded underside are dark grey, inside a black border and a dark grey frame.
+An overlapped back still shows the tendril, a leaf and half the bunch.
 
 ### The pass slot
 
@@ -198,8 +200,9 @@ Each is under 160 tiles because the sky, the lacquer and the black areas repeat 
 - A city skyline from Miami to Moscow (palms, the Empire State, N Seoul Tower, the Palace of Culture in Warsaw, the Kremlin's Spasskaya tower) under the DURAK title.
 - On black lacquer with a khokhloma vine edge: CONTINUE (when a game is open), then the bots Miami, New York, Seoul and Warsaw (the boss), with difficulty pips.
 - The menu rows sit on the tile grid (CONTINUE at row 11, the bots at rows 13 to 16).
-- The CONTINUE city is printed by the code with the rail font (load the `ui` bank at tile 160 while the dashboard is up) at row 11, columns 11 onwards; `dashboard_new` is the same screen with no CONTINUE row.
+- The CONTINUE city is printed by the code with the rail font at row 11, columns 11 onwards (a dark pill, like the website's); `dashboard_new` is the same screen with no CONTINUE row.
 - The pointer is `SP_POINTER` at x = 6, on the selected row's y.
+- VRAM while the dashboard is up: its tileset takes tiles 0..145, which overlaps the usual sprite bank at 140, so load the `ui` bank at tile 160 (160..220) for the city name and copy `SP_POINTER` alone to tile 230.
 
 ### Win and lose
 
