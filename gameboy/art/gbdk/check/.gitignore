@@ -1,0 +1,10 @@
+# build outputs of the art check ROM
+*.gb
+*.o
+*.map
+*.lst
+*.sym
+*.asm
+*.ihx
+*.noi
+*.sav
