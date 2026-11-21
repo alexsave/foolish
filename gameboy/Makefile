@@ -10,8 +10,8 @@ SHARED   = ../shared/c
 
 CORE     = src/gd_rules.c src/gd_play.c src/gd_rng.c
 CORE_H   = src/gd_rules.h src/gd_play.h src/gd_rng.h $(B)/gd_binom.h
-ROM_SRC  = src/main.c src/gfx.c $(CORE)
-ROM_H    = src/gfx.h src/input.h src/ui.h $(CORE_H)
+ROM_SRC  = src/main.c src/gfx.c src/input.c $(CORE)
+ROM_H    = src/gfx.h src/input.h $(B)/tiles.h $(CORE_H)
 
 HOSTFLAGS = -std=c11 -O2 -g -Wall -Wextra -Wno-unused-parameter
 # foolish's production caps (its README): a menu as wide as the shipped one.
@@ -28,6 +28,12 @@ $(B)/gen_binom: tools/gen_binom.c | $(B)
 
 $(B)/gd_binom.h: $(B)/gen_binom
 	$(B)/gen_binom > $@
+
+$(B)/gen_tiles: tools/gen_tiles.c | $(B)
+	$(HOSTCC) -O2 -o $@ $<
+
+$(B)/tiles.h: $(B)/gen_tiles
+	$(B)/gen_tiles > $@
 
 # ---- the ROM ------------------------------------------------------------------
 $(B)/durak.gb: $(ROM_SRC) $(ROM_H) | $(B)
@@ -49,7 +55,7 @@ mutants: $(B)/gd_binom.h
 
 # ---- the headless runner ------------------------------------------------------------
 $(B)/gbrun: tools/gbrun.c | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
+	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -I/opt/homebrew/include -o $@ $< -L/opt/homebrew/lib -lmgba -lpng
 
 gbrun: $(B)/gbrun
 
