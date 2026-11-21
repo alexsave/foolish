@@ -90,6 +90,10 @@ typedef struct {
     // played them since. No rule reads these.
     gd_mask gone;
     gd_mask known[2];
+    // A belief, not knowledge (foolish's voids): the cards each seat is taken
+    // not to hold because it picked up a lone attack they would beat. Cleared
+    // when the seat draws, or plays one of them.
+    gd_mask nocover[2];
 } gd_game;
 
 // THE REPETITION DRAW's ring (foolish game.h GameRepetition), for two seats.

@@ -9,11 +9,19 @@
 #include "../src/gd_rng.h"
 #include "../src/gd_bot_hw.h"
 #include "../src/gd_bot_seoul.h"
+#include "../src/gd_bot_moscow.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-enum { BOT_RANDOM, BOT_NEWYORK, BOT_SEOUL };
+enum { BOT_RANDOM, BOT_NEWYORK, BOT_SEOUL, BOT_MOSCOW };
+// Moscow: its decisions, and their time on the Game Boy as modeled from the
+// costs measured there (README): 20 ms a world sampled and converted, 3 ms to
+// play a candidate's move on a world, 3.3 ms a ply, 8.2 ms a solver node
+static unsigned long mo_decisions, mo_hard, mo_cands, mo_playouts, mo_max_playouts, mo_plies, mo_solves[4];
+static unsigned long long mo_nodes;
+static unsigned long mo_max_nodes;
+static double mo_ms, mo_ms_max, mo_ms_solve, mo_ms_endgame_mc;
 static unsigned long seoul_plies;
 static unsigned long seoul_decisions, seoul_cands, seoul_playouts, seoul_max_playouts, seoul_hard;
 
@@ -21,6 +29,7 @@ static int bot_of(const char *s) {
     if (!strcmp(s, "random")) return BOT_RANDOM;
     if (!strcmp(s, "newyork")) return BOT_NEWYORK;
     if (!strcmp(s, "seoul")) return BOT_SEOUL;
+    if (!strcmp(s, "moscow")) return BOT_MOSCOW;
     fprintf(stderr, "unknown bot %s\n", s);
     exit(2);
 }
@@ -35,6 +44,25 @@ static void choose(int bot, const gd_game *g, uint8_t seat, gd_move *m) {
         seoul_plies += gd_seoul_plies;
         if (gd_seoul_playouts > seoul_max_playouts) seoul_max_playouts = gd_seoul_playouts;
         if (gd_seoul_cands > 1) seoul_hard++;
+        return;
+    }
+    if (bot == BOT_MOSCOW) {
+        gd_moscow_choose(g, seat, m);
+        mo_decisions++;
+        mo_cands += gd_moscow_cands;
+        mo_playouts += gd_moscow_playouts;
+        mo_plies += gd_moscow_plies;
+        mo_nodes += gd_moscow_nodes;
+        mo_solves[gd_moscow_solve]++;
+        if (gd_moscow_nodes > mo_max_nodes) mo_max_nodes = gd_moscow_nodes;
+        if (gd_moscow_playouts > mo_max_playouts) mo_max_playouts = gd_moscow_playouts;
+        if (gd_moscow_cands > 1) mo_hard++;
+        const double worlds = gd_moscow_playouts ? (double)(MOSCOW_W1 + MOSCOW_W2) : 0.0;
+        const double ms = worlds * 20.0 + gd_moscow_playouts * 3.0 + gd_moscow_plies * 3.3 + gd_moscow_nodes * 8.2;
+        mo_ms += ms;
+        mo_ms_solve += gd_moscow_nodes * 8.2;
+        if (g->stock_n == 0 && !g->has_flipped) mo_ms_endgame_mc += ms - gd_moscow_nodes * 8.2;
+        if (ms > mo_ms_max) mo_ms_max = ms;
         return;
     }
     const uint32_t n = gd_menu_count(g, seat);
@@ -88,5 +116,15 @@ int main(int argc, char **argv) {
                (double)seoul_playouts / seoul_decisions, seoul_max_playouts);
     if (seoul_playouts)
         printf("  Seoul's playouts: %.1f plies each on average\n", (double)seoul_plies / seoul_playouts);
+    if (mo_decisions) {
+        printf("  Moscow: %lu decisions, %.1f%% with a choice, %.2f candidates and %.1f playouts a decision (%lu at most), %.1f plies a playout\n",
+               mo_decisions, 100.0 * mo_hard / mo_decisions, (double)mo_cands / mo_decisions, (double)mo_playouts / mo_decisions,
+               mo_max_playouts, mo_playouts ? (double)mo_plies / mo_playouts : 0.0);
+        const unsigned long solved = mo_solves[1] + mo_solves[2] + mo_solves[3];
+        printf("  Moscow's endgame solves: %lu (a proven win %lu, all moves lose %lu, out of nodes %lu), %.0f nodes a solve, %lu at most\n",
+               solved, mo_solves[1], mo_solves[2], mo_solves[3], solved ? (double)mo_nodes / solved : 0.0, mo_max_nodes);
+        printf("  Moscow modeled on the Game Boy: %.2f s a decision on average, %.1f s at most (of the average: solver %.2f s, Monte Carlo with the stock gone %.2f s)\n",
+               mo_ms / mo_decisions / 1000.0, mo_ms_max / 1000.0, mo_ms_solve / mo_decisions / 1000.0, mo_ms_endgame_mc / mo_decisions / 1000.0);
+    }
     return 0;
 }

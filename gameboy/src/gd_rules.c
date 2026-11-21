@@ -85,10 +85,11 @@ static uint8_t draw_card(gd_game *g, uint8_t *out) {
 }
 
 static void draw_up_to_six(gd_game *g, uint8_t seat) {
-    uint8_t c;
+    uint8_t c, i;
     while (gd_hand_n(g, seat) < GD_HAND) {
         if (!draw_card(g, &c)) break;
         GD_SET(g->hand[seat], c);
+        for (i = 0; i < 5; i++) g->nocover[seat].b[i] = 0;    // unknown new cards: the belief expires
     }
     if (gd_hand_n(g, seat) == 0 && !(g->out & BIT(seat))) g->out |= BIT(seat);
 }
@@ -141,7 +142,10 @@ void gd_deal(gd_game *g, gd_rep *r, const uint8_t deck[GD_NCARDS], uint8_t fallb
     g->good = 0;
     g->out = 0;
     g->discard = 0;
-    for (i = 0; i < 5; i++) { g->gone.b[i] = 0; g->known[0].b[i] = 0; g->known[1].b[i] = 0; }
+    for (i = 0; i < 5; i++) {
+        g->gone.b[i] = 0; g->known[0].b[i] = 0; g->known[1].b[i] = 0;
+        g->nocover[0].b[i] = 0; g->nocover[1].b[i] = 0;
+    }
     g->status = GD_PLAYING;
     // The lowest trump leads (foolish derive_lowest_power_index).
     for (s = 0; s < 2; s++)
@@ -330,14 +334,22 @@ static void end_bout_discard(gd_game *g) {
     refill(g);
 }
 
+// A seat played card c: out of its hand and its known cards, and if it was a
+// card the seat was believed not to hold, that belief was wrong and goes.
+static void played(gd_game *g, uint8_t seat, uint8_t c) {
+    uint8_t i;
+    GD_CLR(g->hand[seat], c);
+    GD_CLR(g->known[seat], c);
+    if (GD_HAS(g->nocover[seat], c)) for (i = 0; i < 5; i++) g->nocover[seat].b[i] = 0;
+}
+
 uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
     uint8_t i;
     if (!gd_legal(g, seat, m)) return 0;
     switch (m->type) {
     case GD_ATTACK:
         for (i = 0; i < m->n; i++) {
-            GD_CLR(g->hand[seat], m->cards[i]);
-            GD_CLR(g->known[seat], m->cards[i]);
+            played(g, seat, m->cards[i]);
             g->att[g->nb] = m->cards[i];
             g->def[g->nb] = GD_NONE;
             g->nb++;
@@ -351,8 +363,7 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
         g->good = 0;
         for (i = 0; i < m->n; i++) {
             g->def[battle_of_uncovered(g, m->atts[i])] = m->cards[i];
-            GD_CLR(g->hand[d], m->cards[i]);
-            GD_CLR(g->known[d], m->cards[i]);
+            played(g, d, m->cards[i]);
         }
         if (gd_hand_n(g, d) == 0) {
             // A cover with the last card ends the bout: discard, refill, and the
@@ -371,8 +382,7 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
     case GD_PASS: {
         const uint8_t next = next_seat(g, g->defender);
         for (i = 0; i < m->n; i++) {
-            GD_CLR(g->hand[seat], m->cards[i]);
-            GD_CLR(g->known[seat], m->cards[i]);
+            played(g, seat, m->cards[i]);
             g->att[g->nb] = m->cards[i];
             g->def[g->nb] = GD_NONE;
             g->nb++;
@@ -385,6 +395,15 @@ uint8_t gd_apply(gd_game *g, gd_rep *r, uint8_t seat, const gd_move *m) {
     case GD_PICKUP: {
         const uint8_t stock_before = g->stock_n, flip_before = g->has_flipped;
         g->good = 0;
+        // One uncovered attack picked up: the defender is believed to hold
+        // nothing that beats it (foolish BotMemory's void, a belief: a player
+        // may take what it could beat).
+        if (gd_uncovered(g) == 1)
+            for (i = 0; i < g->nb; i++)
+                if (g->def[i] == GD_NONE) {
+                    uint8_t c;
+                    for (c = 0; c < GD_NCARDS; c++) if (can_cover(g->att[i], c, g->trump)) GD_SET(g->nocover[g->defender], c);
+                }
         for (i = 0; i < g->nb; i++) {
             GD_SET(g->hand[g->defender], g->att[i]);
             GD_SET(g->known[g->defender], g->att[i]);

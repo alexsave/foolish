@@ -176,7 +176,7 @@ simbench: $(B)/simbench_host $(B)/simbench.gb $(B)/simprof.gb $(B)/gbrun
 .PHONY: simbench
 
 # ---- bots against each other on the Mac (Seoul sized by SEOUL_SAMPLES) -----------------
-MATCH_SRC = tests/match.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
+MATCH_SRC = tests/match.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_solve.c src/gd_bot_seoul.c src/gd_bot_moscow.c
 $(B)/match: $(MATCH_SRC) $(CORE_H) src/gd_bot_seoul.h | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -I$(B) -o $@ $(MATCH_SRC)
 
