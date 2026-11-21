@@ -10,6 +10,10 @@ LCC      = $(GBDK)/bin/lcc
 # SDCC must play identical games - is the check that keeps codegen honest.
 LCCFLAGS =
 HOSTCC  ?= clang
+# mGBA for the headless runner: Homebrew's paths by default (the Mac); on Linux
+# libmgba-dev is on the default paths, so MGBA_CFLAGS= MGBA_LIBS='-lmgba -lpng'.
+MGBA_CFLAGS ?= -I/opt/homebrew/include
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
 B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
@@ -18,14 +22,14 @@ CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib
 CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_solve.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/live.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_stack.c src/gd_botlib.c src/input.c src/live.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c
 ROM_BANK1 = main gfx
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu gd_play
 ROM_BANK6 = gd_sim
 ROM_BANK7 = gd_bot_seoul gd_bot_moscow
 ROM_BANK8 = gd_solve
-ROM_H    = src/gfx.h src/input.h src/live.h $(CORE_H) src/gd_bot_seoul.h src/gd_bot_moscow.h $(wildcard art/gbdk/*.h)
+ROM_H    = src/gfx.h src/input.h src/live.h src/gd_stack.h $(CORE_H) src/gd_bot_seoul.h src/gd_bot_moscow.h $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
 # pictures, 9.5 KB) goes to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with
@@ -37,7 +41,7 @@ ART      = art/gbdk
 # Bank 2: the table's banks, the fonts and small sprites, the dashboards and
 # the lose picture; bank 3: the four win pictures. gfx.c reads each file's bank
 # with BANK(), so this list is the one place that decides it.
-ART_BANK2 = cards ui sprites lacquer paper plane fireworks dashboard dashboard_new lose
+ART_BANK2 = cards ui sprites pile lacquer paper plane fireworks dashboard dashboard_new lose
 ART_BANK3 = win_miami win_new_york win_seoul win_moscow
 ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC))) \
             $(patsubst %,$(B)/rom/%.o,$(ART_BANK2) $(ART_BANK3))
@@ -106,7 +110,10 @@ $(B)/simtest: tests/simtest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite
 $(B)/solvetest: tests/solvetest.c tests/foolish_map.h $(CORE) $(CORE_H) $(B)/cordite_sim.o | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DMAX_LOGS=64 -I$(B) -I$(FOOLISH) -o $@ tests/solvetest.c $(CORE) $(SIM_FOOLISH) $(B)/cordite_sim.o
 
-test: $(B)/difftest $(B)/simtest $(B)/solvetest
+$(B)/fontorder: tests/fontorder.c $(ART)/art_tiles.h | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -I$(ART) -o $@ tests/fontorder.c
+
+test: $(B)/difftest $(B)/simtest $(B)/solvetest $(B)/fontorder
 	sh tests/rng_ban.sh
 	$(B)/difftest 3000 1
 	$(B)/simtest 20000 1
@@ -122,13 +129,8 @@ rom-mutants: $(B)/durak.gb $(B)/gbrun
 	bash tests/rom_mutants.sh
 
 # ---- the headless runner ------------------------------------------------------------
-# libmgba and libpng: Homebrew's paths by default; on Linux, for example,
-# make MGBA_CFLAGS=-D_DEFAULT_SOURCE MGBA_LIBS="-lmgba -lpng" (glibc hides
-# strdup and PATH_MAX under -std=c11 without it)
-MGBA_CFLAGS ?= -I/opt/homebrew/include
-MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
 $(B)/gbrun: tools/gbrun.c | $(B)
-	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
+	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG -D_GNU_SOURCE $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
 
 gbrun: $(B)/gbrun
 
@@ -256,13 +258,13 @@ $(B)/rom/moscowcheck.o: tests/moscowcheck.c $(CORE_H) src/gd_bot_moscow.h src/in
 	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
 
 # input.o and live.o: the live-think handler ticks through the whole check.
-MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/input.o $(B)/rom/live.o $(B)/rom/moscowcheck.o \
+MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_stack.o $(B)/rom/gd_botlib.o $(B)/rom/input.o $(B)/rom/live.o $(B)/rom/moscowcheck.o \
          $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_solve.o $(B)/rom/gd_bot_moscow.o
 $(B)/moscowcheck.gb: $(MC_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(MC_OBJ) 2>&1 | tee $(B)/moscowcheck.link
 	! grep -qi overflow $(B)/moscowcheck.link
 
-moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun
+moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun $(B)/durak.gb
 	sh tests/moscowcheck.sh
 
 .PHONY: moscowcheck

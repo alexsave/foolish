@@ -17,6 +17,7 @@
 #include <gb/gb.h>
 #include "../src/input.h"
 #include "../src/live.h"
+#include "../src/gd_stack.h"
 #endif
 
 #define SC_SEED  0x4343u
@@ -91,10 +92,12 @@ static void sc_live(void) {
 void main(void) {
     *(volatile uint8_t *)0x0000u = 0x0Au;     // the cart's RAM, MBC1 4/32 mode
     *(volatile uint8_t *)0x6000u = 0x01u;
+    CRITICAL { gd_stack_paint(); }     // the guard (gd_stack.h): the script reads gd_stack_free after the run
     in_init();
     live_start(sc_live);
     run();
     live_stop();
+    gd_stack_scan();
     sc_done = 1;
     for (;;) vsync();
 }

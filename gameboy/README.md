@@ -20,7 +20,7 @@ make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
 ```
 
-gbrun links libmgba and libpng from Homebrew's paths by default; on Linux: `make MGBA_CFLAGS=-D_DEFAULT_SOURCE MGBA_LIBS="-lmgba -lpng" ...` (with `apt-get install libmgba-dev libpng-dev`).
+On Linux the runner needs `apt-get install libmgba-dev libpng-dev` and `make MGBA_CFLAGS= MGBA_LIBS= ...` (the Homebrew paths are the default); `make scripts PYTHON=python3` needs Pillow for `tests/fwcheck.py`.
 
 ## Hypotheses (written before measuring) and measurements
 
@@ -49,7 +49,8 @@ gbrun links libmgba and libpng from Homebrew's paths by default; on Linux: `make
   With Moscow: 7.1 KB (3.9 KB + 3.3 KB), 0.7 KB left above the stack; Seoul and Moscow share one world and one candidate list (`gd_botlib.h`), and Moscow ranks candidates by menu index, as a move is 38 bytes.
   With the sprites built in a staging copy (160 bytes, below): 541 bytes are left between the data and the stack's top at 0xE000.
   The stack's deepest reach, read from the bytes it left in that gap: 320 bytes over a whole game against Moscow, 400 in `moscowcheck` (100 decisions, 6 solved), so about 80 bytes to spare once the game's own frames are counted.
-  With the live screen during a think (below): 14 bytes more data, so 527 bytes are left; the deepest reach is unchanged at 400 in `moscowcheck`, so about 66 bytes to spare.
+  Now measured by a canary (`src/gd_stack.c`, the section below): 665 bytes are free between the data and the stack (the character table went to ROM), 346 untouched after a whole game against Moscow, and `game_moscow.txt`, `game_moscow_endgame.txt` and `moscowcheck` fail if fewer than 48 are.
+  The live screen during a think (below) adds 14 bytes of data and keeps its own stack in the cart's RAM; on the search's stack it costs 2 bytes.
   The cart's 32 KB of RAM is the solver's: bank 0 its stack (49 states and frames, 640 moves, the hash's table at 0xBF00), banks 1 to 3 its transposition table (3 x 1024 entries of a 32-bit tag and a value).
 - Bot decision time (count the menu, draw, unrank, apply): 20 to 60 scanlines (2 to 7 ms) for a typical position, under 3 frames (50 ms) at worst.
   Falsifier: a typical move over one frame (154 lines, 16.7 ms).
@@ -59,6 +60,29 @@ gbrun links libmgba and libpng from Homebrew's paths by default; on Linux: `make
   - It does not show: the bot waits half a second (30 frames) after the board last changed before it moves, by design.
 - Table redraw: the slowest whole-board redraw in those games was 582 scanlines (3.8 frames); moving the cursor redraws only the foot rail and the sprites.
   Buttons are latched by an interrupt, so a slow redraw never loses a press.
+
+### Win-screen fireworks from the art's export, and the stack guard (gb-fireworks-stack)
+
+Predictions written before the change was measured, each marked right or wrong after (the fireworks prediction was written after the old table's first screenshot but before the new code ran).
+
+Fireworks:
+- The game drew bursts from a hand-copied table (`fw_x`, `fw_y` in `main.c`). Prediction: it matches the art in at most a few of the 16 frames (4 cities x 4 frames) and fails the art comparison in the burst boxes in the rest; with `ART_WIN_BURSTS_<CITY>` in its place every frame matches the art's own render pixel for pixel, in the boxes and on the whole screen.
+  Falsifier: the old table already matching in most frames, or any pixel differing after the change.
+  Right: the old table failed 16 of 16 frames (4 to 217 differing pixels per frame in the boxes), the export passes 16 of 16 with 0 differing pixels, in the boxes and over the whole 160 x 144 screen (New York's train deck rows, the one sprite the game does not draw, are skipped).
+- Where the 8 px came from: not the drawing code. `gfx_spr` adds the OAM's (8, 16) once and the four quarters and the shell use the art's formula, so a burst centred on the same point lands on the same pixels (the comparison proves it). The table was a hand copy of an older art revision (`wins.BURSTS` as of the Moscow commit: New York (22, 32), (88, 34), (136, 36)), and the art moved its bursts afterwards: New York's right burst went from (136, 36) to (144, 36) (8 px right) and then (146, 36), the middle one went, and Miami's, Seoul's and Moscow's moved too. Nothing tied the two together; `art_tiles.h` is the only source now.
+- Cost: RAM none (`fw_t` stays one byte; it lost `static` so `scripts/win_fireworks.txt` can set the loop frame with `poke _fw_t`).
+- `scripts/win_fireworks.txt` sets the loop frame, saves each city's four frames to `build/fw/`, and `tests/fwcheck.py` (run by `tests/scripts.sh`; `PYTHON=` picks the interpreter, it needs Pillow) renders the same frames with the art's own code and compares. Mutation: the burst centre x shifted 8 px left in the game fails it on all 16 frames (first differing pixel reported).
+
+Stack guard (`src/gd_stack.c`: a canary painted over the gap between the end of the data, the linker's `s__HEAP_END`, and the stack pointer at boot; read back at the end screen as `gd_stack_free`, the untouched run from the bottom up):
+- The gap at boot is `0xE000 - s__HEAP_END`, 539 bytes before the guard and 537 with its 2-byte result. Right: `s__HEAP_END` was 0xDDE5, then 0xDDE7.
+- Untouched bytes after a whole game against Moscow (`game_moscow.txt`): predicted 130 to 200. Wrong, a little high: 215 (the stack's reach was 322 of 537, the same as the 320 read by hand; I had guessed the interrupt handler's pushes would add more).
+- After `moscowcheck` (100 decisions, 6 solved): predicted 100 to 170 in the game's gap. Right: the stack reaches 400 bytes there, so 537 - 400 = 137 in the game's gap (that ROM's own data ends lower, so the check compares against the game's gap: `tests/moscowcheck.sh` asks for 48 plus the difference of the two `s__HEAP_END`s). The same reach with no solves at all (`MOSCOW_SOLVE_CARDS=0`) is also 400: the deepest path is Moscow's sampling and playouts, not the solver, whose stack is in the cart's RAM.
+- In the game with the solver running (`game_moscow_endgame.txt`, a game poked into a 4 v 4 endgame, 3 solves): reach 345 of 665 (after the cheap win below), 320 untouched.
+- Measured minimum headroom: 137 bytes in the game's gap before the cheap win (the moscowcheck reach; that ROM's call chain is shorter than the game's by a few frames I could not separate, so the game's real worst case is a little under that), 265 after it. The game's own runs left 215 (Moscow, no solve), 193 (endgame, 3 solves) before, 346 and 320 after.
+- Cost: predicted 2 bytes of RAM (right), under 90 bytes of bank 0 ROM (right: 57 bytes of code), painting under 0.1 frame at boot and the read-back under 0.15 frame once per game (both wrong: measured with the scanline clock, 70 scanlines (0.45 frame) to paint and 75 (0.49 frame) to read back, about 36 and 84 T-cycles a byte; one half frame at boot and at the end screen, nothing in play).
+- The check fails when fewer than 48 bytes are untouched. Mutation checked: a 330-byte local (written) in `gd_moscow_choose` fails `game_moscow.txt` (13 untouched, 346 before) and `moscowcheck` (1791 untouched, 1905 wanted); the threshold raised to 400 fails `game_moscow.txt` (346 untouched); `game_moscow_endgame.txt` with its poke removed fails on `_moscow_solves` (0, not at least 1).
+- The cheap win: `gfx.c`'s `char_off[128]`, a character-to-tile table built at boot, is a function now (`icon_off`, arithmetic for a space, A..Z and 0..9, a search of `ART_FONT_CHARS` for the rest; `tests/fontorder.c`, in `make test`, fails the build if the font stops being in that order). Prediction: RAM down by exactly 128 bytes, ROM up by under 120 bytes, every screenshot of every script pixel-identical, the slowest redraw under 0.25 frame longer. Right on RAM (`s__HEAP_END` 0xDDE7 to 0xDD67), ROM (wrong direction: bank 1 shrank by 83 bytes, the table builder is gone), the screenshots (all 55 identical; `take.txt`'s second shot moved one frame later, because the 8 scanlines it added to the slowest redraw (662 to 670, 0.05 frame) pushed a row-by-row flush across a frame boundary, and the old shot caught the tear) and the redraw (right, +0.05 frame).
+  I chose it over overlaying `bot_board`/`bot_slowest` (216 bytes of profiling copies of the board in `main.c`) because those two are live across a decision, when the bots' scratch is in use, so they cannot share it; and over a table in ROM because a 128-byte table would duplicate `ART_FONT_CHARS`.
 
 ## New York: foolish's handwritten_prod
 
@@ -474,9 +498,38 @@ The sprites of a frame are built in a staging copy and handed to GBDK's shadow O
 Building them in the shadow OAM itself let the VBlank copy a half-built set: moving the aim in TARGET mode showed the new arrow's first dots beside the old arrowhead for a frame.
 `scripts/target_cover.txt` watches that move frame by frame; with the old in-place build it fails on the torn frame.
 
+## The discard pile and the sweep
+
+The pile is the art's (`art/README.md` "The discard pile"): nine tiles (`pile`, bank 2, loaded with the table's banks to tiles 160..168) drawn at columns 17-19, rows 1-3 once the discard is not empty, and nothing while it is.
+The bot's backs keep to columns 0-16 (`ART_BOT_HAND_LAST_COL`, 16 shown at most, centred there; the top rail has the true count).
+Nothing else is in rows 1-3 right of column 16: battles start at row 4 in every layout (up to six, past six, past twelve), as do the TARGET arrow and brackets.
+
+When a move ends the bout on the discard (the discard count grew: a last cover, or DONE over a covered table) the table's cards fly to the pile, landing with their top left at (143, 8), by the one flight code: 12 frames on `sys_time`, the staging buffer, at most four in flight.
+Choice: fly the top cards and drop the rest, rather than fly in batches.
+A batch of four takes 12 frames, so twelve cards (six battles, the most the art lays out; more are rare) would be three flights, 36 frames, with the bot's next move and my input waiting or racing the flight's state (`fly_*` is one flight's state); the top cards are what the eye sees go, the rest are covered by them, and a pickup already does exactly this (the first four fly, the rest land at once).
+Top is the cards of my own last cover first (they fly from my hand, or the bot's), then the table from its last battle backwards (the cover, then its attack).
+No new RAM: the sweep fills the flight arrays that were there, and the one new local is a byte on the stack.
+
+### Hypothesis (written for what I had not measured; a slip, I had already looked at the RAM and bank sizes)
+
+I built before writing these, so the RAM line and the bank-size lines are not predictions; the rest were made before the numbers.
+- RAM: no change (no new variables). Measured: `_DATA` 7487 bytes before and after, the stack top still at 0xE000 with 539 bytes above the data: right (a bank-1 stack frame grows by a byte or two).
+- Bank 1 (`main`, `gfx`): about 250 bytes more, falsifier over 600. Measured 13579 to 13957: +378, wrong against my 250 but under the falsifier (the pile loop, the sweep list and the 16-column centring). Bank 2 +144 (the pile's 9 tiles): right, it is the tile size.
+- The worst board redraw (`draw_lines_max`, `game_win.txt`): 661 scanlines before; 9 `gfx_tile` calls and the row diff should add about 10, falsifier over 60. Measured 698: +37, right.
+- A sweep flight is 12 frames, 2 cards for a one-battle table, the first card at t = 6 half way between its start and (143, 8), at t = 11 within 6 px of it. Measured exactly that: `_fly_pos` is (107, 32) at t = 6 and (137, 12) at t = 11 from (72, 56): right.
+- Falsifier for the layout: a bot hand of 32 cards drawn with 16 backs reaches pixel 135 at most; right (the test below).
+Timings on this VM are indicative only; the Mac re-measures.
+
+### The proof
+
+- `scripts/sweep.txt`: the pile is absent at the start (three pixels read wool) and while the bout is open; DOWN says DONE, both cards of the battle fly (`_fly_n` 2), pinned at frames 6 and 11 of the flight (`_fly_pos` equals the interpolation toward (143, 8), so it fails if they head anywhere else, or land elsewhere); after the landing the table is empty (`_G+74` 0, the attack card's black edge at (65, 48) is wool again) and the pile's black reads at (141, 20) and (156, 20).
+  Mutants, each failing on its own assertion: the sweep landing at the old left position (0, 64) fails both `_fly_pos` expects; the pile drawn when empty fails the first pixel check (the pile's black on an empty discard, frame 119); the sweep never flying (`swept` always 0) fails `until _fly_n 02`, which runs to its frame limit (no flight ever starts).
+- `scripts/pile_busy.txt`: 32 cards in the bot's hand, a card in the discard: 16 backs, the last one's dark edge at (135, 20), wool at (137, 20), the pile whole beside it.
+  Mutant: the old centring and cap (18 backs from column 0 of 20) draws the last back's edge elsewhere: pixel 135 reads white and the script fails.
+
 ## gbrun, the headless runner
 
-`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
+`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels and counts (`atleast SYM LEN MIN`: a little-endian number at least MIN, the stack guard's headroom; `pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
 Every script in `scripts/` sets the seed by poking `sys_time` just before its first press, so its deal does not depend on how long the ROM takes to start, and waits for the bot with `until` rather than counting frames.
 
 | Script | What it proves | Shots |
@@ -499,7 +552,11 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `live_think.txt` | while Moscow thinks: the dots step, frame-checked; LEFT, A, SELECT + LEFT and B work before the move lands; UP pressed meanwhile is dropped | `live_01` to `live_05` |
 | `think_time.txt` | Moscow's think time on 25 decisions that are the same in any ROM (no key during a think) | |
 | `think_time_keys.txt` | the same game with keys pressed during each think that leave the hand as it was | |
+| `game_moscow_endgame.txt` | Moscow's solver inside the real game (a poked 4 v 4 endgame, 3 solves) and the stack guard's 48 bytes | |
+| `win_fireworks.txt` | the four firework frames of each city, saved for `tests/fwcheck.py`, which compares them with the art's own render pixel by pixel | `build/fw/` |
 | `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
+| `sweep.txt` | the discard pile absent at first, then the bout's cards flying to it, pinned mid-flight and landing, the table empty, the pile drawn | `sweep_01` to `sweep_05` |
+| `pile_busy.txt` | 32 cards in the bot's hand beside the pile: 16 backs in columns 0-16, the pile whole | `pile_busy` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
@@ -526,5 +583,7 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
 - The deal is not animated (the art has the frames); played and picked-up cards fly (below).
 - A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
+- The row-by-row flush can tear for one frame: picking up shows a frame whose rail and hand row are half old and half new (frame 5 after DOWN in `take.txt`, whose shot waits a frame for it).
+  The fix is double buffering: write the changed rows into the second background map (0x9C00) and flip LCDC bit 3 in the VBlank, diffing against what that map last held.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.
