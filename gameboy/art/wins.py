@@ -285,40 +285,17 @@ def river(cv, ferry=None, depth=None):
 
 def new_york(cv):
     """Lower Manhattan and Midtown at night over the East River: the back
-    blocks, Billionaires' Row behind (432 Park, 111 West 57th, Central Park
-    Tower), One WTC, the capped Empire State, One Vanderbilt, the Chrysler,
+    blocks, One WTC, the capped Empire State, One Vanderbilt, the Chrysler,
     270 Park; the Brooklyn Bridge's tower on the left, the Manhattan Bridge
     with its subway deck on the right (the train is a sprite)."""
     st = RIVER
     for (x, h, style, roof) in ((0, 30, "grid", "water"), (56, 36, "grid", "setback"), (144, 32, "grid", "water"),
                                 (152, 24, "grid", "flat")):
         back_tower(cv, x, st - h, style, roof)
-    # 432 Park Avenue: a slender square grid, a flat top, open floors as dark bands
-    px = 41
-    cv.rect(px, st - 74, 5, 74, D)
-    for y in range(st - 73, st, 2):
-        if (st - y) % 14 in (0, 1):
-            cv.rect(px, y, 5, 1, K)                                   # an open mechanical floor
-        else:
-            cv.put(px + 1, y, T)
-            cv.put(px + 3, y, T)
-    # 111 West 57th: ultra-thin, feathered setbacks down its east side, terracotta bands
-    sx = 49
-    for j in range(76):
-        y = st - 1 - j
-        w = 4 if j < 46 else 4 - (j - 46) // 8                       # the feathered steps
-        cv.rect(sx, y, max(w, 1), 1, D)
-        if j % 3 == 0:
-            cv.put(sx, y, T)                                          # the terracotta piers
-    # Central Park Tower: glass, the tallest roof, the cantilever
-    tx = 100
-    cv.rect(tx, st - 76, 6, 56, D)
-    cv.rect(tx - 1, st - 20, 6, 20, D)                                # under the cantilever
-    for y in range(st - 75, st, 2):
-        cv.put(tx + 2, y, T)
-        cv.put(tx + 4, y, T)
-    cv.rect(tx + 1, st - 78, 1, 2, D)                                 # crown fins
-    cv.rect(tx + 4, st - 78, 1, 2, D)
+    # ordinary Midtown mass where the skyline thins: setbacks and water towers
+    for (x, h, style, roof) in ((40, 44, "grid", "setback"), (48, 36, "glass", "water"),
+                                (96, 40, "grid", "setback"), (104, 32, "lit", "water")):
+        back_tower(cv, x, st - h, style, roof)
     # One World Trade Center (downtown, left)
     ox = 26
 
@@ -753,7 +730,7 @@ def firework_bank():
 # burst one phase behind the last; -1 = a rising shell under it
 BURSTS = {                 # burst centres per city, found clear of every building
     "MIAMI": ((24, 32), (136, 34)),
-    "NEW YORK": ((20, 36), (144, 36)),
+    "NEW YORK": ((20, 36), (102, 32), (144, 36)),
     "SEOUL": ((20, 36), (80, 36), (142, 36)),
     "MOSCOW": ((12, 36), (92, 36), (140, 32)),
 }

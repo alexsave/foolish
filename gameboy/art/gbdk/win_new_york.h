@@ -13,13 +13,13 @@
 #define win_new_york_TILE_H 8
 #define win_new_york_WIDTH 160
 #define win_new_york_HEIGHT 144
-#define win_new_york_TILE_COUNT 201
+#define win_new_york_TILE_COUNT 195
 #define win_new_york_MAP_ATTRIBUTES 0
 extern const unsigned char win_new_york_map[360];
 #define win_new_york_map_attributes win_new_york_map
 
 BANKREF_EXTERN(win_new_york)
 
-extern const uint8_t win_new_york_tiles[3216];
+extern const uint8_t win_new_york_tiles[3120];
 
 #endif
