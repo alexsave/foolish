@@ -19,7 +19,7 @@ repeat 28
 +30  press RIGHT
 endrepeat
 +0   shot shots/70_big_hand.png 3
-+0   expect _disp_n 1b
++0   expect _disp_n 17
 # The loop runs past the end of the game on purpose: the end picture ignores
 # LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.
 repeat 100

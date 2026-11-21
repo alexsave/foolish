@@ -14,4 +14,6 @@
 +0   shot shots/40_before_take.png 3
 +1   press DOWN
 +5   expect _G+74 00
-+0   shot shots/41_take.png 3
+# the refill from the stock lands (README "The deal")
++0   until _fly_n 00
++4   shot shots/41_take.png 3
