@@ -31,6 +31,8 @@
 //                               next "+N" counts from the last of them
 //   +N   same PATH              fail unless every screen pixel is the shade of the
 //                               same pixel of the PNG at PATH (a shot, any SCALE)
+//   +N   atleast SYM LEN MIN    fail unless the LEN-byte little-endian number at the
+//                               symbol is at least MIN (a headroom, a count)
 //   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -52,7 +54,7 @@
 
 #define UNTIL_MAX 200000
 
-enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_SAME, ST_END };
+enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_SAME, ST_ATLEAST, ST_END };
 
 typedef struct {
     int absolute, n;        // @n or +n
@@ -156,6 +158,16 @@ static void parse_line(int i) {
     } else if (!strcmp(cmd, "same") && n >= 2) {
         s->kind = ST_SAME;
         snprintf(s->arg, sizeof s->arg, "%s", a1);
+    } else if (!strcmp(cmd, "atleast") && n >= 2) {
+        unsigned len, min;
+        s->kind = ST_ATLEAST;
+        if (sscanf(l, "%*s %*s %u %u", &len, &min) != 2 || len < 1 || len > 4) {
+            fprintf(stderr, "script line %d: atleast SYM LEN(1..4) MIN\n", i + 1);
+            exit(2);
+        }
+        snprintf(s->arg, sizeof s->arg, "%s", a1);
+        s->len = (int)len;
+        s->keys = min;
     } else if (!strcmp(cmd, "end")) {
         s->kind = ST_END;
     } else {
@@ -410,6 +422,12 @@ int main(int argc, char **argv) {
             show("peek", f, s, -1);
         } else if (s->kind == ST_EXPECT) {
             if (!show("expect", f, s, mem_is(resolve(s->arg), s->bytes, s->len))) fail = 1;
+        } else if (s->kind == ST_ATLEAST) {
+            const uint32_t a = resolve(s->arg);
+            uint32_t v = 0;
+            for (int k = s->len - 1; k >= 0; k--) v = v << 8 | (core->busRead8(core, a + (uint32_t)k) & 0xFFu);
+            printf("frame %d: atleast %s = %u (at least %u)%s\n", f, s->arg, (unsigned)v, (unsigned)s->keys, v >= s->keys ? "  ok" : "  FAILED");
+            if (v < s->keys) fail = 1;
         } else if (s->kind == ST_POKE) {
             uint32_t a = resolve(s->arg);
             for (int k = 0; k < s->len; k++) core->busWrite8(core, a + (uint32_t)k, s->bytes[k]);

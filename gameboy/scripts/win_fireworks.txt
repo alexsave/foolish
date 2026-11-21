@@ -1,0 +1,86 @@
+# The win screens' fireworks against the art, frame by frame: for each city
+# and each of the four firework frames the loop counter (fw_t) is set so the
+# next vsync draws that frame, and the screen is saved to build/fw/<city>_<f>.png.
+# tests/fwcheck.py compares those shots with the art's own render in the burst
+# boxes (scripts.sh runs it after this script).
+@99  poke _sys_time 05 00
+@100 press START
++1   until _screen 00
+# miami
++8   press A
++1   until _screen 01
++0   expect _bot_city 00
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  poke _fw_t 00
++0   poke _fw_t ff
++4   shot build/fw/miami_0.png 1
++0   poke _fw_t 07
++4   shot build/fw/miami_1.png 1
++0   poke _fw_t 0f
++4   shot build/fw/miami_2.png 1
++0   poke _fw_t 17
++4   shot build/fw/miami_3.png 1
++1   press B
++1   until _screen 00
+# new_york
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 01
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  poke _fw_t 00
++0   poke _fw_t ff
++4   shot build/fw/new_york_0.png 1
++0   poke _fw_t 07
++4   shot build/fw/new_york_1.png 1
++0   poke _fw_t 0f
++4   shot build/fw/new_york_2.png 1
++0   poke _fw_t 17
++4   shot build/fw/new_york_3.png 1
++1   press B
++1   until _screen 00
+# seoul
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 02
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  poke _fw_t 00
++0   poke _fw_t ff
++4   shot build/fw/seoul_0.png 1
++0   poke _fw_t 07
++4   shot build/fw/seoul_1.png 1
++0   poke _fw_t 0f
++4   shot build/fw/seoul_2.png 1
++0   poke _fw_t 17
++4   shot build/fw/seoul_3.png 1
++1   press B
++1   until _screen 00
+# moscow
++8   press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 03
++30  poke _G+78 01
++0   poke _G+79 02
++1   until _screen 02
++20  poke _fw_t 00
++0   poke _fw_t ff
++4   shot build/fw/moscow_0.png 1
++0   poke _fw_t 07
++4   shot build/fw/moscow_1.png 1
++0   poke _fw_t 0f
++4   shot build/fw/moscow_2.png 1
++0   poke _fw_t 17
++4   shot build/fw/moscow_3.png 1
++1   press B
++1   until _screen 00

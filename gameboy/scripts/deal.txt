@@ -11,7 +11,7 @@
 # Where each card lands: when the next card takes off, `_fly_pos` still holds
 # the last one's place (it was drawn there to land, and the board's redraw
 # runs before the next card's first step), so it is checked there: the bot's
-# backs at columns 6 to 11 of row 1, mine at columns 4 to 14 of row 13, the
+# backs at columns 5 to 10 of row 1, mine at columns 4 to 14 of row 13, the
 # trump at (0, 4), the places the settled board draws them, which is the old
 # instant deal's board (the full-screen compare at the end).
 @60  shot shots/01_dashboard.png 3
@@ -27,7 +27,7 @@
 +0   shot shots/deal_0_bot_back.png 3
 # 2: my six of spades flips in flight
 +0   until _dl_seat 00
-+0   expect _fly_pos 30 08
++0   expect _fly_pos 28 08
 # back: six sprites, the ring and the sprig's curl
 +0   until _fly_t 01
 +1   shot shots/deal_1_back.png 3
@@ -71,25 +71,25 @@
 +0   expect _fly_pos 20 68
 # 3 lands: the bot's back 2
 +0   until _dl_seat 00
-+0   expect _fly_pos 38 08
++0   expect _fly_pos 30 08
 # 4 lands: my card 2
 +0   until _dl_seat 01
 +0   expect _fly_pos 30 68
 # 5 lands: the bot's back 3
 +0   until _dl_seat 00
-+0   expect _fly_pos 40 08
++0   expect _fly_pos 38 08
 # 6 lands: my card 3
 +0   until _dl_seat 01
 +0   expect _fly_pos 40 68
 # 7 lands: the bot's back 4
 +0   until _dl_seat 00
-+0   expect _fly_pos 48 08
++0   expect _fly_pos 40 08
 # 8 lands: my card 4
 +0   until _dl_seat 01
 +0   expect _fly_pos 50 68
 # 9 lands: the bot's back 5
 +0   until _dl_seat 00
-+0   expect _fly_pos 50 08
++0   expect _fly_pos 48 08
 # 10: my king of clubs, a club face in flight: its seams light grey, which
 # only OBP1 and the club's sprite copies draw (README "Cards in flight")
 +0   until _fly_t 07
@@ -107,7 +107,7 @@
 +0   expect _fly_pos 60 68
 # 11 lands: the bot's back 6
 +0   until _dl_seat 00
-+0   expect _fly_pos 58 08
++0   expect _fly_pos 50 08
 # 12 lands: my last card; the trump turns up, the deck lifted off it
 +0   until _dl_seat 02
 +0   expect _fly_pos 70 68
