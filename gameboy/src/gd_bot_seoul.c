@@ -3,6 +3,7 @@
 #include "gd_bot_hw.h"
 #include "gd_sim.h"
 #include "gd_rng.h"
+#include "gd_botlib.h"
 
 // Section timing, in the profiling build only (Makefile durak_prof.gb):
 // [0] candidates, [1] sampling a world, [2] applying the candidate and making
@@ -18,11 +19,11 @@ uint8_t gd_seoul_cands;
 uint16_t gd_seoul_playouts;
 uint32_t gd_seoul_plies;          // plies the last decision's playouts played, all told
 
-static gd_move cand[SEOUL_MAX_CANDS];
+#define cand  gd_bot_cand          // shared with Moscow (gd_botlib.h)
 static uint8_t nc;
 static uint8_t wins[SEOUL_MAX_CANDS];
-static gd_game world;
-static gd_sim sim;
+#define world gd_bot_world
+#define sim   gd_bot_sim[0]
 static uint16_t world_seed[SEOUL_SAMPLES_MAX];
 static uint16_t after_seeds;
 

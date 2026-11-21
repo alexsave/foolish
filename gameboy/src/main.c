@@ -12,6 +12,7 @@
 #include "gd_rng.h"
 #include "gd_bot_hw.h"
 #include "gd_bot_seoul.h"
+#include "gd_bot_moscow.h"
 #include "gfx.h"
 #include "input.h"
 #include "art_tiles.h"
@@ -60,13 +61,13 @@ static uint8_t dirty_ui;       // redraw the foot rail and the sprites only
 #define SCREEN_TABLE 1
 #define SCREEN_END   2      // the win or lose picture
 uint8_t screen = SCREEN_DASH, dash_item;
-// The bots on the dashboard. Only the random brain exists so far, so every
-// city plays it; the city is the name the board shows (README.md "Not done").
-// The ladder: Miami (random), New York, Seoul, Moscow (the boss).
+// The bots on the dashboard, the ladder: Miami (random), New York, Seoul,
+// Moscow (the boss).
 static const char *const bot_names[4] = { "MIAMI", "NEW YORK", "SEOUL", "MOSCOW" };
 uint8_t bot_city;
 #define BOT_NEW_YORK 1
 #define BOT_SEOUL    2
+#define BOT_MOSCOW   3
 // The finished table stays up this long before the win or lose picture.
 #define END_DELAY 90
 static uint8_t end_t;
@@ -74,7 +75,7 @@ static char flash_buf[21];
 
 // How long the bot's last decision took, in scanlines (1 line = 108.7 us):
 // count + unrank + apply. Read by tools/gbrun (peek _bot_lines_max).
-uint16_t bot_lines_last, bot_lines_max;
+uint32_t bot_lines_last, bot_lines_max;
 uint32_t bot_lines_sum;
 // The board the slowest decision was made on (gbrun reads it to replay it on the Mac).
 gd_game bot_slowest;
@@ -82,16 +83,26 @@ static gd_game bot_board;
 uint16_t bot_moves;
 // Seoul's playouts and their plies, all told (the README's sizing reads them).
 uint32_t seoul_playouts_sum, seoul_plies_sum;
+// Moscow's: playouts, plies, solver nodes, and the decisions it thought over
+// and solved (gd_moscow_solve not NONE)
+uint32_t moscow_playouts_sum, moscow_plies_sum, moscow_nodes_sum;
+uint16_t moscow_thinks, moscow_solves;
 
 // Scanlines since an arbitrary start, for timing: sys_time counts VBlanks,
-// which begin at line 144, so the line is counted from there too.
-static uint16_t line_clock(void) {
+// which begin at line 144, so the line is counted from there too. 32 bits:
+// Moscow can think past the 7 s a 16-bit count holds.
+static uint32_t line_clock(void) {
     uint16_t t;
     uint8_t ly;
     CRITICAL { t = sys_time; ly = LY_REG; }
     // A VBlank that raised its interrupt but has not run it yet: count it.
     if (ly >= 144 && (IF_REG & VBL_IFLAG)) t++;
-    return (uint16_t)(t * 154u + (ly >= 144 ? ly - 144u : ly + 10u));
+    return (uint32_t)t * 154u + (ly >= 144 ? ly - 144u : ly + 10u);
+}
+// lines since t0, across sys_time's wrap at 65536 frames
+static uint32_t lines_since(uint32_t t0) {
+    const uint32_t t = line_clock();
+    return t >= t0 ? t - t0 : t + 65536ul * 154u - t0;
 }
 // The same for one redraw of the table (board, rails, flush and sprites).
 uint16_t draw_lines_last, draw_lines_max;
@@ -354,8 +365,7 @@ static void human_input(void) {
 }
 
 static void bot_turn(void) {
-    uint32_t n, r;
-    uint16_t t0;
+    uint32_t n, r, t0;
     gd_move m;
     if (G.status != GD_PLAYING || idle < BOT_DELAY) return;
     bot_board = G;
@@ -375,16 +385,28 @@ static void bot_turn(void) {
         seoul_playouts_sum += gd_seoul_playouts;
         seoul_plies_sum += gd_seoul_plies;
         if (m.type == 0xFF) { dirty = 1; return; }
+    } else if (bot_city == BOT_MOSCOW) {
+        // Moscow: cut-down cordite (gd_bot_moscow.c), seconds of thought too
+        if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        gfx_rail(17, "MOSCOW THINKS", "");
+        gfx_flush();
+        t0 = line_clock();
+        gd_moscow_choose(&G, BOT, &m);
+        moscow_playouts_sum += gd_moscow_playouts;
+        moscow_plies_sum += gd_moscow_plies;
+        moscow_nodes_sum += gd_moscow_nodes;
+        if (gd_moscow_cands > 1) moscow_thinks++;
+        if (gd_moscow_solve != MOSCOW_SOLVE_NONE) moscow_solves++;
+        if (m.type == 0xFF) { dirty = 1; return; }
     } else {
-        // Miami (and, until their brains land, Seoul and Moscow): a uniformly
-        // random legal move, one draw below the menu's count
+        // Miami: a uniformly random legal move, one draw below the menu's count
         n = gd_menu_count(&G, BOT);
         if (!n) return;
         r = gd_rng_below(n);
         gd_menu_move(&G, BOT, r, &m);
     }
     play(BOT, &m);
-    bot_lines_last = (uint16_t)(line_clock() - t0);
+    bot_lines_last = lines_since(t0);
     if (bot_lines_last > bot_lines_max) { bot_lines_max = bot_lines_last; bot_slowest = bot_board; }
     bot_lines_sum += bot_lines_last;
     bot_moves++;
@@ -763,6 +785,10 @@ static void end_input(void) {
 
 void main(void) {
     uint8_t shown = 0xFF, was_select = 0;
+    // the cart's 32 KB of RAM (Moscow's solver): enabled, and MBC1's 4/32 mode
+    // so the 0x4000 register picks the RAM bank
+    *(volatile uint8_t *)0x0000u = 0x0Au;
+    *(volatile uint8_t *)0x6000u = 0x01u;
     gfx_init();
     in_init();
     dirty = 1;
@@ -803,11 +829,11 @@ void main(void) {
             if (screen == SCREEN_DASH) draw_dash(shown != SCREEN_DASH);
             else if (screen == SCREEN_END) draw_end();
             else {
-                const uint16_t t0 = line_clock();
+                const uint32_t t0 = line_clock();
                 if (shown != SCREEN_TABLE) gfx_load_table();
                 draw_table();
                 draw_table_sprites();
-                draw_lines_last = (uint16_t)(line_clock() - t0);
+                draw_lines_last = (uint16_t)lines_since(t0);
                 if (shown == SCREEN_TABLE && draw_lines_last > draw_lines_max) draw_lines_max = draw_lines_last;
             }
             shown = screen;

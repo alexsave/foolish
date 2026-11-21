@@ -19,6 +19,6 @@ endrepeat
 +0   expect _G+79 02
 +0   expect _screen 02
 +0   shot shots/seoul_02_end.png 3
-+0   peek _bot_lines_max 2
++0   peek _bot_lines_max 4
 +0   peek _bot_lines_sum 4
 +0   peek _bot_moves 2

@@ -18,14 +18,14 @@ CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib
 CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_solve.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_solve.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_botlib.c src/input.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c
 ROM_BANK1 = main gfx gd_play
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu
 ROM_BANK6 = gd_sim
-ROM_BANK7 = gd_bot_seoul
+ROM_BANK7 = gd_bot_seoul gd_bot_moscow
 ROM_BANK8 = gd_solve
-ROM_H    = src/gfx.h src/input.h $(CORE_H) src/gd_bot_seoul.h $(wildcard art/gbdk/*.h)
+ROM_H    = src/gfx.h src/input.h $(CORE_H) src/gd_bot_seoul.h src/gd_bot_moscow.h $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
 # pictures, 9.5 KB) goes to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with
@@ -230,3 +230,30 @@ solvecheck: $(B)/solvecheck_host $(B)/solvecheck.gb $(B)/gbrun
 	sh tests/solvecheck.sh
 
 .PHONY: solvecheck
+
+# Moscow against foolish's real cordite and octogen (tests/vscordite.c), with
+# foolish's own defaults; foolish's sources are read, never changed.
+VSC_FOOLISH = $(FOOLISH)/game.c $(FOOLISH)/legal.c $(FOOLISH)/card.c $(SHARED)/deal_rng.c $(FOOLISH)/cordite_strategy.c \
+              $(FOOLISH)/cordite_sim.c $(FOOLISH)/bot_common.c $(FOOLISH)/bot_memory.c $(FOOLISH)/bot_knobs.c \
+              $(FOOLISH)/random_strategy.c $(FOOLISH)/espresso_strategy.c $(FOOLISH)/handwritten_strategy.c \
+              $(FOOLISH)/octogen_strategy.c $(FOOLISH)/view.c
+$(B)/vscordite: tests/vscordite.c tests/foolish_map.h $(MATCH_SRC) $(CORE_H) src/gd_bot_moscow.h | $(B)
+	$(HOSTCC) -std=c11 -O2 -w -D_Thread_local= -I$(FOOLISH) -I$(B) -o $@ tests/vscordite.c $(filter-out tests/match.c,$(MATCH_SRC)) $(VSC_FOOLISH)
+
+# ---- Moscow's cross-compiler check (banked like the game, with the cart's RAM) ----------
+$(B)/moscowcheck_host: tests/moscowcheck.c $(MATCH_SRC) $(CORE_H) src/gd_bot_moscow.h | $(B)
+	$(HOSTCC) $(HOSTFLAGS) -DMOSCOWCHECK_HOST -I$(B) -o $@ tests/moscowcheck.c $(filter-out tests/match.c,$(MATCH_SRC))
+
+$(B)/rom/moscowcheck.o: tests/moscowcheck.c $(CORE_H) src/gd_bot_moscow.h | $(B)/rom
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
+
+MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_botlib.o $(B)/rom/moscowcheck.o \
+         $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_solve.o $(B)/rom/gd_bot_moscow.o
+$(B)/moscowcheck.gb: $(MC_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(MC_OBJ) 2>&1 | tee $(B)/moscowcheck.link
+	! grep -qi overflow $(B)/moscowcheck.link
+
+moscowcheck: $(B)/moscowcheck_host $(B)/moscowcheck.gb $(B)/gbrun
+	sh tests/moscowcheck.sh
+
+.PHONY: moscowcheck

@@ -36,7 +36,7 @@ endrepeat
 +0   shot shots/73_home_after_game.png 3
 # the slowest bot decision and table redraw of the game, in scanlines, and the
 # sum and count of the bot's decisions
-+0   peek _bot_lines_max 2
++0   peek _bot_lines_max 4
 +0   peek _draw_lines_max 2
 +0   peek _bot_lines_sum 4
 +0   peek _bot_moves 2

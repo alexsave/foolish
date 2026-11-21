@@ -29,7 +29,7 @@ endrepeat
 +20  expect _screen 01
 +0   expect _G+79 01
 +0   shot shots/81_rematch.png 3
-+0   peek _bot_lines_max 2
++0   peek _bot_lines_max 4
 +0   peek _draw_lines_max 2
 +0   peek _bot_lines_sum 4
 +0   peek _bot_moves 2

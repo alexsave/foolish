@@ -1,6 +1,10 @@
 // gd_botlib - see gd_botlib.h.
 #include "gd_botlib.h"
 
+gd_game gd_bot_world;
+gd_move gd_bot_cand[GD_BOT_CANDS];
+gd_sim  gd_bot_sim[3];
+
 // ---- getTrumpAttackProbability, as a threshold on a 16-bit draw ----------------------------
 // p = 0.02 while the deck lives (`early`); else 0.65 + 0.35 * discard /
 // total, held to [0.5, 0.95]. As a fraction, p = (13t + 7d) / (20t), and the

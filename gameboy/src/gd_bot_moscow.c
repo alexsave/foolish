@@ -4,6 +4,7 @@
 #include "gd_sim.h"
 #include "gd_solve.h"
 #include "gd_rng.h"
+#include "gd_botlib.h"
 #include "gd_bot_hw.h"
 #ifdef MOSCOW_TRACE
 #include <stdio.h>
@@ -15,10 +16,12 @@ uint32_t gd_moscow_plies, gd_moscow_nodes;
 
 #define NW (MOSCOW_W1 + MOSCOW_W2)
 
-static gd_move cand[MOSCOW_MAX_CANDS];
+#define cand  gd_bot_cand          // shared with Seoul (gd_botlib.h)
 static uint8_t nc;
-static gd_game world;
-static gd_sim root, trial, wsim;
+#define world gd_bot_world
+#define root  gd_bot_sim[0]
+#define trial gd_bot_sim[1]
+#define wsim  gd_bot_sim[2]
 static uint16_t world_seed[NW];
 static uint8_t wins[MOSCOW_MAX_CANDS], alive[MOSCOW_MAX_CANDS];
 static gd_move mv;
@@ -80,17 +83,17 @@ static uint16_t score(const gd_game *g, uint8_t c) {
 #define CAP_ATK 5
 #define CAP_COV 3
 #define CAP_PAS 2
-static gd_move list[3][CAP_ATK];
+static uint16_t list[3][CAP_ATK];           // menu indices (a move is 38 bytes of scarce RAM)
 static uint32_t lkey[3][CAP_ATK];
 static uint8_t ln[3];
 
-static void ranked(uint8_t kind, uint8_t cap, uint32_t k, const gd_move *m) {
+static void ranked(uint8_t kind, uint8_t cap, uint32_t k, uint16_t idx) {
     uint8_t pos = ln[kind], j;
     while (pos > 0 && lkey[kind][pos - 1] > k) pos--;
     if (pos >= cap) return;
     j = ln[kind] < cap ? ln[kind] : (uint8_t)(cap - 1u);
     for (; j > pos; j--) { list[kind][j] = list[kind][j - 1]; lkey[kind][j] = lkey[kind][j - 1]; }
-    list[kind][pos] = *m;
+    list[kind][pos] = idx;
     lkey[kind][pos] = k;
     if (ln[kind] < cap) ln[kind]++;
 }
@@ -99,7 +102,7 @@ static void candidates(const gd_game *g, uint8_t seat, uint16_t n) {
     uint16_t i;
     uint8_t j, k, has_good = 0, has_pickup = 0;
     uint32_t sum, prod;
-    gd_move good, pickup;
+    uint16_t good = 0, pickup = 0;
     ln[0] = ln[1] = ln[2] = 0;
     nc = 0;
     for (i = 0; i < n; i++) {
@@ -107,7 +110,7 @@ static void candidates(const gd_game *g, uint8_t seat, uint16_t n) {
         switch (mv.type) {
         case GD_ATTACK:
             for (sum = 0, j = 0; j < mv.n; j++) sum += score(g, mv.cards[j]);
-            ranked(0, CAP_ATK, (uint32_t)(GD_MAXB - mv.n) * 100000ul + sum, &mv);
+            ranked(0, CAP_ATK, (uint32_t)(GD_MAXB - mv.n) * 100000ul + sum, i);
             break;
         case GD_COVER:
             // cordite's prod - 0.5 n, doubled: exact until the product passes
@@ -116,14 +119,14 @@ static void candidates(const gd_game *g, uint8_t seat, uint16_t n) {
                 const uint16_t sc = score(g, mv.cards[j]);
                 prod = prod > 0x7FFFFFFFul / sc ? 0x7FFFFFFFul : prod * sc;
             }
-            ranked(1, CAP_COV, prod * 2u - mv.n, &mv);
+            ranked(1, CAP_COV, prod * 2u - mv.n, i);
             break;
         case GD_PASS:
             for (sum = 0, j = 0; j < mv.n; j++) sum += score(g, mv.cards[j]);
-            ranked(2, CAP_PAS, sum, &mv);
+            ranked(2, CAP_PAS, sum, i);
             break;
-        case GD_GOOD:   good = mv; has_good = 1; break;
-        case GD_PICKUP: pickup = mv; has_pickup = 1; break;
+        case GD_GOOD:   good = i; has_good = 1; break;
+        case GD_PICKUP: pickup = i; has_pickup = 1; break;
         }
     }
     // New York's move first: Seoul's anchor, and the tie-break (not
@@ -132,9 +135,12 @@ static void candidates(const gd_game *g, uint8_t seat, uint16_t n) {
     gd_hw_choose(g, seat, &mv);
     if (mv.type != 0xFF && gd_legal(g, seat, &mv)) cand[nc++] = mv;
     for (k = 0; k < 3; k++)
-        for (j = 0; j < ln[k] && nc < MOSCOW_MAX_CANDS; j++) if (!same_move(&cand[0], &list[k][j]) || !nc) cand[nc++] = list[k][j];
-    if (has_good && nc < MOSCOW_MAX_CANDS && (!nc || !same_move(&cand[0], &good))) cand[nc++] = good;
-    if (has_pickup && nc < MOSCOW_MAX_CANDS && (!nc || !same_move(&cand[0], &pickup))) cand[nc++] = pickup;
+        for (j = 0; j < ln[k] && nc < MOSCOW_MAX_CANDS; j++) {
+            gd_menu_move(g, seat, list[k][j], &mv);
+            if (!nc || !same_move(&cand[0], &mv)) cand[nc++] = mv;
+        }
+    if (has_good && nc < MOSCOW_MAX_CANDS) { gd_menu_move(g, seat, good, &mv); if (!nc || !same_move(&cand[0], &mv)) cand[nc++] = mv; }
+    if (has_pickup && nc < MOSCOW_MAX_CANDS) { gd_menu_move(g, seat, pickup, &mv); if (!nc || !same_move(&cand[0], &mv)) cand[nc++] = mv; }
 }
 
 // ---- a world (cd_sample_world) ---------------------------------------------------
