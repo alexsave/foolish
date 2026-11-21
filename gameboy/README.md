@@ -161,6 +161,43 @@ Strength, final (budget 20, seeds 9001 on):
 
 `make seoulcheck`: a banked ROM laid out like the game makes Seoul's 146 decisions over two random games and must match the clang build's (mutation checked: building only the ROM's Seoul with a different budget fails it).
 
+## Moscow: a cut-down cordite
+
+### Cordite at two players, and what Moscow keeps (written before any code)
+
+Read from `foolish/c/src/cordite_strategy.c`, `cordite_sim.c` and `foolish/c/CORDITE.md` (read-only).
+At two players cordite is these parts:
+
+| Part | Cordite at 2 players | Moscow |
+| --- | --- | --- |
+| Belief | pinned cards (picked up, not played since), the discard, voids (a pickup facing exactly one uncovered attack says the defender held nothing to beat it; cleared when it draws), rank floors | pinned cards and the discard (`known`, `gone`, already in the rules state) and voids, kept: they are a 5-byte mask a seat. Floors dropped: cordite only sets one when more than two players are in (`m->in_now > 2`), so at two players they never fire |
+| Worlds | the unseen cards shuffled to the opponent and the stock; voids applied in 3 worlds of 4 by swapping a forbidden card with a stock card | the same |
+| Candidates | from the full menu: up to 12 attacks (most cards, then cheapest), 10 covers (cheapest product of card scores), 3 transfers, done, pick up | the same ranking, cut to at most 6 |
+| Monte Carlo | common random numbers; 3 stages on 32, 56, 56 worlds: all candidates, then the best third (at least 3), then the best 2; ties drop the last candidate (the cheap-first fix) | the same stages cut to 2: all candidates on a few worlds, then the best 2 on more; ties drop the last |
+| Root endgame solve | when the stock and the face-up trump are gone (both hands known): pass 1 hunts a win (a window from 0 up, one shared budget of 20000 nodes), pass 2 marks proven losses with a null window (15000 nodes) and drops them from Monte Carlo when some move is proven not to lose | kept whole, with node caps sized for the Game Boy |
+| Endgame solver | exact alpha-beta over the full move set, values plus or minus (1000 - depth), a transposition table of 65536 exact entries (fail-soft results stored only when strictly inside the window), depth cap 48, abort on a node with more than 96 moves | kept: the same search on the 32-byte rollout state, the table in cartridge RAM |
+| Exact leaves in rollouts | off by default (`CD_LEAF`): measured both 10 times slower and weaker | dropped, for cordite's own measured reason |
+| Race early stop | off by default (`CD_RACE=0`) | dropped: cordite does not use it, and two stages leave little to stop early |
+| Rollout policy | the handwritten policy on the bitboard engine | the rollout engine (`gd_sim`), already exact against it |
+
+The solver's move set: foolish lists a cover once for each way of pairing cards to attacks; those pairings lead to the same position, so Moscow lists each (attacks covered, cards used) once.
+That leaves every game value the same (a duplicate child cannot change a minimum or a maximum), and only removes repeated work.
+
+The cartridge RAM: MBC1 with 32 KB of RAM (four 8 KB banks), no battery.
+- Why RAM at all: the solver's stack (a 32-byte state and a move list per ply, 48 plies deep) and its table cannot fit the 1.3 KB of work RAM that is left.
+- Why 32 KB and not 8 KB: the table should hold every exact value one capped solve stores, so that the solver's result does not depend on what the table evicted; with a cap of a few thousand nodes at 4 bytes an entry that is 16 KB, which 8 KB cannot hold beside the stack.
+- Why no battery: the table is a cache rebuilt for every decision, so nothing in it is worth keeping, and a battery adds a save file and nothing else.
+
+### Hypothesis (predictions before measuring)
+
+- Solver speed on the Game Boy: about 4 ms a node (a 32-byte copy in and out, an apply, a hash, a probe, move generation), so 5 s buys about 1200 nodes.
+  Falsifier: over 8 ms a node, which would leave too few nodes to resolve anything but the last few plies.
+- The node caps: about 1500 for the win hunt and 1000 for loss avoidance (cordite's 20000 and 15000 scaled down), which at 4 ms is 10 s at worst for the solve.
+- Resolution: with foolish's caps the root solve resolves about 85% of the positions where the stock is gone; with Moscow's about 50%, most of the misses in the first few plies after the stock runs out, when hands are biggest.
+- The proof: on thousands of positions with the stock gone, whenever both solvers finish within their caps, the values are identical (including the distance to the end); any difference is a bug.
+- Time a decision on the Game Boy: 3.5 s on average and under 13 s at worst (falsifier: over 5 s average or 15 s worst).
+- Strength (2000 games each): Moscow beats Seoul about 62% (falsifier: under 55%, which is not clearly), New York about 85%, random about 99%; against foolish's real cordite (8 to 10 times the playouts, 15 times the solver budget) about 40%.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
