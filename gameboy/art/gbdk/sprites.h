@@ -12,11 +12,11 @@
 #define sprites_TILE_W 8
 #define sprites_TILE_H 8
 #define sprites_WIDTH 8
-#define sprites_HEIGHT 120
-#define sprites_TILE_COUNT 15
+#define sprites_HEIGHT 144
+#define sprites_TILE_COUNT 18
 
 BANKREF_EXTERN(sprites)
 
-extern const uint8_t sprites_tiles[240];
+extern const uint8_t sprites_tiles[288];
 
 #endif

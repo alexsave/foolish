@@ -34,7 +34,7 @@ One mapping for every layer: index 0 = table (light grey), 1 = paper (white), 2 
 
 - `BGP = 0xE1` (background and window: the window shares BGP).
 - `OBP0 = 0xE1` (all sprites).
-- `OBP1` is unused.
+- `OBP1 = 0xD0` (`ART_OBP1`): flying club cards only (index 1 white, 2 light grey, 3 black); see "Flying club cards" below.
 
 Why 0 is the table and not white: sprite colour 0 is always transparent, and a card's round corner pixels are index 0.
 So the same card tiles work on the background (the corner shows the table grey) and as sprites (the corner is see-through), with no second copy.
@@ -51,7 +51,7 @@ One 256-tile space at 0x8000, shared by the background, the window and the sprit
 | --- | --- | --- | --- |
 | 0..71 | `cards` | 72 | background cards, and the flying card as sprites |
 | 72..132 | `ui` | 61 | wool, rail font, icons; font tiles also as sprite "chips" |
-| 140..154 | `sprites` | 15 | underline, arrow, brackets, nudge, pointer, deal flip |
+| 140..157 | `sprites` | 18 | underline, arrow, brackets, nudge, pointer, deal flip, the club's sprite copies |
 
 That is 133 background tiles of the 256 the background and window may use, which leaves room (the limit served: background and window share at most 256 tiles).
 
@@ -112,6 +112,33 @@ The sprig is built from stamps laid along a stem path in `sprig/sprig.py`, in th
 `BACK_LAYOUT` in `gen_art.py` picks one; it is `final_2b_framed` (Alex's picks: the diagonal minimal sprig 2B with option a's curl, option d's uneven one-pixel vine, the serrated veined leaf, the small shaded berry with its calyx, and an intricate small leaf with midrib, side veins and a serrated edge in the bottom-left corner, inside two rings, dark grey outermost and black inside, the motif grown into the freed pixel all round (the big curl, the full corner leaf); the grey edge gives the bot's overlapped backs their dividing line; `mockups/12_back_framed.png`, alone and overlapped).
 The options that led there are kept as sheets: `06_back_rotations.png`, `07_back_vine_options.png`, `10_back_combo.png`.
 Without the frame, overlapped backs (the bot hand) have no dividing line, so the repeating sprig is what separates them.
+
+### The club
+
+The wide-foot club (Alex's pick) with light grey seams that run in to the centre, so its three stems read (`glyphs.SMALL["C"]`, `glyphs.PIP["C"]`; the seams are the `t` pixels).
+On the background light grey is palette index 0 under `BGP = 0xE1`, so the card tiles (`SUIT_C`, `PIPL_C_u*`, `PIPR_C`) carry the seams as they are; the status bar's club icon (`IC_C`) shows the same joins in light grey on its white body.
+
+### Flying club cards (OBP1): what the game code must do
+
+Light grey is index 0, and a sprite always draws index 0 as transparent, so a club card flying as sprites would show holes at its seams.
+The art ships sprite copies of the three club tiles that carry seams, with each seam pixel stored as index 2, and a second object palette that shows index 2 as light grey:
+
+| Card part (tile at x, y in the card) | Background tile | Sprite tile for a flying club card |
+| --- | --- | --- |
+| rank, top left (0, 0) | `T_RANK_<r>_U0` | the same: `T_RANK_<r>_U0` |
+| top right (1, 0) | `T_FACE_TR` | the same: `T_FACE_TR` |
+| small suit (0, 1) | `T_SUIT_C` | `T_SP_CLUB_SUIT` |
+| pip top row, right (1, 1) | `T_PIPT_C` | the same: `T_PIPT_C` (it has no seam) |
+| pip left, bottom left (0, 2) | `T_PIPL_C_U0` | `T_SP_CLUB_PIPL` |
+| pip right (1, 2) | `T_PIPR_C` | `T_SP_CLUB_PIPR` |
+
+1. At boot: `OBP1_REG = ART_OBP1;` (0xD0: index 1 white, 2 light grey, 3 black; index 0 stays transparent).
+2. When a club card flies (deal, play, pick up), build its six sprites from the right-hand column above and set the OBP1 attribute bit on every one of them: `set_sprite_prop(n, S_PALETTE)` (OAM attribute bit 4), plus any flip bits you use.
+3. Every other sprite (other suits' cards, card backs, cursor, arrow, fireworks, train, plane) stays on OBP0 (`ART_OBP0`).
+
+Why it is safe: a club card has no dark grey anywhere (black rank and pips, white body), so OBP1's index 2 means only the seams; the round corners stay index 0 and transparent.
+Cost: 3 sprite tiles (155..157) and the OBP1 slot.
+`mockups/26_club_s2b_before_after.png` shows the club before and after, the status bar, and a flying K of clubs built from exactly these tiles under OBP1.
 
 ### The pass slot
 
@@ -190,7 +217,7 @@ Unique background tiles each screen uses (all banks together are 133, so every t
 | Dashboard, with CONTINUE | `mockups/d1_dashboard.png` | 174 (map shipped: 172) | 2 | 1 |
 | Dashboard, no game open | `mockups/d1b_dashboard_new.png` | 175 | 2 | 1 |
 | Win over Miami | `mockups/w_miami.png` | 191 (map shipped: 190) | 8 | 4 |
-| Win over New York | `mockups/w_new_york.png` | 197 (193) | 12 | 6 |
+| Win over New York | `mockups/w_new_york.png` | 199 (map shipped: 195) | 16 | 6 |
 | Win over Seoul | `mockups/w_seoul.png` | 191 (188) | 12 | 6 |
 | Win over Moscow | `mockups/w_moscow.png` | 164 (map shipped: 162) | 12 | 6 |
 | Lose (ДУРАК!) | `mockups/e2_lose.png` | 122 | 0 | 0 |
@@ -219,12 +246,12 @@ After the blind designer's departures board, in our style (`travel.py`; `mockups
 ### Win and lose
 
 - Win, one screen per bot (`win_miami`, `win_new_york`, `win_seoul`, `win_moscow`; `mockups/08_win_cities.png`): "YOU WIN" over the beaten city at night, its own skyline with lit windows over the water, and the fool's cap (a two-horned jester cap with bells) on its tallest landmark: each drawn from reference photos (Wikimedia Commons) for true proportions and signature details: Miami Beach at night: the Brickell condo towers behind (slim glass towers with balcony bands on a shared row grid so their tiles repeat, sail, curved and lit-crown tops, two rising above the Freedom Tower), the Freedom Tower in front (arcaded base, tiered tower, belfry, domed cupola, lantern) with the art deco hotels and palms, then the beach (dithered sand, a striped lifeguard hut on stilts with its ramp and flag, two umbrellas), the surf and the moon's path on the water; New York, Seoul and Moscow in the same layers as Miami: a back layer of towers on the 8 px tile grid with fixed window patterns (so their tiles repeat, `wins.back_tower`), the capped landmark in front, laid on with a one-pixel lacquer outline that follows its own silhouette (`wins.in_front`; no rectangular boxes, the towers behind run up to its edge), the street layer, and a river below with the lights above mirrored into ripples (`wins.river`).
-  New York: Manhattan behind (setbacks, roof water towers, glass), One World Trade Center's tapered prism and spire, the Empire State front and centre (podium, slim shaft of vertical piers, setbacks, the mast), the Chrysler building (terraced sunburst arches, needle), a Brooklyn Bridge tower (twin pointed arches, cable fans, the lit deck), the Statue of Liberty small on her island, the East River with a ferry.
+  New York: back blocks with roof water towers and setbacks (ordinary Midtown mass; the supertalls are out at Alex's call); One World Trade Center's tapered prism and spire; the Empire State front and centre, capped; One Vanderbilt's tapering faceted glass with angled terraces and spire; the Chrysler building (terraced arches stacked in sunbursts of triangular windows, rounded shoulders, the needle); 270 Park Avenue (fan columns, stepped tower braced with a diamond lattice, crown); the Brooklyn Bridge's tower and cables on the left; the Manhattan Bridge on the right (latticed tower, truss road deck, main cable) with the subway on its lower deck: a train of sprites (`train.c`, `T_TRAIN_NOSE`, `T_TRAIN_CAR` at `ART_TRAIN_BASE` 240) heading west 10 px a frame with the fireworks loop (`mockups/19_new_york_frames.png`); the East River, its reflections kept to the first water row for the tile budget.
   Seoul: the Bukhansan ridges far behind in dither with a moonlit ridge line, apartment slabs with rooftop signs and glass towers, N Seoul Tower (slim shaft, barrel pod, striped antenna) on wooded Namsan with the cable car line and its cabin, Lotte World Tower (slender cone, split crown), Namdaemun (stone gate base, two-tier roof with upturned eaves), the Han with Banpo Bridge's fountain arcs.
   Moscow: the Moscow-City towers behind (the Federation's spire, Evolution's twist, glass), Moscow State University (a Seven Sister: central tower, spire and star, winged side towers), the Kremlin wall with its swallow-tail battlements, the Spasskaya Tower front and centre (body and gate, clock, pinnacled tiers, the tented spire, the star; capped), St Basil's on Red Square in front (the arcaded base, the central tent, onion domes with twisted stripes and crosses, laid on with a one-pixel lacquer outline so the towers behind stay whole, `wins.in_front`), the Moskva with the Bolshoy Moskvoretsky Bridge's long arch; fireworks over Red Square.
   Each drawn from reference photos (Wikimedia Commons) for true proportions and signature details (the current four in full in `mockups/15_win_after.png`; `14_win_before_after.png` is the earlier round).
   Under it the bot's name, then "IS THE DURAK".
-  The shipped map leaves the name row black: the code loads `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
+  The shipped map leaves the name row black: the code loads the first `ART_LACQUER_WIN_COUNT` (27: space and A to Z) tiles of `lacquer.c` (white on black, the same characters as the rail font) at `ART_LACQUER_BASE` (206) and prints the name on row `ART_WIN_NAME_ROW` (14), from column (20 - length) / 2, tile = 206 + index of the character in `ART_FONT_CHARS`.
   Each win tileset is at most 206 tiles (checked), so the tileset, the lacquer font and the fireworks fit one 256-tile space.
 - Lose: "ДУРАК!" in Cyrillic, "YOU ARE THE FOOL", the fool's cap and the cards left in your hand.
 - Both offer A rematch, B home.

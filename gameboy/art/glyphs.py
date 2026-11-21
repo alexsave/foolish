@@ -84,6 +84,10 @@ X...X
 """),
 }
 
+# The club (Alex's pick): the wide-foot club with light grey ('t') seams that
+# run to the centre, showing its three stems.  Light grey is palette index 0,
+# transparent on sprites: flying club cards use the sprite copies and OBP1
+# (see gen_art.club_sprite_tiles and the README).
 # Suit order is the kernel's (card_text.h CARD_SUIT_FACE): spade, heart, club, diamond.
 SUITS = ["S", "H", "C", "D"]
 RED = {"S": False, "H": True, "C": False, "D": True}
@@ -108,8 +112,8 @@ XXXXX
 "C": g("""
 .XXX.
 .XXX.
-XXXXX
-XXXXX
+XtXtX
+XXtXX
 ..X..
 XXXXX
 """),
@@ -147,9 +151,9 @@ XXXXXXX
 "C": g("""
 ..XXX..
 ..XXX..
-XX.X.XX
-XXXXXXX
-XX.X.XX
+XXtXtXX
+XXXtXXX
+XXtXtXX
 ..XXX..
 XXXXXXX
 """),
