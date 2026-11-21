@@ -789,7 +789,7 @@ static void draw_table_sprites(void) {
 
 // ---- the screen while a bot thinks ------------------------------------------------------
 // Seoul and Moscow think for seconds. Meanwhile the input timer runs
-// live_think a tick at a time (live.c, from the interrupt, on its own stack):
+// live_think once a tick (live.c, from the interrupt, on its own stack):
 // the rail's dots step, and the hand keys (hand_input) move the cursor,
 // select and rearrange, drawn as at any other time. UP, DOWN and TARGET mode
 // wait for the bot's move, and a press of them meanwhile is dropped, so
