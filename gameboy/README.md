@@ -18,6 +18,9 @@ make solvecheck     # the endgame solver: the same, and its time on the Game Boy
 make build/vscordite && build/vscordite cordite 2000   # Moscow against foolish's real cordite
 make build/match && build/match seoul newyork 2000   # bots against each other
 make romusage       # ROM and RAM per bank
+make sndprof        # the sound timed on the Game Boy: the tick, the interrupts' lateness, the bots' wait
+make -C audio test  # the sound driver's rules on the Mac, and its mutants
+make -C audio tablecheck   # the sound tables regenerate byte for byte (needs foolish's soundgen)
 ```
 
 ## Hypotheses (written before measuring) and measurements
@@ -282,6 +285,102 @@ The design is `audio/DESIGN.md` (approach A, synthesis, for every cue); this sec
 - The wait before a think (from the board's last change to `snd_yield`): at most 25 frames over `BOT_DELAY` (a transfer's slide), 0 on most moves; over the Moscow game, under 3 frames on average.
 - Onsets in mGBA's audio: a landing's sound begins on the landing frame (`FLY_FRAMES` after the move) or up to 2 frames after it, never before; the take-off cues (LIFT, PICKUP) begin within 2 frames of the move; two cards land 3 frames apart; six or more cards make exactly 6 onsets.
 
+### Measured (marking the hypotheses)
+
+| | predicted | measured | |
+| --- | --- | --- | --- |
+| bank 0 | +1.5 KB (12.6 KB) | +2.2 KB (11,359 to 13,534 bytes) | wrong by half: the voices stepped by constant index (below) cost room; under the 14 KB falsifier |
+| bank 9 | 5.6 KB | 5,397 bytes | held |
+| bank 1 | under 150 bytes | +136 bytes | held |
+| work RAM | 0 (+2 for a test at most) | +1 byte (`fw_quiet`, the fireworks' 4 seconds) | held |
+| HRAM | 5 bytes | 6 (19 to 25): `snd_cut` added (below) | one more than guessed |
+| the overlaid state | 53 bytes | 69 of the 228: `q_at`, 16 bytes, for the held strikes (below) | |
+| stack, deepest reach in a game | +15 bytes | Moscow's game 319 bytes (322 before), Seoul's 342 (336 before) | held: the tick adds a frame only while a cue sounds, never in a think |
+| `snd_tick` at its worst | 1,000 M-cycles | 4,608 (a city's motif starting, with its wave load; about 300 of it a VBlank that came in); 2,600 to 3,800 when a card cue starts; 1,024 to 1,279 on a tick that only steps a sounding cue | falsified |
+| `snd_tick` idle | under 60 M-cycles | no call at all: `in_tick` tests `snd_active` (3 instructions) | held |
+| timer lateness, LCD on | 1.2 ms | 1.28 ms (`game_new_york.txt`) | wrong by 0.08 ms |
+| timer lateness, LCD off | 1.8 ms | 10.4 ms | falsified, not by the sound (below) |
+| ticks lost | none | none: every script ends 21 or 22 ticks under 1.00852 a frame, the boot's frames before the timer starts | held |
+| Moscow's think time | within +0.2% | the same game (964 playouts, 34,388 plies); the sum +0.064%, the worst +0.056% | held |
+| the wait before a think | at most 25 frames, under 3 on average | Moscow 2 frames over 26 thinks (1 at most), Seoul 5 over 25 (2 at most) | held |
+| a landing heard | at the landing frame or up to 2 after | the impact 0.69 to 1.17 frames after the landing frame began, in every script | held, after two fixes (below) |
+| two cards, six or more | 3 frames apart; exactly 6 | 2.8 to 3.0 frames apart; 6 strikes and 6 impacts for an 8-card throw-in | held |
+
+`make sndprof` measures the timings on a profiling ROM (`build/durak_sndprof.gb`: `input.c` and `main.c` built with `SND_PROF`): the timer interrupt's lateness from TIMA and DIV (both run off the one divider, so DIV's low bits are 0 at every TIMA step; read on both sides and again if they moved), the sound tick's length the same way, the VBlank interrupt's lateness from LY, the ticks counted against the frames run, and each think's wait.
+
+### What the build changed, and why
+
+- **The tick is slow in SDCC's C.** The first build stepped an array of 7-byte voice structs and took up to 5,900 M-cycles a tick: every field was reached through a multiply and pointers kept on the stack. The design's first step (its "Assembly?") was taken: the state is arrays, the four voices are stepped by constant index (`STEP_VOICE`), each channel's registers are written by constant address, the take's round robin counts 0 to 5 with no division, and liveness is counted on the way instead of a second scan. 5,900 became 4,300 at worst, and the host renders of every take and of the design's game in context are byte for byte the same as before. Assembly, the design's next step, is not done (below).
+- **The tick runs with interrupts on.** Inside the timer interrupt a long tick held the VBlank interrupt off by up to 37 lines, which moves GBDK's OAM copy into the picture. `in_tick` reads the pad, then `ei`, then the tick: VBlank is late by at most 12 lines, the same as a ROM with no sound tick at all (measured both ways). Only VBlank can come in (the next timer interrupt is a tick away) and it touches nothing of the sound's. The driver itself still never turns interrupts off (`audio/tests/snd_no_di.sh`).
+- **A landing is held on the frame clock.** The design struck a landing its pre-roll (`snd_pre`) early, counted in ticks from the move. mGBA's capture showed the impact up to a frame before the card landed: a tick (60.24 Hz) slides against a frame (59.73 Hz), so a count of ticks lands anywhere within a frame of the VBlank it aims at. `snd_strike_at` holds a strike until the frame clock (`sys_time`, the flight's own clock) reads a value, then starts it on that tick. A card landing's take is a volume-1 lead-in row and then its impact (row 1 of every PLACE, COVER, FLIP and DEAL_LAND take), so it is held for the frame before the landing: the lead-in plays in the flight's last frame and the impact, the take's moment, in the landing frame. The slide into a hand (INTO_HAND) has no impact and is held for the landing itself. Over a whole scripted game (66 flights) every landing strike started in the frame before the landing or in it, never earlier.
+- **Two races in the frame clock, caught by `sound_attack.txt`.** With the tick interruptible, a VBlank between two queue entries let a beat's second card start a tick early (a 2-tick stagger): the clock is read once a tick. And a tick just after a VBlank began but before its interrupt ran read the old `sys_time` and held a landing a whole tick late: a pending VBlank (LY 144 on, its flag set) counts, as `line_clock` in `main.c` does. The clock is read again until `sys_time` reads the same twice, so its bytes are never torn.
+- **Two races in the design's driver.** `snd_strike` set `snd_active` before the queue held the strike, so a tick in between could clear it and never look at the strike again (and `snd_busy()` would stay true, so a bot would wait for ever): it is set after. `snd_yield` left `snd_active` for the next tick to clear, so a tick between the yield and the bot's first write could walk the bot's bytes as sound: it clears it at once (host test, mutant).
+- **INTO_HAND at priority 2, not 1.** It is struck while the pickup (priority 2) still sounds, and a strike takes a channel only from a cue of no higher priority, so at 1 it was never heard. One byte of `snd_tab.c` changed, through the generator (`tools/gen_tab.py`); `make -C audio tablecheck` regenerates the tables and compares them byte for byte.
+- **`snd_cut`**, a sixth HRAM byte, counts the yields that cut a cue still sounding: the bot must wait for `snd_busy()` first, so it stays 0, and the game scripts check it. With `snd_yield` clearing `snd_active` itself, the design's "`bot_thinking` and `snd_active` never both 1" could not see a bot that skipped the wait; this counter does.
+
+### The cues, as struck (`src/gd_sound.c`)
+
+- An attack, a throw-in, a cover, a transfer: LIFT on the tick after the move; PLACE or COVER held for the landing, one a card (six at most, a stagger apart); a transfer's PASS 15 ticks after the landing.
+- A pickup: PICKUP on the tick after the move; INTO_HAND held for the landing (at half volume when the bot takes).
+- A shown good (DONE over a covered table, mine or the bot's): GOOD. A silent good is not heard.
+- A bout ending on the discard: SWEEP on the tick after, PILE 16 ticks later; the lift of the card that ended it is left out (the sweep takes its channel on the same tick).
+- The game's last move: OUT. The win picture: the city's motif (FINISH_MIAMI to FINISH_MOSCOW); the lose picture: FOOL. A firework's whistle and burst each time a shell rises, for the first 4 seconds of the win screen.
+- HAND_OFF is silent at two players, REVERT is never struck (a move is checked before it is made), as decided.
+- The deal is not animated yet: `gd_snd_deal(seat, land)` (DEAL now, DEAL_LAND held for `land`, half volume at the bot's seat) and `gd_snd_trump(land)` (TURN, then FLIP held for `land`) are the one call a card that the deal's animation makes, with `land` the frame clock of the card's landing.
+- The New York train's rumble is not in: the game draws no train yet (`train.c` is not linked), so there is nothing to strike it from; its cue can follow the train.
+
+### The proof
+
+`tools/gbrun.c` keeps mGBA's sound (`audio start`, `audio save`) and HRAM at the end of every frame, and checks them from a mark (`mark`, or `mark _fly_t0 12`: the frame the flight lands on its own clock, found in the kept frames if it has passed): `changes` lists the frames in which a counter went up (the driver's `snd_starts`, so every strike's start is checked exactly), `onsets` the onsets in the sound (1 ms windows, 6 dB over the quietest of the 20 ms before, within a gate of the loudest, 40 ms apart: every row of a noise take retriggers, so a take has rises of its own 30 ms after its impact).
+
+| Script | What it proves |
+| --- | --- |
+| `sound_attack.txt` | Miami's two eights: the lift at the move; the two landings a stagger apart, the first in the frame before the landing; the impacts at 1.17 and 3.94 frames from the landing frame |
+| `sound_cover.txt` | Miami's attack and my cover: each impact in the landing frame (1.11, 0.69) |
+| `sound_pass.txt` | a transfer: the impact at 0.81, the slide 15 ticks after the landing (its start; it rises out of the landing's tail with no clean onset) |
+| `sound_take.txt` | a pickup: the stroke at the move, the slide into the hand held for the landing frame (its start; at volume 1 it takes the channel from the pickup's knock with no onset of its own) |
+| `sound_done.txt` | DONE ends the bout: the good and the sweep on the tick after the move, heard at 1.65 frames; the pile 16 ticks later |
+| `sound_six.txt` | a board set by hand: New York throws in eight cards; six strikes and six impacts, 3 ticks apart |
+| `sound_win.txt` | a board set by hand: my last card; OUT and the lift at the move, OUT heard at 1.45; Miami's motif when the win picture is lit (1.15); a whistle every 32 frames to the 4th second, none after |
+| `sound_lose.txt` | Miami's last card: OUT at 1.19; the fool's tune when the lose picture is lit (1.41); no firework |
+| `game_moscow.txt`, `game_seoul.txt` | while Moscow thinks the sound's RAM is the bot's and nothing sounds; no strike refused and no cue cut over a whole game, each |
+
+Timing in the other scripts: a cue sounding costs the loop about 1 ms of each frame, so a redraw while one plays runs a frame longer. Three shots now wait for the redraw (they are byte for byte the old pictures), `target_cover.txt` gives one press 6 frames instead of 4, `win_screens.txt` waits 20 frames for the dashboard before its presses (two presses latched in one pass of the loop are one), and `game_win.txt` plays seed 4 (seed 3 no longer wins). Every other shot is byte for byte what it was.
+
+A render: `scripts/game_win.txt` with `audio start` and `audio save`, from the real ROM in mGBA: 99.8 s, 48 kHz mono, peak -4.3 dBFS, RMS -32.3 dBFS, sound in 37% of its 5 ms windows (not committed: `build/`).
+
+### Mutants
+
+The driver's rules on the Mac (`make -C audio test`), each broken in a copy of `snd.c` or `snd_tab.c` (`audio/tests/mutants.sh`), each caught by the assertion for its own rule:
+
+| Mutant | Caught by |
+| --- | --- |
+| a strike starts inside `snd_strike` | "a strike started inside snd_strike" |
+| no stagger | "the second landing came -1 ticks after the first" |
+| a cap of 7 | "nine cards made 7 strikes" |
+| no refusal while a bot owns the RAM | "a strike in a think was not refused" |
+| the yield keeps the voices; keeps the queue | "sound still busy after snd_yield" |
+| backwards ignored | "backwards began on NR23 0x21, not the last row's 0xB2" |
+| far ignored | "far volume 3 against near 3" |
+| the yield leaves the tick running | "the tick after a yield read the bot's bytes as strikes (32 writes)" |
+| the yield counts no cut | "a yield over a sounding cue was not counted" |
+| a held strike not held | "a held strike started before its time on the clock" |
+| the round robin always take 0 | "two strikes of a cue running played the same take" |
+| INTO_HAND at priority 1 (`snd_tab.c`) | "the slide into the hand did not take the channel from the pickup" |
+
+`audio/tests/snd_no_di.sh` fails on a `di` planted in `snd_tick`; `make -C audio tablecheck` fails on one byte of `snd_tab.c` changed; `tests/rng_ban.sh` now covers `audio/` and fails on a planted `rand()` there.
+
+In the ROM (`tests/rom_mutants.txt`, `make rom-mutants`, every script against each):
+
+ROM_MUTANT_TABLE
+
+## Not done (sound)
+
+- The tick in assembly: 1,024 to 1,279 M-cycles on a tick that only steps a cue, up to 4,608 when a motif starts, against the design's 1,500. With interrupts on it no longer delays VBlank, but it takes about 6% of the CPU while a cue sounds, and a redraw then runs a frame longer.
+- The screen loads hold interrupts off for 9 to 10 ms a piece: `from_bank` copies 256 bytes a piece through a C loop (`copy_banked`, about 35 M-cycles a byte), where the design assumed memcpy's 7. The timer is late by that much during a load (no tick is lost). Smaller pieces or an unrolled copy would fix it; it is `gfx.c`'s, shared with the other jobs, so it is left.
+- The New York train's rumble waits for the train; the deal's cues wait for the deal's animation (the hooks are in).
+- PASS's slide and the pickup's slide are checked by their start ticks, not their sound: neither rises out of the cue before it with a clean onset.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
@@ -431,7 +530,7 @@ Building them in the shadow OAM itself let the VBlank copy a half-built set: mov
 
 ## gbrun, the headless runner
 
-`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
+`tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, keeps the sound and checks its onsets and the driver's strikes from a mark (README "Sound"), and checks screen pixels (`pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame), from a plain text script (the format is at the top of the file).
 Every script in `scripts/` sets the seed by poking `sys_time` just before its first press, so its deal does not depend on how long the ROM takes to start, and waits for the bot with `until` rather than counting frames.
 
 | Script | What it proves | Shots |
@@ -453,6 +552,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | `game_moscow.txt` | a whole game against Moscow: MOSCOW THINKS on the rail while it searches, the finished game, its times | `moscow_01` to `moscow_03` |
 | `flight_club.txt` | a club card in flight over another card: its seams read light grey, pixel by pixel (the eight seam pixels of the flying nine of clubs, two of them over the eight of clubs' black edge) | `flight_club`, `flight_club_landed` |
 | `dashboard.txt` | START to the dashboard, CONTINUE, a new game against New York, a tap during a screen load kept | `90` to `93` |
+| `sound_*.txt` | each cue struck at its frame, in mGBA's audio and the driver's own count (README "Sound") | |
 
 SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/sameboy_deal.png` (macOS `screencapture` of its window), identical to mGBA's apart from SameBoy's green palette.
 
@@ -476,7 +576,7 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 
 - Moscow's solver runs at 8.2 ms a node, most of it SDCC's code for move generation; assembly there (as for the hash) would buy it bigger endgames, though the measurements above say the worlds matter more at two players.
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
-- The deal is not animated (the art has the frames); played and picked-up cards fly (below).
+- The deal is not animated (the art has the frames); played and picked-up cards fly (below). Its sound hooks are in (README "Sound").
 - A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

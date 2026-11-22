@@ -4,6 +4,7 @@ Alex's brief: "take what the real foolish website does, and convert it to 8 bit 
 This file is the design for that: what the DMG can do, how sound shares the machine with the bots, which website cue becomes what Game Boy voice, the two ways to make the card sounds (synthesis and PCM) compared with numbers, the driver, and how the build phase will test it.
 
 Written 2026-11-21, before any ROM build: everything here was measured offline, on a model of the APU (`host/apu.c`) running the real driver (`snd.c`) and tables (`snd_tab.c`).
+Built since: `README.md` "Sound" in `gameboy/` has the build, its measurements, and where it departs from this (a landing held on the frame clock, not struck its pre-roll early; the state as arrays; the tick with interrupts on; INTO_HAND at priority 2; two races fixed).
 The final judge is Alex by ear; an mGBA render of the real ROM comes in the build phase, and it overrides any number here that disagrees with it.
 
 ## What is here
