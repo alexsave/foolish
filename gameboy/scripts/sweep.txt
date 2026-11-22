@@ -24,7 +24,7 @@
 +6   press UP
 +6   expect _G+74 01
 +45  expect _G+56 20
-+0   expect _fly_n 00
++0   until _fly_n 00
 +0   pixel 141 20 1
 +0   pixel 65 48 3
 +0   shot shots/sweep_01_before.png 3
