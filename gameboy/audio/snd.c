@@ -21,14 +21,41 @@ typedef struct {
     uint8_t wave;                   // 1: the wave table in CH3's RAM, 0xFF none
 } snd_state;                        // 53
 
+// SND_OVERLAY names a header that puts the state over other memory: it
+// defines SND_RAM (the bytes) and SND_RAM_BYTES (how many). The Game Boy's is
+// src/gd_botlib.h, the bots' candidate list; host/snd_test.c's is its own, so
+// it can scribble on the state as a think would.
+#ifdef SND_OVERLAY
+#include SND_OVERLAY
+#define S (*(snd_state *)(void *)(SND_RAM))
+typedef char snd_state_fits[sizeof(snd_state) <= SND_RAM_BYTES ? 1 : -1];
+#else
 static snd_state S;
+#endif
 
-volatile uint8_t snd_owner;
-static uint8_t snd_active;          // set by a strike, cleared by the tick that finds nothing left
-volatile uint8_t snd_refused;
-volatile uint8_t snd_starts;        // strikes started, wrapping (gbrun and host/snd_test.c read it)
-static uint8_t strikes;
-uint8_t snd_busy(void);             // round robin over a cue's takes: never the same twice running
+// The tables in a ROM bank of their own (SND_BANK, the Game Boy's Makefile):
+// the tick maps it in and puts back the bank it found. Code that switches
+// banks with interrupts on writes _current_bank before the bank register
+// (GBDK's SWITCH_ROM and its banked-call trampoline), so what the tick puts
+// back is always the bank the interrupted code wants.
+#ifdef SND_BANK
+#include <gb/gb.h>
+#define BANK_IN  const uint8_t save_bank = _current_bank; SWITCH_ROM(SND_BANK)
+#define BANK_OUT SWITCH_ROM(save_bank)
+#else
+#define BANK_IN
+#define BANK_OUT
+#endif
+
+#if defined(SND_HOST) && defined(SND_OVERLAY)
+#include <stddef.h>
+// for host/snd_test.c, which fills the queue as a bot's bytes might
+const unsigned snd_host_queue_at = offsetof(snd_state, q_cue), snd_host_queue_n = SND_QUEUE;
+#endif
+
+#ifndef __SDCC
+volatile uint8_t snd_owner, snd_refused, snd_cut, snd_starts, snd_active, snd_strikes;
+#endif
 
 static const uint8_t base[4] = { 0x10, 0x15, 0x1A, 0x1F };
 
@@ -74,8 +101,8 @@ static void start(uint8_t cue, uint8_t flags) {
     const snd_take *t;
     uint8_t ch;
     if (!c->n_takes) return;
-    t = &c->takes[strikes % c->n_takes];
-    strikes++;
+    t = &c->takes[snd_strikes % c->n_takes];
+    snd_strikes++;
     snd_starts++;
     for (ch = 0; ch < 4; ch++) {
         const snd_row *r = t->v[ch];
@@ -105,6 +132,8 @@ void snd_init(void) {
     for (i = 0; i < SND_QUEUE; i++) S.q_wait[i] = 0;
     S.wave = 0xFF;
     snd_owner = SND_OWNER_SOUND;
+    snd_refused = 0; snd_cut = 0; snd_starts = 0; snd_strikes = 0;
+    snd_active = 0;
 }
 
 void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
@@ -117,12 +146,15 @@ void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
         // one tick, 4 ms, after the call: it trails, never leads)
         const uint8_t d = (uint8_t)(delay + 1u + k * SND_STAGGER);
         for (i = 0; i < SND_QUEUE; i++) if (!S.q_wait[i]) break;
-        if (i == SND_QUEUE) return;          // full: the later strikes of a beat are dropped
-        snd_active = 1;
+        if (i == SND_QUEUE) break;           // full: the later strikes of a beat are dropped
         S.q_cue[i] = cue;
         S.q_flags[i] = flags;
         S.q_wait[i] = d;
     }
+    // after the queue holds the strike: set before it, a tick between the two
+    // could find nothing due, clear the flag, and never look at the strike
+    // (it would stay queued, and snd_busy() true, for ever)
+    snd_active = 1;
 }
 
 void snd_tick(void) {
@@ -131,6 +163,8 @@ void snd_tick(void) {
     // strike, the next tick finds nothing and clears this, and snd_strike
     // will not set it again until snd_claim): one load and a branch
     if (!snd_active) return;
+    {
+    BANK_IN;
     for (i = 0; i < 4; i++) {
         snd_voice *v = &S.v[i];
         if (!v->row || --v->left) continue;
@@ -150,6 +184,8 @@ void snd_tick(void) {
         if (S.q_wait[i] && --S.q_wait[i] == 0) start(S.q_cue[i], S.q_flags[i]);
     }
     if (!snd_busy()) snd_active = 0;
+    BANK_OUT;
+    }
 }
 
 uint8_t snd_busy(void) {
@@ -162,6 +198,10 @@ uint8_t snd_busy(void) {
 void snd_yield(void) {
     uint8_t i;
     snd_owner = SND_OWNER_BOT;
+    // the tick stops reading the state now, before the bot writes over it
+    // (left to the next tick, a tick in between would walk the bot's bytes)
+    snd_active = 0;
+    if (snd_busy()) snd_cut++;
     for (i = 0; i < 4; i++) { S.v[i].row = 0; silence(i); }
     for (i = 0; i < SND_QUEUE; i++) S.q_wait[i] = 0;
 }

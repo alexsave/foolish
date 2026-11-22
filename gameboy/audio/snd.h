@@ -62,9 +62,19 @@ extern const uint8_t snd_dur[SND_N_CUES];   // ticks from a strike to the end of
 // Who owns the shared scratch RAM (DESIGN.md "Memory: one owner at a time").
 #define SND_OWNER_SOUND 0u
 #define SND_OWNER_BOT   1u
-extern volatile uint8_t snd_owner;
-extern volatile uint8_t snd_refused;   // strikes refused while a bot owned the RAM (a test reads it; must stay 0)
-extern volatile uint8_t snd_starts;    // strikes started, wrapping: what a test counts
+// The bytes that outlive a think cannot be overlaid on the bots' scratch: on
+// the Game Boy they are in HRAM (snd_hram.s), reached with ldh.
+#ifdef __SDCC
+#define SND_KEEP extern volatile __sfr
+#else
+#define SND_KEEP extern volatile uint8_t
+#endif
+SND_KEEP snd_owner;
+SND_KEEP snd_refused;    // strikes refused while a bot owned the RAM (a test reads it; must stay 0)
+SND_KEEP snd_cut;        // yields that cut a cue still sounding (the bot must wait for snd_busy(); must stay 0)
+SND_KEEP snd_starts;     // strikes started, wrapping: what a test counts
+SND_KEEP snd_active;     // set by a strike, cleared by the tick that finds nothing left, and by snd_yield
+SND_KEEP snd_strikes;    // round robin over a cue's takes: never the same twice running
 
 void snd_init(void);
 // Strike `cue` `delay` ticks from now; `n` cards make min(n, 6) strikes,

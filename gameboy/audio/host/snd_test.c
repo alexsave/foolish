@@ -2,7 +2,12 @@
 // makes (no APU needed). `make test` runs it; tests/mutants.sh breaks each
 // rule in a copy of snd.c and requires this to fail.
 #include "snd.h"
+#include "scratch.h"
 #include <stdio.h>
+#include <string.h>
+
+snd_test_scratch snd_test_ram;
+extern const unsigned snd_host_queue_at, snd_host_queue_n;
 
 static uint8_t last[0x40];          // the last value written to each register
 static int writes;
@@ -51,6 +56,32 @@ int main(void) {
     snd_claim();
     snd_strike(SND_PLACE, 0, 1, 0);
     CHECK(ticks_to_start(3) == 1, "no start after snd_claim");
+
+    // a yield stops the tick at once: the bot's first bytes over the state
+    // (here, every queue slot due next tick) are never read as strikes
+    snd_init();
+    snd_strike(SND_LIFT, 0, 1, 0);
+    snd_tick();
+    snd_yield();
+    memset(snd_test_ram.b, 0, sizeof snd_test_ram.b);
+    for (unsigned k = 0; k < snd_host_queue_n; k++) {
+        snd_test_ram.b[snd_host_queue_at + k] = SND_PLACE;                        // q_cue
+        snd_test_ram.b[snd_host_queue_at + snd_host_queue_n + k] = 1;             // q_wait
+    }
+    writes = 0;
+    snd_tick();
+    CHECK(writes == 0, "the tick after a yield read the bot's bytes as strikes (%d writes)", writes);
+    snd_claim();
+
+    // a yield over a cue still sounding is counted (the game must wait for
+    // snd_busy() first); a yield over silence is not
+    snd_init();
+    { const uint8_t c0 = snd_cut; snd_yield(); snd_claim();
+      CHECK(snd_cut == c0, "a yield over silence counted as a cut"); }
+    snd_strike(SND_LIFT, 0, 1, 0);
+    snd_tick();
+    { const uint8_t c0 = snd_cut; snd_yield(); snd_claim();
+      CHECK(snd_cut == (uint8_t)(c0 + 1u), "a yield over a sounding cue was not counted"); }
 
     // backwards: the first row written is the take's last
     {
