@@ -772,6 +772,25 @@ Mutants, each built into the ROM and run, each failing on the check named:
 
 The last three are in `tests/rom_mutants.txt`, so `make rom-mutants` runs them; the nine above them were run by hand.
 
+## The screen in one piece
+
+A redraw takes more than a frame (a landing's, 2 to 2.5 frames), and the flush wrote its rows into the map on show, so a frame could show the top of the new board over the bottom of the old: after DOWN in `take.txt`, frame 5 had the table already empty (the six of clubs' top half gone) under the rail still saying MIAMI ATTACKS, and frames 6 and 7 had the card nowhere (the board had dropped it, the flight's sprite was not up yet).
+`scripts/tear.txt` catches it: from DOWN on, no frame may show the table's new wool at (64, 50) with the rail's old white at (1, 140). On the old flush it failed on that frame; it passes now.
+
+The fix (`src/gfx_map.c`, bank 0):
+- Two background maps. The picture is the map LCDC bit 3 selects; a flush writes the other, which LCDC bit 6 (the window's map: the window is never shown) always names, so GBDK's `set_win_tiles` writes the back map with no address arithmetic of ours. The VBlank swaps the two bits when a flush asks for it (`flip_req`), so a redraw goes up whole, between two pictures, and with the sprites staged in the same pass (the vanishing card of frames 6 and 7 is gone too).
+- The back map lacks the rows the last flush changed (`stale`, a bit a row). Between redraws the main loop copies two of them a pass (`gfx_catch_up`, from `shown`, what is on show), so a flush seldom writes a row twice; a flush writes whatever is still stale. A flush waits while a flip is asked for and not done (that back map is the one about to go up); with the LCD off it writes both maps and asks for nothing.
+- The thinking dots (`gfx_flush_row`, from the interrupt) go into the map on show only and mark the row stale: written twice they cost Moscow's think 0.5% (a row is about 11 scanlines).
+- The map, the flush and the flip moved out of bank 1 to bank 0 (`gfx_map.c`): bank 1 had 337 bytes, and the double buffer alone took 273 of them. Bank 1 now has 521 free, bank 0 1,846. A first try put them in `_HOME` (`NONBANKED`), which ran past 0x800 into `_CODE`: the linker only warned ("Multiple write"), so the ROM build now fails on that warning as it does on an overflow.
+- RAM: 4 bytes (`flip_req`, `stale`).
+
+Measured on the Mac against #518 (the sound):
+- Moscow's think time, the same 25 decisions: `think_time.txt` +0.27% on the sum, `think_time_keys.txt` +0.42% (the VBlank handler runs every frame, and a think's redraws, with keys, write rows twice). The bound was +0.5%.
+- The opening deal: 129 frames from the first card's first step to the trump's landing (128 before).
+- A redraw shows a VBlank after it is written, so the board can show up to a frame later than before; scripts that shot or checked at a fixed frame after a move now wait for the landing (`cover_or_pass.txt`'s `22_passed`, `sweep.txt`), `sound_six.txt` counts its stagger in ticks (2.97 frames), and `game_win.txt` plays seed 1.
+- Mutation checked: the flush writing the map on show again fails `tear.txt` (the torn frame); the catch-up writing a row one tile off fails `tear.txt` and `deal.txt` (`same`); a flush that skips the stale rows is hidden by the catch-up in the game, so `tear.txt` also runs on `build/durak_nocatch.gb` (the game with `CATCH_UP_ROWS` 0, `make scripts` builds it), where it fails (the six of clubs stays on the table). All three are in `tests/rom_mutants.txt`.
+- Not covered by a script: the wait for a flip still asked for (two flushes in one frame do not happen in the scripts; without the wait the second could be half written when the VBlank swaps).
+
 ## gbrun, the headless runner
 
 `tools/gbrun.c` runs the ROM on libmgba: it holds buttons, writes PNG screenshots, reads, checks and writes memory, waits for memory to reach a value, keeps the sound and checks its onsets and the driver's strikes from a mark (README "Sound"), and checks screen pixels and counts (`atleast SYM LEN MIN`: a little-endian number at least MIN, the stack guard's headroom; `pixel X Y SHADE`; `pixelspr N DX DY SHADE`, relative to sprite N's place in the hardware OAM, which is where the frame drew it; `notboth FRAMES ...`, two pixel states that must never share a frame, watched frame by frame; `same PNG`, every pixel of the screen against a shot), from a plain text script (the format is at the top of the file).
@@ -829,7 +848,5 @@ SameBoy 1.0.5 (GUI) runs the same ROM: `shots/sameboy_dashboard.png` and `shots/
 - Moscow's solver runs at 8.2 ms a node, most of it SDCC's code for move generation; assembly there (as for the hash) would buy it bigger endgames, though the measurements above say the worlds matter more at two players.
 - Seoul's sampling (17 ms a world) and the rollout engine (3.3 ms a ply) could both go further; the engine missed its 150 ms average target by 7%.
 - A board redraw takes a few frames, and the sprites (the cursor, the aim, a flight) update after it: moving the aim shows the old arrow for about four frames, then the new one, whole.
-- The row-by-row flush can tear for one frame: picking up shows a frame whose rail and hand row are half old and half new (frame 5 after DOWN in `take.txt`, whose shot waits a frame for it).
-  The fix is double buffering: write the changed rows into the second background map (0x9C00) and flip LCDC bit 3 in the VBlank, diffing against what that map last held.
 - A draw (the repetition rule) has no picture; the table says DRAW and A deals again.
 - The lose picture shows seven card backs whatever is left in your hand: the backs' top row shares its tiles with the bottom of the fool's cap above it (row 11, a different tile in every column), so another count needs new composed tiles from the art side, not a cheap change here.

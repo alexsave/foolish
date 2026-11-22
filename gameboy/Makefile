@@ -138,7 +138,20 @@ print-core:
 mutants: $(B)/gd_binom.h $(B)/gd_simtab.h $(B)/hw_prod.o $(B)/cordite_sim.o
 	bash tests/mutants.sh
 
-rom-mutants: $(B)/durak.gb $(B)/gbrun
+# The game with no catch-up between redraws (gfx_map.c CATCH_UP_ROWS 0): the
+# flush alone must bring the back map up to date, which the game's own pace
+# rarely tests (the catch-up usually has). scripts.sh runs a few scripts
+# against it too (README "The screen in one piece").
+$(B)/nocatch:
+	mkdir -p $@
+$(B)/nocatch/gfx_map.o: src/gfx_map.c $(ROM_H) Makefile | $(B)/nocatch
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -DCATCH_UP_ROWS=0 -I$(B) -I$(ART) -Iaudio -c -o $@ $<
+NOCATCH_OBJ = $(patsubst $(B)/rom/gfx_map.o,$(B)/nocatch/gfx_map.o,$(ROM_OBJ))
+$(B)/durak_nocatch.gb: $(NOCATCH_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(NOCATCH_OBJ) 2>&1 | tee $(B)/nocatch.link
+	@! grep -iE "overflow|multiple write" $(B)/nocatch.link || { rm -f $@; exit 1; }
+
+rom-mutants: $(B)/durak.gb $(B)/durak_nocatch.gb $(B)/gbrun
 	bash tests/rom_mutants.sh
 
 # ---- the headless runner ------------------------------------------------------------
@@ -165,7 +178,7 @@ $(B)/selfplay.gb: tests/selfplay.c tests/selfplay_rom.c tests/selfplay.h $(SELFP
 selfplay: $(B)/selfplay_host $(B)/selfplay.gb $(B)/gbrun
 	sh tests/selfplay.sh
 
-scripts: $(B)/durak.gb $(B)/gbrun
+scripts: $(B)/durak.gb $(B)/durak_nocatch.gb $(B)/gbrun
 	sh tests/scripts.sh
 
 .PHONY: selfplay scripts
