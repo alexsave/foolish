@@ -660,7 +660,7 @@ def lag_corr(wav, r, src, tau, wlen=0.5, maxlag=0.05):
     """Normalised correlation and lag (ms) of the 300 Hz-high-passed output window at tau against the source."""
     n, lg = int(wlen * SR), int(maxlag * SR)
     pad = int(0.2 * SR)
-    o, _ = load(wav, tau - 0.2, tau + wlen)
+    o, _ = load(wav, tau - 0.2, tau + wlen + 0.01)   # whole samples: without the margin the window can come out one short
     o = hp300(o.mean(axis=1))[pad:pad + n]
     s0 = r['in'] + (tau - r['a']) * r['rate']
     b = hp300(src_slice(src, s0 - 0.2 - maxlag, pad + n + 2 * lg))[pad:]
