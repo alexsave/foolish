@@ -751,7 +751,7 @@ A landing draws the flight once more on its place before the board's redraw, so 
 `scripts/dashboard.txt` checks that RIGHT pressed mid-deal acts only once the deal has landed, and `scripts/target_cover.txt` that the bot leads only after it.
 `scripts/done.txt` checks a refill: after DONE, my card (I attacked) leaves the deck while the bot's waits (`_dl_n` 0 and 1), then the bot's, each landing in its place.
 `scripts/deal_resume.txt` leaves mid-deal: START with my fourth card in flight (`_dl_n` 3 and 3), then 60 frames on the dashboard in which nothing more leaves the deck, then CONTINUE: the card in flight lands, the bot's fourth leaves next and then mine (the deal's order kept), the trump turns up last, and the settled board equals `deal_instant_ref.png`.
-The card in flight when START was pressed lands at once on the way back (its flight's clock ran on during the dashboard), rather than finishing its flight.
+The card in flight when START was pressed finishes its flight on the way back: its clock is set again from the step it reached when the table is drawn back (`fly_t0 = sys_time - fly_t`), where it used to land at once (its clock had run on through the dashboard and the table's load). `deal_resume.txt` pins it: START at step 3, step 4 on the dashboard, then steps 5 and 7 of the same card (`_dl_n` still 3 and 3) after CONTINUE; on the old ROM the bot's next card had left by then (`_dl_n` 3 and 2). A held landing sound struck before START still plays at the old landing time, on the dashboard.
 
 Mutants, each built into the ROM and run, each failing on the check named:
 
@@ -768,9 +768,10 @@ Mutants, each built into the ROM and run, each failing on the check named:
 | the bot does not wait for the deal | `target_cover.txt`, two attacks on the table while the trump turns up |
 | the deal goes on while the dashboard is shown | `deal_resume.txt`, `_dl_n` 0 and 0 after the 60 frames on the dashboard |
 | CONTINUE drops the card in flight, and the deal stops | `deal_resume.txt`, `_dl_n` stays 3 and 3 (the bot's fourth never leaves) |
+| a card in flight at START lands at once on the way back | `deal_resume.txt`, `_dl_n` 3 and 2 at the card's step 5 (the next card has left) |
 | START mid-deal gives up the rest of the deal | `deal_resume.txt`, `_dl_n` 0 and 0 on the dashboard |
 
-The last three are in `tests/rom_mutants.txt`, so `make rom-mutants` runs them; the nine above them were run by hand.
+The last four are in `tests/rom_mutants.txt`, so `make rom-mutants` runs them; the nine above them were run by hand.
 
 ## The screen in one piece
 
@@ -799,7 +800,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | Script | What it proves | Shots |
 | --- | --- | --- |
 | `deal.txt` | the dashboard, the deal card by card (the flip pinned frame by frame, a club in flight, the trump turned up, every landing, the settled board against the old instant deal's), the cursor appearing, an attack, the bot's answer | `01` to `05`, `deal_*` |
-| `deal_resume.txt` | START mid-deal: nothing leaves the deck on the dashboard; CONTINUE resumes the deal in its order to the same settled board | none |
+| `deal_resume.txt` | START mid-deal: nothing leaves the deck on the dashboard, the card in flight finishes its flight after CONTINUE, and the deal goes on in its order to the same settled board | none |
 | `target_cover.txt` | TARGET mode over two attacks, moving the aim (watched frame by frame: never the old arrowhead beside the new arrow's dots), DOWN backing out, the cover | `10` to `13` |
 | `cover_or_pass.txt` | TARGET mode with the pass space, passing | `20` to `22` |
 | `single_moves.txt` | UP passes at once with a pass-only card | `30`, `31` |

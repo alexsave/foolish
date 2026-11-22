@@ -1,22 +1,34 @@
 # START in the middle of the opening deal, then CONTINUE (README "The deal"):
 # the deal waits on the dashboard and goes on where it was, in its order, to
 # the same settled board as deal.txt's (seed 0x1f, the old instant deal's).
+# The card in flight when START is pressed finishes its flight on the way back.
 # `_dl_n` is the cards still to leave the deck, mine then the bot's; the bot's
 # go first, alternating, so (3, 3) is my fourth card in flight.
 @99  poke _sys_time 1f 00
 @100 press A
 +1   until _dl_n 03 03
 +0   expect _dl_seat 00
-+2   press START
++0   until _fly_t 03
++1   press START
 +1   until _screen 00
 +0   expect _dash_item 00
-# on the dashboard nothing more leaves the deck, however long it waits
+# on the dashboard nothing more leaves the deck, however long it waits, and
+# the card in flight stays at the step it reached (4 of 8)
 +60  expect _dl_n 03 03
 +0   expect _dl_seat 00
 +0   expect _fly_n 01
-# CONTINUE: the card in flight lands, then the bot's fourth leaves, then mine
++0   expect _fly_t 04
+# CONTINUE: the card in flight finishes its flight (steps 5 to 7, the face,
+# still my fourth card) before it lands; it does not land at once
 +1   press A
 +1   until _screen 01
++0   until _fly_t 05
++0   expect _dl_n 03 03
++0   expect _dl_seat 00
++0   until _fly_t 07
++0   expect _dl_n 03 03
++0   expect _dl_seat 00
+# then the bot's fourth leaves, then mine
 +0   until _dl_n 03 02
 +0   expect _dl_seat 01
 +0   until _dl_n 02 02

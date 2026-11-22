@@ -28,3 +28,4 @@ main.c~                        if (dl_seat == DL_TRUMP) gd_snd_trump(~          
 gfx_map.c~        if (!on) set_bkg_tiles(0, y, SCR_W, 1, map + o);~        set_bkg_tiles(0, y, SCR_W, 1, map + o);~a redraw written into the map on show (it tears)
 gfx_map.c~        if (!changed && !STALE(y)) continue;~        if (!changed) continue;~a flush leaves the rows the back map lacks (shown once the catch-up is off)
 gfx_map.c~        set_win_tiles(0, y, SCR_W, 1, shown + (uint16_t)y * SCR_W);~        set_win_tiles(0, y, SCR_W, 1, shown + (uint16_t)y * SCR_W + 1u);~the catch-up writes a row one tile off
+main.c~                if (fly_n && back) fly_t0 = (uint16_t)(sys_time - fly_t);~                ;~a card in flight at START lands at once on the way back

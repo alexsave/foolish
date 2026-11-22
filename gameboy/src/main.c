@@ -1232,9 +1232,14 @@ void main(void) {
             else if (screen == SCREEN_END) draw_end();
             else {
                 const uint32_t t0 = line_clock();
-                if (shown != SCREEN_TABLE) gfx_load_table();
+                const uint8_t back = shown != SCREEN_TABLE;
+                if (back) gfx_load_table();
                 draw_table();
                 draw_table_sprites();
+                // a card in flight when the table was left (START) goes on
+                // from the step it reached once the table is back, instead of
+                // landing at once (its clock ran on meanwhile; deal_resume.txt)
+                if (fly_n && back) fly_t0 = (uint16_t)(sys_time - fly_t);
                 // a dealt card's flight starts when its first frame is drawn
                 if (fly_n && dl_seat != DL_NONE && !fly_t) {
                     fly_t0 = sys_time;
