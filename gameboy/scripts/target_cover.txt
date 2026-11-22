@@ -37,10 +37,12 @@
 +0   shot shots/12_target_cover_second.png 3
 # down cancels back to the cards; up again aims at the first eight, up covers it
 +1   press DOWN
-+4   expect _in_target 00
++1   until _in_target 00
 +1   press UP
 +4   expect _in_target 01
 +1   press UP
 +4   expect _in_target 00
 +0   expect _G+56 1f ff
-+0   shot shots/13_covered.png 3
+# the ten lands on the eight
++0   until _fly_n 00
++4   shot shots/13_covered.png 3

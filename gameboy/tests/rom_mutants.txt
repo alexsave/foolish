@@ -8,3 +8,6 @@ main.c~    if (pills & GD_PILL_PICKUP) fire(GD_PICKUP, 0, 0);~    if (0) fire(GD
 main.c~        if (dash_item == DASH_CONTINUE) { go_table(); return; }~        if (0) { go_table(); return; }~CONTINUE deals a new game instead
 main.c~        in_keep_except(J_START);~        ;~presses latched with START are dropped
 input.c~        add_TIM(in_tick);~        add_VBL(in_tick);~buttons read on VBlank (none while the LCD is off)
+main.c~if (fly_n && screen == SCREEN_TABLE && shown == SCREEN_TABLE) {~if (fly_n) {~the deal goes on while the dashboard is shown
+main.c~        if (dash_item == DASH_CONTINUE) { go_table(); return; }~        if (dash_item == DASH_CONTINUE) { fly_n = 0; go_table(); return; }~CONTINUE drops the card in flight and the deal stops
+main.c~        screen = SCREEN_DASH; dash_item = 0; dirty = 1;~        screen = SCREEN_DASH; dash_item = 0; dirty = 1; dl_n[0] = dl_n[1] = 0;~START mid-deal gives up the rest of the deal
