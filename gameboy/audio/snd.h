@@ -81,12 +81,26 @@ void snd_init(void);
 // SND_STAGGER apart, from the delay on (never before it: a sound trails its
 // picture).
 void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags);
+// The same, held until the frame clock (SND_CLOCK: sys_time, the VBlanks, on
+// the Game Boy) reaches `at`, then `delay` ticks more: a landing, on the clock
+// its flight runs on. A tick (60.24 Hz) slides against a frame (59.73 Hz), so
+// a delay in ticks alone lands anywhere within a frame of the VBlank it aims
+// at, sometimes before it; held, it starts on the first tick after it.
+void snd_strike_at(uint8_t cue, uint16_t at, uint8_t delay, uint8_t n, uint8_t flags);
 void snd_tick(void);         // the timer interrupt
 uint8_t snd_busy(void);      // anything sounding or pending
 // The bot is about to think: every channel silenced, the queue dropped, the
 // RAM handed over. snd_claim() takes it back after the move is chosen.
 void snd_yield(void);
 void snd_claim(void);
+
+// The frame clock snd_strike_at holds a strike against.
+#ifdef SND_HOST
+extern volatile uint16_t snd_host_clock;
+#define SND_CLOCK snd_host_clock
+#else
+#define SND_CLOCK sys_time
+#endif
 
 // The register write. The Game Boy's is a store; the host defines its own.
 #ifdef SND_HOST

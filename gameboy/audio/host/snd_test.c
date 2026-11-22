@@ -83,6 +83,21 @@ int main(void) {
     { const uint8_t c0 = snd_cut; snd_yield(); snd_claim();
       CHECK(snd_cut == (uint8_t)(c0 + 1u), "a yield over a sounding cue was not counted"); }
 
+    // held for the frame clock: nothing before the clock reaches `at`, then
+    // the first tick after it, the next card a stagger later
+    snd_init();
+    snd_host_clock = 0xFFF0u;                       // across the 16-bit wrap
+    { const uint8_t s0 = snd_starts; int t;
+      snd_strike_at(SND_PLACE, 0x0004u, 0, 2, 0);
+      for (t = 0; t < 19; t++) { snd_tick(); snd_host_clock++; }   // the clock reaches 0x0003
+      CHECK(snd_starts == s0, "a held strike started before its clock (%d starts)", (uint8_t)(snd_starts - s0));
+      snd_tick(); snd_host_clock++;                                  // 0x0004 now
+      CHECK(snd_starts == s0, "a held strike started on the tick the clock reached it, before the tick saw it");
+      snd_tick();
+      CHECK((uint8_t)(snd_starts - s0) == 1, "a held strike did not start on the first tick at its clock");
+      CHECK(ticks_to_start(10) == (int)SND_STAGGER, "the held beat's second card was not a stagger after the first"); }
+    snd_host_clock = 0;
+
     // backwards: the first row written is the take's last
     {
         const snd_row *r = snd_cues[SND_OUT].takes[0].v[1];

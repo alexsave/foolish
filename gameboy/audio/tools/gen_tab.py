@@ -48,7 +48,7 @@ CARDS = [
     ("COVER",     "cover",      30, 200, None,                   2),
     ("PASS",      "pass",        0, 450, None,                   1),
     ("PICKUP",    "pickup",     20, 200, ("pickup_strokes_s1", 180), 2),
-    ("INTO_HAND", "into_hand",  20, 420, None,                   1),
+    ("INTO_HAND", "into_hand",  20, 420, None,                   2),   # 2, not 1: struck while the pickup (2) still sounds, a 1 was dropped (README "Sound")
     ("SWEEP",     "sweep",      20, 200, ("sweep_strokes_s1", 220), 2),
     ("PILE",      "pile",       20, 250, None,                   2),
 ]

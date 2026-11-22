@@ -1,0 +1,17 @@
+# Sound (README "Sound"): a transfer. The deal of single_moves.txt: Miami
+# leads the six of clubs, my six of spades passes it on. From the landing frame
+# (the mark): the lift at the move, the landing heard at the landing frame or
+# up to 2 frames after, and the transfer's slide 15 ticks after the landing
+# (exact; its "shfff" rises out of the landing's tail with no clean onset).
+@99  poke _sys_time 06 00
+@99  audio start
+@100 press A
++1   until _G+74 01
++0   until _fly_n 00
++1   press RIGHT
++5   press UP
++0   until _fly_n 01
++8   mark _fly_t0 12
++0   expect _G+76 01
++0   changes -13 20 _snd_starts -12 0 15
++0   onsets -1 6 12 0

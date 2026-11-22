@@ -1,0 +1,22 @@
+# Sound (README "Sound"): Miami's attack of one card, then my cover of it.
+# The deal of cover_now.txt: Miami leads the six of clubs, my jack of clubs
+# covers it at once. Each move, from its landing frame (the mark: sys_time at
+# take-off plus 12): the lift at the move, the landing on the first tick after
+# the landing's VBlank, heard at the landing frame or up to 2 frames after it,
+# never before.
+@99  poke _sys_time 06 00
+@99  audio start
+@100 press A
++1   until _fly_n 01
++8   mark _fly_t0 12
++0   changes -13 6 _snd_starts -12 0
++0   onsets -1 6 12 0
++1   press RIGHT
++4   press LEFT
++4   press LEFT
++4   press UP
++0   until _fly_n 01
++8   mark _fly_t0 12
++0   expect _G+56 17
++0   changes -13 6 _snd_starts -12 0
++0   onsets -1 6 12 0

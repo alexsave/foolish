@@ -23,5 +23,6 @@ try "backwards ignored" 's/while (r\[1\].t) r++;/;/'
 try "far ignored" 's/if ((flags \& SND_FAR) \&\& ch != 2)/if (0)/'
 try "yield leaves the tick running" '/^void snd_yield/,/^}/ s/snd_active = 0;/;/'
 try "yield counts no cut" 's/if (snd_busy()) snd_cut++;/;/'
+try "held strike not held" 's/if ((int16_t)(SND_CLOCK - S.q_at\[i\]) < 0) continue;/;/'
 echo "mutants: $pass caught, $fail not"
 [ $fail -eq 0 ]

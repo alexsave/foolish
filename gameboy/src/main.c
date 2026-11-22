@@ -171,7 +171,7 @@ static gd_game before;
 #define FLY_MAX    4
 #define FLY_FRAMES 12
 uint8_t fly_n, fly_t;
-static uint16_t fly_t0;         // sys_time at take-off: a flight runs on frames, not on loop passes
+uint16_t fly_t0;                // sys_time at take-off: a flight runs on frames, not on loop passes (gbrun reads it)
 static uint8_t fly_card[FLY_MAX];
 static int16_t fly_x0[FLY_MAX], fly_y0[FLY_MAX], fly_x1[FLY_MAX], fly_y1[FLY_MAX];
 // the first flying card's top left this frame, in screen pixels (gbrun reads it)
@@ -191,7 +191,7 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
     if (!gd_apply(&G, &R, seat, m)) { fly_n = 0; return 0; }
     note_new_cards(&before);
     fly_to(seat);
-    gd_snd_move(seat, &before, &G, m, fly_n ? FLY_FRAMES : 0);
+    gd_snd_move(seat, &before, &G, m, fly_n, (uint16_t)(fly_t0 + FLY_FRAMES));
     idle = 0;
     dirty = 1;
     // The website's afterMove leaves target mode after my own move. A bot move

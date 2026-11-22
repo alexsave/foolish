@@ -1,0 +1,20 @@
+# Sound (README "Sound"): a bout ending on the discard. The deal of done.txt:
+# I attack, Miami covers, I say DONE (DOWN). From the move (the mark: the
+# frame the table emptied): the good (CH2) and the sweep (CH4) on the first
+# tick after it, the pile 16 ticks later (exact); heard on the move's frame or
+# up to 2 frames after it.
+@99  poke _sys_time 1f 00
+@99  audio start
+@100 press A
++20  press RIGHT
++6   press UP
++0   until _G+56 20
++0   until _fly_n 00
++0   until _cur 00
+# once the cover's sound is over, so the end of the bout rises out of silence
++25  press DOWN
++0   until _G+74 00
++0   mark
++0   expect _G+80 02
++0   changes 0 25 _snd_starts 0 0 16
++0   onsets 0 1 12 0

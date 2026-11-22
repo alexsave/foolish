@@ -1,7 +1,8 @@
 // snd - see snd.h and DESIGN.md "The driver".
 #include "snd.h"
 
-// The working state: 53 bytes, every one counted (DESIGN.md "Memory").
+// The working state: 69 bytes, every one counted (DESIGN.md "Memory"; the
+// build added q_at, 16 bytes, for snd_strike_at).
 // On the Game Boy it is a member of the union over the search bots' scratch
 // (gd_botlib.c's candidate list), because no cue sounds while a bot thinks:
 // snd_yield() drops it before a think and snd_claim() starts it clean.
@@ -18,8 +19,9 @@ typedef struct {
     uint8_t q_cue[SND_QUEUE];       // 8
     uint8_t q_wait[SND_QUEUE];      // 8: ticks to go; 0 is a free slot
     uint8_t q_flags[SND_QUEUE];     // 8
+    uint16_t q_at[SND_QUEUE];       // 16: SND_HELD: not before the frame clock reads this
     uint8_t wave;                   // 1: the wave table in CH3's RAM, 0xFF none
-} snd_state;                        // 53
+} snd_state;                        // 69
 
 // SND_OVERLAY names a header that puts the state over other memory: it
 // defines SND_RAM (the bytes) and SND_RAM_BYTES (how many). The Game Boy's is
@@ -38,8 +40,13 @@ static snd_state S;
 // banks with interrupts on writes _current_bank before the bank register
 // (GBDK's SWITCH_ROM and its banked-call trampoline), so what the tick puts
 // back is always the bank the interrupted code wants.
+#ifdef __SDCC
+#include <gb/gb.h>          // sys_time, the frame clock
+#endif
+// a queued strike held for the frame clock (snd_strike_at), in q_flags
+#define SND_HELD 0x80u
+
 #ifdef SND_BANK
-#include <gb/gb.h>
 #define BANK_IN  const uint8_t save_bank = _current_bank; SWITCH_ROM(SND_BANK)
 #define BANK_OUT SWITCH_ROM(save_bank)
 #else
@@ -55,6 +62,9 @@ const unsigned snd_host_queue_at = offsetof(snd_state, q_cue), snd_host_queue_n 
 
 #ifndef __SDCC
 volatile uint8_t snd_owner, snd_refused, snd_cut, snd_starts, snd_active, snd_strikes;
+#endif
+#ifdef SND_HOST
+volatile uint16_t snd_host_clock;
 #endif
 
 static const uint8_t base[4] = { 0x10, 0x15, 0x1A, 0x1F };
@@ -136,7 +146,7 @@ void snd_init(void) {
     snd_active = 0;
 }
 
-void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
+static void queue(uint8_t cue, uint16_t at, uint8_t delay, uint8_t n, uint8_t flags) {
     uint8_t k, i;
     if (snd_owner != SND_OWNER_SOUND) { snd_refused++; return; }
     if (n > SND_MAX_HITS) n = SND_MAX_HITS;
@@ -149,12 +159,21 @@ void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
         if (i == SND_QUEUE) break;           // full: the later strikes of a beat are dropped
         S.q_cue[i] = cue;
         S.q_flags[i] = flags;
+        S.q_at[i] = at;
         S.q_wait[i] = d;
     }
     // after the queue holds the strike: set before it, a tick between the two
     // could find nothing due, clear the flag, and never look at the strike
     // (it would stay queued, and snd_busy() true, for ever)
     snd_active = 1;
+}
+
+void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags) {
+    queue(cue, 0, delay, n, (uint8_t)(flags & (uint8_t)~SND_HELD));
+}
+
+void snd_strike_at(uint8_t cue, uint16_t at, uint8_t delay, uint8_t n, uint8_t flags) {
+    queue(cue, at, delay, n, (uint8_t)(flags | SND_HELD));
 }
 
 void snd_tick(void) {
@@ -181,7 +200,13 @@ void snd_tick(void) {
     // the strikes coming due start after the voices stepped, so a new row
     // holds its whole t ticks
     for (i = 0; i < SND_QUEUE; i++) {
-        if (S.q_wait[i] && --S.q_wait[i] == 0) start(S.q_cue[i], S.q_flags[i]);
+        if (!S.q_wait[i]) continue;
+        if (S.q_flags[i] & SND_HELD) {
+            // held until the frame clock reaches q_at (16 bits, across its wrap)
+            if ((int16_t)(SND_CLOCK - S.q_at[i]) < 0) continue;
+            S.q_flags[i] &= (uint8_t)~SND_HELD;
+        }
+        if (--S.q_wait[i] == 0) start(S.q_cue[i], S.q_flags[i]);
     }
     if (!snd_busy()) snd_active = 0;
     BANK_OUT;

@@ -135,9 +135,9 @@ rom-mutants: $(B)/durak.gb $(B)/gbrun
 
 # ---- the headless runner ------------------------------------------------------------
 # libmgba and libpng: Homebrew's on the Mac by default; on Linux, for example
-# `make MGBA_CFLAGS= MGBA_LIBS="-lmgba -lpng"` with apt's libmgba-dev.
+# `make MGBA_CFLAGS= MGBA_LIBS="-lmgba -lpng -lm"` with apt's libmgba-dev.
 MGBA_CFLAGS ?= -I/opt/homebrew/include
-MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng -lm
 $(B)/gbrun: tools/gbrun.c | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DUSE_PNG $(MGBA_CFLAGS) -o $@ $< $(MGBA_LIBS)
 
