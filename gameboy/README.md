@@ -488,7 +488,35 @@ The driver's rules on the Mac (`make -C audio test`), each broken in a copy of `
 
 In the ROM (`tests/rom_mutants.txt`, `make rom-mutants`, every script against each):
 
-ROM_MUTANT_TABLE
+25 caught, 0 missed, on the Mac (the unmutated copy passes first):
+
+| | Mutant | Scripts that fail |
+| --- | --- | --- |
+| 1 | UP no longer passes at once with a pass-only card | `game_win.txt`, `single_moves.txt`, `sound_pass.txt` |
+| 2 | DOWN in target mode takes instead of backing out | `target_cover.txt` |
+| 3 | A held + RIGHT moves without selecting | `selection.txt` |
+| 4 | SELECT held + RIGHT does not rearrange | `rearrange.txt` |
+| 5 | target mode has no pass space | `cover_or_pass.txt` |
+| 6 | DOWN never picks up | `game_lose.txt`, `game_moscow_endgame.txt`, `game_moscow.txt`, `game_new_york.txt`, `game_seoul.txt` and 4 more |
+| 7 | CONTINUE deals a new game instead | `dashboard.txt`, `deal_resume.txt` |
+| 8 | presses latched with START are dropped | `dashboard.txt` |
+| 9 | buttons read on VBlank (none while the LCD is off) | 34 scripts (the first press, made during a screen load, is lost) |
+| 10 | the deal goes on while the dashboard is shown | `deal_resume.txt` |
+| 11 | CONTINUE drops the card in flight and the deal stops | `deal_resume.txt` |
+| 12 | START mid-deal gives up the rest of the deal | `deal_resume.txt` |
+| 13 | a landing's sound held a frame early | `sound_attack.txt`, `sound_cover.txt`, `sound_deal.txt`, `sound_lose.txt`, `sound_pass.txt` and 3 more |
+| 14 | seven strikes a beat, not the website's six | `sound_six.txt` |
+| 15 | the cards of a beat strike at once, not a stagger apart | `sound_attack.txt`, `sound_six.txt` |
+| 16 | a landing's sound not held for its frame | `game_win.txt`, `sound_attack.txt`, `sound_cover.txt`, `sound_deal.txt`, `sound_done.txt` and 5 more |
+| 17 | the sound tick leaves the tables' bank mapped | 34 scripts (the interrupted code runs on in bank 9) |
+| 18 | Seoul and Moscow think over a cue still sounding | `game_seoul.txt` |
+| 19 | Seoul and Moscow think without taking the sound's RAM | `game_moscow.txt` |
+| 20 | no OUT on the game's last move | `sound_lose.txt`, `sound_win.txt` |
+| 21 | the fireworks heard past their first 4 seconds | `sound_win.txt` |
+| 22 | the sound never takes its RAM back after a think | `game_moscow_endgame.txt`, `game_moscow.txt`, `game_seoul.txt`, `think_time_keys.txt`, `think_time.txt` |
+| 23 | the deal is silent | `sound_deal.txt`, `sound_done.txt`, `sound_six.txt`, `sound_take.txt`, `sound_win.txt` |
+| 24 | a dealt card's landing heard two frames late | `sound_deal.txt`, `sound_done.txt`, `sound_six.txt` |
+| 25 | the trump turned up sounds as a dealt card | `sound_deal.txt` |
 
 ## Not done (sound)
 
