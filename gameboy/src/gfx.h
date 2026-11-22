@@ -39,8 +39,11 @@ void gfx_rail(uint8_t row, const char *left, const char *right);
 void gfx_card(uint8_t x, uint8_t y, uint8_t card);
 void gfx_back(uint8_t x, uint8_t y);
 void gfx_pass_slot(uint8_t x, uint8_t y);
+// in bank 0 (gfx_map.c): bank 1 is full
 void gfx_flush(void);
 void gfx_flush_row(uint8_t y);                   // one row of the map, if it changed
+void gfx_catch_up(void);                         // a few rows the back map lacks, between redraws
+void gfx_map_init(void);                         // the two maps' LCDC bits and the VBlank flip
 
 // Sprites: a running allocator, reset every frame that redraws them.
 void gfx_spr_begin(void);

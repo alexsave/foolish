@@ -1,0 +1,16 @@
+# No torn frame (README "The screen in one piece"): a redraw that runs past a
+# frame boundary must never show half of the old board and half of the new.
+# take.txt's pickup: DOWN takes Miami's six of clubs, the table empties (the
+# card's left edge at (64, 50) goes from black to wool) and the foot rail
+# changes from MIAMI ATTACKS to YOU TAKE (the rail's start at (1, 140) goes
+# from white to dark grey). The table rows are high on the screen and the
+# rail is its last row, so a flush that runs into the picture shows the table
+# new over the rail old: that frame must never come.
+@99  poke _sys_time 06 00
+@100 press A
++1   until _G+74 01
++0   until _fly_n 00
++1   press DOWN
++0   notboth 30 64 50 1 1 140 0
++0   pixel 64 50 1
++0   pixel 1 140 2
