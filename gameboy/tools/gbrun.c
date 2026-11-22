@@ -52,7 +52,8 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define UNTIL_MAX 200000
+#define UNTIL_MAX 200000      // frames an until waits; GBRUN_UNTIL_MAX overrides (slow stress runs)
+static long until_max = UNTIL_MAX;
 
 enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_SAME, ST_ATLEAST, ST_END };
 
@@ -337,6 +338,7 @@ static int show(const char *what, int frame, const Step *s, int ok) {
 
 int main(int argc, char **argv) {
     mLogSetDefaultLogger(&logger);
+    if (getenv("GBRUN_UNTIL_MAX")) until_max = strtol(getenv("GBRUN_UNTIL_MAX"), 0, 10);
     if (argc < 3) { fprintf(stderr, "usage: gbrun ROM SCRIPT [SYMBOLS.noi]\n"); return 2; }
     FILE *sf = fopen(argv[2], "r");
     if (!sf) { perror(argv[2]); return 2; }
@@ -434,7 +436,7 @@ int main(int argc, char **argv) {
         } else if (s->kind == ST_UNTIL) {
             const uint32_t a = resolve(s->arg);
             int waited = 0;
-            while (!mem_is(a, s->bytes, s->len) && waited < UNTIL_MAX) { run_frame(); waited++; }
+            while (!mem_is(a, s->bytes, s->len) && waited < until_max) { run_frame(); waited++; }
             now = frame_next - 1;
             if (!show("until", now, s, mem_is(a, s->bytes, s->len))) { fail = 1; break; }
         }

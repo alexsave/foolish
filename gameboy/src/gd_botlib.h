@@ -20,6 +20,10 @@ extern gd_sim  gd_bot_sim[3];
 // "0.02 while the deck lives" (handwritten_prod reads only the face-up trump,
 // the arena handwritten the whole stock); else p = 0.65 + 0.35 x discard /
 // total cards, held to [0.5, 0.95].
+// The cart RAM bank the solver last selected (MBC1 0x4000, which reads back
+// nothing): written before the register, so an interrupt can put it back.
+extern volatile uint8_t gd_ram_bank;
+
 uint16_t gd_trump_threshold(uint8_t early, uint8_t discard, uint8_t total);
 
 #endif

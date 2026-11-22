@@ -4,7 +4,9 @@
 // the positions do not depend on it) folded into a CRC-16 with its
 // candidates, playouts, solver verdict and nodes. The clang build prints the
 // sum; the ROM build (banked like the game, with the cart's RAM) leaves it in
-// RAM, and they must agree.
+// RAM, and they must agree. On the Game Boy the live-think handler
+// (src/live.c) ticks all the while, on its own stack in the cart's RAM, the
+// way it does while Moscow thinks in the game: the decisions must not change.
 #include "../src/gd_rules.h"
 #include "../src/gd_rng.h"
 #include "../src/gd_bot_moscow.h"
@@ -14,6 +16,8 @@
 #else
 #include <gb/gb.h>
 #include "../src/gd_stack.h"
+#include "../src/input.h"
+#include "../src/live.h"
 #endif
 
 #define SC_SEED  0x4343u
@@ -73,11 +77,26 @@ int main(void) {
     return 0;
 }
 #else
+// The handler's stand-in: it counts its runs and works a buffer on its stack
+// (in cart RAM bank 3, while the solver may have any bank mapped).
+uint32_t sc_ticks;
+uint8_t sc_stack_sum;
+static void sc_live(void) {
+    uint8_t buf[64], i, sum = 0;
+    for (i = 0; i < sizeof buf; i++) buf[i] = (uint8_t)(i + sc_ticks);
+    for (i = 0; i < sizeof buf; i++) sum += buf[i];
+    sc_stack_sum = sum;
+    sc_ticks++;
+}
+
 void main(void) {
     *(volatile uint8_t *)0x0000u = 0x0Au;     // the cart's RAM, MBC1 4/32 mode
     *(volatile uint8_t *)0x6000u = 0x01u;
     CRITICAL { gd_stack_paint(); }     // the guard (gd_stack.h): the script reads gd_stack_free after the run
+    in_init();
+    live_start(sc_live);
     run();
+    live_stop();
     gd_stack_scan();
     sc_done = 1;
     for (;;) vsync();

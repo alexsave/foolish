@@ -269,6 +269,14 @@ void gfx_pass_slot(uint8_t x, uint8_t y) {
 }
 
 
+// One row, as gfx_flush does it (the thinking dots, from the interrupt).
+void gfx_flush_row(uint8_t y) {
+    const uint16_t o = (uint16_t)y * SCR_W;
+    if (shown_valid && !memcmp(map + o, shown + o, SCR_W)) return;
+    set_bkg_tiles(0, y, SCR_W, 1, map + o);
+    memcpy(shown + o, map + o, SCR_W);
+}
+
 void gfx_flush(void) {
     uint8_t y;
     for (y = 0; y < SCR_H; y++) {

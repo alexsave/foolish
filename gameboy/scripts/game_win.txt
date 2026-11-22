@@ -6,8 +6,8 @@
 # with Miami the fool, the win picture with the bot's name, then A: a rematch.
 # The game is real time (the bot moves 30 frames after the board settles), so a
 # change in how long the ROM takes to draw can change its course: if this ever
-# loses, re-pick the seed (seeds 1, 2, 4, 5, 6, 8, 10, 15 and 17 win today; 3, the seed before, stopped winning when the deal became animated, which moves every later input against the game).
-@99  poke _sys_time 04 00
+# loses, re-pick the seed (seeds 1, 2, 3, 5, 6, 14, 15, 18, 19 and 20 win today; 3 stopped winning when the deal became animated, which moves every later input against the game, and 4 when the live think screen joined it).
+@99  poke _sys_time 05 00
 @100 press A
 # The loop runs past the end of the game on purpose: the end picture ignores
 # LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.

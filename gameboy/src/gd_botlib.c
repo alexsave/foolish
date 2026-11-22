@@ -4,6 +4,7 @@
 gd_game gd_bot_world;
 gd_move gd_bot_cand[GD_BOT_CANDS];
 gd_sim  gd_bot_sim[3];
+volatile uint8_t gd_ram_bank;
 
 // ---- getTrumpAttackProbability, as a threshold on a 16-bit draw ----------------------------
 // p = 0.02 while the deck lives (`early`); else 0.65 + 0.35 * discard /
