@@ -13,6 +13,9 @@
 # the first time Moscow thinks, the rail says so while the screen holds still
 +0   until _bot_thinking 01
 +30  expect _bot_thinking 01
+# while it thinks, the sound's RAM is Moscow's and the sound is still (README "Sound")
++0   expect _snd_owner 01
++0   expect _snd_active 00
 +0   shot shots/moscow_02_thinks.png 3
 repeat 900
 +12  press RIGHT
@@ -23,6 +26,9 @@ repeat 900
 endrepeat
 +0   expect _G+79 02
 +0   expect _screen 02
+# no strike refused, and no think began over a cue still sounding (it waits)
++0   expect _snd_refused 00
++0   expect _snd_cut 00
 +0   shot shots/moscow_03_end.png 3
 +0   peek _bot_lines_max 4
 +0   peek _bot_lines_sum 4

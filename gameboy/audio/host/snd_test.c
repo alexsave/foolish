@@ -98,6 +98,17 @@ int main(void) {
       CHECK(ticks_to_start(10) == (int)SND_STAGGER, "the held beat's second card was not a stagger after the first"); }
     snd_host_clock = 0;
 
+    // the round robin: the same cue struck twice running plays two takes
+    // (PLACE's takes differ in their third row's volume, NR42)
+    {
+        uint8_t a, b;
+        snd_init();
+        snd_strike(SND_PLACE, 0, 1, 0); snd_tick(); snd_tick(); snd_tick(); a = last[0x21];
+        for (int t = 0; t < 40; t++) snd_tick();
+        snd_strike(SND_PLACE, 0, 1, 0); snd_tick(); snd_tick(); snd_tick(); b = last[0x21];
+        CHECK(a != b, "two strikes of a cue running played the same take (NR42 0x%02X both)", a);
+    }
+
     // backwards: the first row written is the take's last
     {
         const snd_row *r = snd_cues[SND_OUT].takes[0].v[1];

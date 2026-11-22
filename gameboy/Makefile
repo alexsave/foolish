@@ -215,6 +215,26 @@ PROF_OBJ = $(B)/prof/gb_prof.o $(filter-out $(B)/rom/gd_bot_seoul.o,$(ROM_OBJ)) 
 $(B)/durak_prof.gb: $(PROF_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(PROF_OBJ)
 
+# ---- the sound, timed on the Game Boy (README "Sound") ---------------------------------
+# The game ROM with input.c and main.c built with SND_PROF: the timer
+# interrupt's lateness and the sound tick's length (TIMA and DIV, 61 us steps),
+# the ticks counted, and how long each think waited for a cue to finish.
+$(B)/sndprof:
+	mkdir -p $@
+
+$(B)/sndprof/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/sndprof
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -DSND_PROF $(call bank_of,$*) -I$(B) -I$(ART) -Iaudio -c -o $@ $<
+
+SNDPROF_OBJ = $(patsubst $(B)/rom/input.o,$(B)/sndprof/input.o,$(patsubst $(B)/rom/main.o,$(B)/sndprof/main.o,$(ROM_OBJ)))
+$(B)/durak_sndprof.gb: $(SNDPROF_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(SNDPROF_OBJ) 2>&1 | tee $(B)/sndprof.link
+	! grep -qi overflow $(B)/sndprof.link
+
+sndprof: $(B)/durak_sndprof.gb $(B)/gbrun
+	sh tests/sndprof.sh
+
+.PHONY: sndprof
+
 # ---- Seoul's cross-compiler check (a banked ROM, laid out like the game) --------------
 $(B)/seoulcheck_host: tests/seoulcheck.c $(MATCH_SRC) $(CORE_H) | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DSEOULCHECK_HOST -I$(B) -o $@ tests/seoulcheck.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c

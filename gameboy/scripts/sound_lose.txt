@@ -1,0 +1,30 @@
+# Sound (README "Sound"): the end of a game I lose. A board set by hand
+# right after a deal against Miami: the stock gone, Miami leads with its last
+# card, the six of spades (I hold five hearts). From Miami's move (the mark:
+# the frame its flight took off, on sys_time):
+# the lift and OUT (exact), OUT heard within 2 frames; then, from the frame
+# the lose picture is lit, the fool's tune on the first tick after it, heard
+# within 2 frames, and no firework.
+@99  poke _sys_time 06 00
+@99  audio start
+@100 press A
++1   until _screen 01
++0   poke _G+0 00 3e 00 00 00 01 00 00 00 00 00 00 00 00 00 00
++0   poke _G+16 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+32 00 00 00 23 00 03 ff ff ff ff ff ff ff ff ff ff
++0   poke _G+48 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
++0   poke _G+64 ff ff ff ff ff ff ff ff ff ff 00 01 00 00 00 01
++0   poke _G+80 1e 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+96 00 00 00 00 00 00 00 00 00 00 00 00
++0   until _fly_n 01
++8   mark _fly_t0 0
++0   expect _G+79 02
++0   expect _G+78 02
++0   changes 0 14 _snd_starts 0 0 12
++0   onsets 0 1 12 0
++0   until _screen 02
++0   until 0xFF40 53
++0   until 0xFF40 d3
++0   mark
++0   changes 0 300 _snd_starts 0
++0   onsets 0 1 12 0

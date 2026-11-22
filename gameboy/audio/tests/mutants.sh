@@ -17,12 +17,13 @@ try "strike starts in the call" 's/const uint8_t d = (uint8_t)(delay + 1u + k \*
 try "no stagger" 's/delay + 1u + k \* SND_STAGGER/delay + 1u/'
 try "cap 7" 's/if (n > SND_MAX_HITS) n = SND_MAX_HITS;/if (n > 7) n = 7;/'
 try "no refusal" 's/if (snd_owner != SND_OWNER_SOUND) { snd_refused++; return; }/if (0) { snd_refused++; return; }/'
-try "yield keeps the voices" '/^void snd_yield/,/^}/ s/S.v\[i\].row = 0; silence(i);/silence(i);/'
+try "yield keeps the voices" '/^void snd_yield/,/^}/ s/S.row\[i\] = 0; silence(i);/silence(i);/'
 try "yield keeps the queue"  '/^void snd_yield/,/^}/ s/S.q_wait\[i\] = 0;/;/'
 try "backwards ignored" 's/while (r\[1\].t) r++;/;/'
-try "far ignored" 's/if ((flags \& SND_FAR) \&\& ch != 2)/if (0)/'
+try "far ignored" 's/if (flags \& SND_FAR) r2 =/if (0) r2 =/'
 try "yield leaves the tick running" '/^void snd_yield/,/^}/ s/snd_active = 0;/;/'
 try "yield counts no cut" 's/if (snd_busy()) snd_cut++;/;/'
-try "held strike not held" 's/if ((int16_t)(SND_CLOCK - S.q_at\[i\]) < 0) continue;/;/'
+try "held strike not held" 's/if ((int16_t)(SND_CLOCK - S.q_at\[i\]) < 0) { live = 1; continue; }/;/'
+try "round robin always take 0" 's/    t = \&c->takes\[k\];/    t = \&c->takes[0];/'
 echo "mutants: $pass caught, $fail not"
 [ $fail -eq 0 ]

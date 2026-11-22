@@ -37,7 +37,8 @@
 //                               with SYM, run on to the frame in which the
 //                               16-bit sys_time reaches the 16-bit value at SYM
 //                               plus K, and mark that one (a flight's landing:
-//                               mark _fly_t0 12)
+//                               mark _fly_t0 12); if it already has, the first
+//                               frame since audio start that had
 //   +N   onsets A B GATE T...   find the onsets in the sound kept from frame A
 //                               to frame B (from the mark; run on to B first):
 //                               a 1 ms window 6 dB over the quietest of the
@@ -51,9 +52,6 @@
 //                               once for each step it went up (a counter): fail
 //                               unless there is exactly one for each T, at
 //                               frame T or up to 2 frames later
-//   +N   never F SYM1 HEX1 SYM2 HEX2
-//                               run on F frames, failing if any of them ends
-//                               with byte SYM1 = HEX1 and byte SYM2 = HEX2
 //   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -80,7 +78,7 @@
 #define UNTIL_MAX 200000
 
 enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_END,
-       ST_AUDIO_START, ST_AUDIO_SAVE, ST_ONSETS, ST_NEVER, ST_CHANGES, ST_MARK };
+       ST_AUDIO_START, ST_AUDIO_SAVE, ST_ONSETS, ST_CHANGES, ST_MARK };
 
 typedef struct {
     int absolute, n;        // @n or +n
@@ -207,17 +205,6 @@ static void parse_line(int i) {
         if (s->len <= s->from) { fprintf(stderr, "script line %d: B must be after A\n", i + 1); exit(2); }
         p += used;
         while (s->nt < 16 && sscanf(p, " %lf%n", &v, &used) == 1) { s->t[s->nt++] = v; p += used; }
-    } else if (!strcmp(cmd, "never") && n >= 3) {
-        char sym1[64], sym2[64];
-        unsigned f, v1, v2;
-        s->kind = ST_NEVER;
-        if (sscanf(l, "%*s %u %63s %x %63s %x", &f, sym1, &v1, sym2, &v2) != 5 || !f) {
-            fprintf(stderr, "script line %d: never FRAMES SYM1 HEX1 SYM2 HEX2\n", i + 1);
-            exit(2);
-        }
-        s->len = (int)f;
-        snprintf(s->arg, sizeof s->arg, "%s %s", sym1, sym2);
-        s->bytes[0] = (unsigned char)v1; s->bytes[1] = (unsigned char)v2;
     } else if (!strcmp(cmd, "end")) {
         s->kind = ST_END;
     } else {
@@ -335,6 +322,8 @@ static int aud_on, aud_frame0;          // keeping since the start of frame aud_
 static size_t *aud_end;                 // aud_end[k]: samples kept by the end of frame aud_frame0 + k
 static size_t aud_nend, aud_capend;
 static uint8_t *aud_hram;               // HRAM at the end of each kept frame, 127 bytes a frame
+static uint16_t *aud_clock;             // sys_time at the end of each kept frame
+static uint32_t clock_at;               // sys_time's address
 
 static void audio_drain(void) {
     static int16_t l[4096], r[4096];
@@ -361,6 +350,9 @@ static void audio_drain(void) {
     aud_hram = realloc(aud_hram, aud_capend * 127);
     if (!aud_hram) { perror("realloc"); exit(2); }
     for (int k = 0; k < 127; k++) aud_hram[aud_nend * 127 + (size_t)k] = (uint8_t)core->busRead8(core, 0xFF80u + (uint32_t)k);
+    aud_clock = realloc(aud_clock, aud_capend * sizeof *aud_clock);
+    if (!aud_clock) { perror("realloc"); exit(2); }
+    aud_clock[aud_nend] = (uint16_t)((core->busRead8(core, clock_at) & 0xFF) | (core->busRead8(core, clock_at + 1) & 0xFF) << 8);
     aud_nend++;
 }
 
@@ -544,6 +536,7 @@ int main(int argc, char **argv) {
             printf("frame %d: pixelspr %s at (%d, %d) = %d%s\n", f, s->arg, x, y, got, pass ? "  ok" : "  FAILED");
             if (!pass) fail = 1;
         } else if (s->kind == ST_AUDIO_START) {
+            clock_at = resolve("_sys_time");
             aud_on = 1; aud_n = 0; aud_nend = 0; aud_frame0 = frame_next;
             printf("frame %d: audio start\n", f);
         } else if (s->kind == ST_AUDIO_SAVE) {
@@ -553,12 +546,23 @@ int main(int argc, char **argv) {
             if (s->nbytes) {
                 const uint32_t a = resolve(s->arg), st = resolve("_sys_time");
                 const unsigned want = ((core->busRead8(core, a) & 0xFF) | (core->busRead8(core, a + 1) & 0xFF) << 8) + (unsigned)s->len;
-                int waited = 0;
-                while ((((core->busRead8(core, st) & 0xFF) | (core->busRead8(core, st + 1) & 0xFF) << 8) - want) & 0x8000u) {
-                    run_frame();
-                    if (++waited > UNTIL_MAX) { printf("frame %d: mark %s+%d never came  FAILED\n", frame_next - 1, s->arg, s->len); fail = 1; break; }
+                const unsigned cur = (core->busRead8(core, st) & 0xFF) | (core->busRead8(core, st + 1) & 0xFF) << 8;
+                if (!((cur - want) & 0x8000u) && aud_on) {
+                    // already reached: the first kept frame that had reached it
+                    size_t k = aud_nend;
+                    while (k > 0 && !(((unsigned)aud_clock[k - 1] - want) & 0x8000u)) k--;
+                    if (k == 0) { fprintf(stderr, "script line %d: mark before audio start\n", s->line); return 2; }
+                    mark = aud_frame0 + (int)k;     // the steps after go on from now
+                    printf("frame %d: mark (frame %d)\n", now, mark);
+                    continue;
+                } else {
+                    int waited = 0;
+                    while ((((core->busRead8(core, st) & 0xFF) | (core->busRead8(core, st + 1) & 0xFF) << 8) - want) & 0x8000u) {
+                        run_frame();
+                        if (++waited > UNTIL_MAX) { printf("frame %d: mark %s+%d never came  FAILED\n", frame_next - 1, s->arg, s->len); fail = 1; break; }
+                    }
+                    now = frame_next - 1;
                 }
-                now = frame_next - 1;
             }
             mark = now;
             printf("frame %d: mark\n", mark);
@@ -594,18 +598,6 @@ int main(int argc, char **argv) {
             for (int k = 0; k < s->nt; k++) printf(" %g", s->t[k]);
             printf(ok ? "  ok\n" : "  FAILED\n");
             if (!ok) fail = 1;
-        } else if (s->kind == ST_NEVER) {
-            char sym1[64], sym2[64];
-            sscanf(s->arg, "%63s %63s", sym1, sym2);
-            const uint32_t a1 = resolve(sym1), a2 = resolve(sym2);
-            int bad = -1;
-            for (int k = 0; k < s->len; k++) {
-                if (k) run_frame();
-                if ((core->busRead8(core, a1) & 0xFF) == s->bytes[0] && (core->busRead8(core, a2) & 0xFF) == s->bytes[1]) { bad = frame_next - 1; break; }
-            }
-            now = frame_next - 1;
-            if (bad >= 0) { printf("frame %d: never %s = %02x and %s = %02x  FAILED\n", bad, sym1, s->bytes[0], sym2, s->bytes[1]); fail = 1; }
-            else printf("frame %d: never %s = %02x and %s = %02x over %d frames  ok\n", now, sym1, s->bytes[0], sym2, s->bytes[1], s->len);
         } else if (s->kind == ST_PEEK) {
             show("peek", f, s, -1);
         } else if (s->kind == ST_EXPECT) {
