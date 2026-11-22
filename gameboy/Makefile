@@ -24,7 +24,7 @@ CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_s
 # the input interrupt, then GBDK's library); each other file names its bank.
 # The sound driver (audio/snd.c) runs in the timer interrupt, so it is bank 0
 # code next to input.c; its tables and the game's cues are bank 9 (README "Sound").
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_stack.c src/gd_botlib.c src/input.c src/live.c audio/snd.c audio/snd_hram.s src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c audio/snd_tab.c src/gd_sound.c
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_stack.c src/gd_botlib.c src/input.c src/live.c src/gfx_map.c audio/snd.c audio/snd_hram.s src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c audio/snd_tab.c src/gd_sound.c
 ROM_BANK1 = main gfx
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu gd_play
@@ -95,6 +95,7 @@ $(B)/durak.gb: $(ROM_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(ROM_OBJ) 2>&1 \
 	    | tee $(B)/link.log
 	@! grep -i overflow $(B)/link.log || { rm -f $@; echo "the code overflowed its ROM area"; exit 1; }
+	@! grep -i "multiple write" $(B)/link.log || { rm -f $@; echo "two areas overlap (_HOME past _CODE's start?)"; exit 1; }
 	sh tests/home_in_bank0.sh $(B)/durak.map
 
 romusage: $(B)/durak.gb

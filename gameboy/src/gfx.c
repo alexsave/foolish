@@ -23,12 +23,11 @@
 // All the art lives in switchable ROM banks (the Makefile places each file;
 // BANK() reads where it went). The loaders that switch run from bank 0.
 
-static uint8_t map[SCR_H * SCR_W];
-// What VRAM holds, so a flush writes only the rows that changed: writing all
-// 360 tiles costs about 180 scanlines, more than a frame, and a redraw that
-// long drops short button presses.
-static uint8_t shown[SCR_H * SCR_W];
-static uint8_t shown_valid;
+// The map in RAM, what VRAM shows, and the flush: gfx_map.c (bank 0).
+#define map gfx_map
+#define shown_valid gfx_shown_valid
+extern uint8_t gfx_map[SCR_H * SCR_W];
+extern uint8_t gfx_shown_valid;
 // The tile of character code c is font_base + char_off(c) (see char_tile).
 static uint8_t font_base = ART_UI_BASE;
 
@@ -55,6 +54,7 @@ void gfx_load_table(void) {
 void gfx_init(void) {
     DISPLAY_OFF;
     LCDC_REG |= LCDCF_BG8000;
+    gfx_map_init();
     BGP_REG = ART_BGP;
     OBP0_REG = ART_OBP0;
     OBP1_REG = ART_OBP1;            // flying club cards only (gfx_spr_card)
@@ -268,25 +268,6 @@ void gfx_pass_slot(uint8_t x, uint8_t y) {
     put6(x, y, T_PASS_TL, T_PASS_TR, T_PASS_ML, T_PASS_MR, T_PASS_BL, T_PASS_BR);
 }
 
-
-// One row, as gfx_flush does it (the thinking dots, from the interrupt).
-void gfx_flush_row(uint8_t y) {
-    const uint16_t o = (uint16_t)y * SCR_W;
-    if (shown_valid && !memcmp(map + o, shown + o, SCR_W)) return;
-    set_bkg_tiles(0, y, SCR_W, 1, map + o);
-    memcpy(shown + o, map + o, SCR_W);
-}
-
-void gfx_flush(void) {
-    uint8_t y;
-    for (y = 0; y < SCR_H; y++) {
-        const uint16_t o = (uint16_t)y * SCR_W;
-        if (shown_valid && !memcmp(map + o, shown + o, SCR_W)) continue;
-        set_bkg_tiles(0, y, SCR_W, 1, map + o);
-        memcpy(shown + o, map + o, SCR_W);
-    }
-    shown_valid = 1;
-}
 
 // ---- sprites ---------------------------------------------------------------------------
 // A frame's sprites are built in a staging copy and handed to the shadow OAM

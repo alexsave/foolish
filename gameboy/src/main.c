@@ -1182,6 +1182,7 @@ void main(void) {
     for (;;) {
         vsync();
         in_update();
+        if (!dirty) gfx_catch_up();     // the back map catches up while nothing redraws
         if (screen == SCREEN_DASH) {
             dash_input();
             if (shown == SCREEN_DASH && !dirty) dash_sprites();
