@@ -114,20 +114,49 @@ def key_tune(pk, t0, t1):
     return sc[0][1] + '/' + sc[1][1], sc[0][0] - sc[1][0], cents
 
 
-def grid(m, sr, beats):
-    """A straight beat grid through the beat attacks: time of beat i = t0 + i * p, plus how well they sit on it."""
-    at = np.array([attack(m, sr, t, 0.06) for t, _ in beats])
-    i = np.arange(len(at))
-    use = np.ones(len(at), bool)
-    p, t0 = np.polyfit(i, at, 1)
-    for cut in (0.08, 0.05, 0.03, 0.02, 0.015, 0.012):
-        e = at - (t0 + i * p)
-        u = np.abs(e - np.median(e[use])) < cut
-        if u.sum() < max(6, len(at) // 5):
-            break
-        use = u
-        p, t0 = np.polyfit(i[use], at[use], 1)
-    return t0, p, np.median(np.abs(at - (t0 + i * p))), use.mean()
+def onset_env(m, sr, hop=48):
+    """Where energy starts: the rise over 8 ms of a 4 ms level, in three bands, every ms, lightly blurred."""
+    total = 0
+    for kind, hz, weight in (('low', 130, 1.5), ('bandpass', (200, 2000), 0.7), ('high', 3000, 1.0)):
+        y = signal.sosfilt(signal.butter(2, hz, kind, fs=sr, output='sos'), m).astype('float64')
+        c = np.cumsum(np.concatenate((np.zeros(4 * hop), y * y)))
+        e = db((c[4 * hop::hop] - c[:-4 * hop:hop][:len(c[4 * hop::hop])]) / (4 * hop) + 1e-6)
+        r = np.maximum(0, e[8:] - e[:-8])
+        floor = np.clip((e[8:] - np.percentile(e, 97) + 40) / 40, 0, 1)
+        total = total + weight * np.minimum(r, 18) * floor
+    from scipy.ndimage import gaussian_filter1d
+    # index k of the result is the instant (k + 4) ms: the middle of the rise
+    return gaussian_filter1d(total, 4.0)
+
+
+def comb(env, t0, p, i):
+    k = np.rint((t0 + i * p) * 1000 - 4).astype(int)
+    k = k[(k >= 0) & (k < len(env))]
+    return env[k].sum() / max(1, len(i))
+
+
+def grid(env, times, idx):
+    """A straight beat grid: t = t0 + i * p, started at the tracker's beats and moved onto the attacks."""
+    p, t0 = np.polyfit(idx, times, 1)
+    keep = np.abs(times - (t0 + idx * p)) < 0.04
+    if keep.sum() >= 4:
+        p, t0 = np.polyfit(idx[keep], times[keep], 1)
+    i = np.arange(idx.min(), idx.max() + 1)
+    c = i.mean()
+    mid = t0 + c * p
+    best = (-1e9, p, mid)
+    span = max(1, (i.max() - i.min()) / 2)
+    dp = min(0.004 * p, 0.04 / span)
+    for q in np.linspace(p - dp, p + dp, 33):
+        for d in np.arange(-0.045, 0.0451, 0.002):
+            v = comb(env, mid + d - c * q, q, i) * (1 - 0.1 * (abs(d) / 0.045) ** 2)
+            if v > best[0]:
+                best = (v, q, mid + d)
+    v, q, md = best
+    t0 = md - c * q
+    off = np.mean([comb(env, t0 + f * q, q, i) for f in (0.15, 0.3, 0.4, 0.6, 0.7, 0.85)])
+    # the blurred peak sits in the middle of the rise, and the attack starts some ms before it
+    return t0 - 0.004, q, v / (off + 1e-9), np.median(np.abs(times - (t0 + idx * q)))
 
 
 def clip(name, wav, beats, stems, out, png):
@@ -165,10 +194,19 @@ def clip(name, wav, beats, stems, out, png):
         d = np.diff([t for t, _ in b])
         lines.append('# beat median %.4f s = %.2f BPM, beats a bar %d' % (np.median(d), 60 / np.median(d), max(p for _, p in b)))
     if len(b) > 8 and dur < 135:
-        gt, gp, ge, gu = grid(m, sr, b)
-        g1 = gt + downs[0] * gp if downs else gt
-        lines.append('# grid %.3f BPM, beat %.5f s, first bar line %.3f, median miss %.0f ms, %d%% of beats on it' % (
-            60 / gp, gp, g1, ge * 1000, gu * 100))
+        env = onset_env(m, sr)
+        bt = np.array([t for t, _ in b])
+        bi = np.arange(len(b))
+        first = downs[0] if downs else 0
+        n = max(1, int(np.ceil((dur - 3) / 30)))
+        for part in [(0, dur)] + ([(dur * k / n, dur * (k + 1) / n) for k in range(n)] if n > 1 else [(0, dur / 2), (dur / 2, dur)]):
+            g = (bt >= part[0]) & (bt < part[1])
+            if g.sum() < 8:
+                continue
+            gt, gp, ratio, miss = grid(env, bt[g], bi[g])
+            k = first + 4 * np.ceil((bi[g][0] - first) / 4)
+            lines.append('# grid %3d-%3d: %.2f BPM beat %.5f bar line %.3f pulse x%.1f tracker miss %.0f ms' % (
+                part[0], part[1], 60 / gp, gp, gt + k * gp, ratio, miss * 1000))
     tail = []
     for t0 in np.arange(max(0, dur - 2.0), dur, 0.25):
         tail.append('%.1f' % mean(0, t0, t0 + 0.25))
