@@ -609,8 +609,11 @@ int main(int argc, char **argv) {
         fprintf(tf, "idx\tsong_start\tsong_end\tsrc_path\tsrc_in\tsrc_out\trate\tsemitones\tgain_db\trole\tjoin_in\n");
         for (int i = 0; i < g_nst; i++) {
             Stmt *c = ord[i]; Src *s = &g_src[c->src];
-            fprintf(tf, "%d\t%.6f\t%.6f\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\n", c->idx, (double)(c->startS - lo) / SR, (double)(c->endS - lo) / SR,
-                    s->from ? s->from : s->path, c->src_in, c->src_out, c->rate, c->vari ? 12 * log2(c->rate) : c->semi, c->lev_db + gdb, c->role ? c->role : "", c->join ? c->join : "");
+            // the trailing silence was trimmed, so a row that ran into it ends where the file ends, and so does its source span
+            long end = c->endS - lo; double sout = c->src_out;
+            if (end > n) { sout = c->src_in + (c->src_out - c->src_in) * (double)(n - (c->startS - lo)) / (double)(c->endS - c->startS); end = n; }
+            fprintf(tf, "%d\t%.6f\t%.6f\t%s\t%.6f\t%.6f\t%.6f\t%.6f\t%.6f\t%s\t%s\n", c->idx, (double)(c->startS - lo) / SR, (double)end / SR,
+                    s->from ? s->from : s->path, c->src_in, sout, c->rate, c->vari ? 12 * log2(c->rate) : c->semi, c->lev_db + gdb, c->role ? c->role : "", c->join ? c->join : "");
         }
         fclose(tf);
     }

@@ -279,6 +279,12 @@ def tails_stmt():
     la = rms_db(sg_(lay, 2.1, 2.6))
     return ok and la < -80, f'tail {wet:.1f} dB, DRY {dry:.1f}, off {off:.1f}, own WASH {own:.1f}, layer {la:.1f}'
 check('TAILS rings under every cut unless DRY', tails_stmt)
+def trimmed_end():
+    q = np.concatenate([pink(4, 0.1), np.zeros(3 * SR)]); src = W('silent_end', q)
+    R = run(['LEVEL off', f'SRC q {src}', 'CLIP q 0.5 7 PRE 0'], 'te'); n = len(R.y) / SR; r = R.rows[0]
+    e, si, so = float(r['song_end']), float(r['src_in']), float(r['src_out'])
+    return R.rc == 0 and e <= n + 1e-6 and abs((so - si) - (e - float(r['song_start']))) < 1e-3, f'file {n:.3f} s, row ends {e:.3f}, source span {so - si:.3f}'
+check('a row ends where the trimmed file ends', trimmed_end)
 def wash_level():
     R0 = run(['LEVEL off', f'SRC p {PN}', 'CLIP p 1 13 PRE 0'], 'w0'); R1 = run(['LEVEL off', f'SRC p {PN}', 'CLIP p 1 13 PRE 0 WASH 2:0:9'], 'w2')
     a, b = int(8 * SR), int(11 * SR); x = R1.y[a:b, 0]; r = R0.y[a:b, 0]; al = np.dot(x, r) / np.dot(r, r)
