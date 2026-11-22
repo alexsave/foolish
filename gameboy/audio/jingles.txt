@@ -1,0 +1,204 @@
+# The Game Boy's tunes: the website's placeholders (OUT, GOOD, HAND_OFF,
+# FINISH, FOOL) designed for the DMG, a motif a city for the win screen, and
+# the fireworks. Read by tools/gen_tab.py into snd_tab.c. Plain text.
+#
+# Times count in 1/241 s (24 is about 100 ms); gen_tab.py converts them to
+# the driver's ticks (60 a second), rounding the running time.
+#
+#   cue NAME PRIO              starts a cue (its takes follow)
+#   take                       starts the cue's next take
+#   ch N                       the channel the rows below are for (1 to 4)
+#   p NOTE T VOL ENV DUTY [SWEEP]   a pulse note (CH1, CH2): VOL 0-15, ENV the
+#                              envelope (-n falls one step every n/64 s, +n
+#                              rises, 0 holds), DUTY 0-3 (12.5/25/50/75%),
+#                              SWEEP CH1's NR10 in hex
+#   g NOTE T                   a glide: the pitch only, no retrigger
+#   w NOTE T LEVEL WAVE        a wave note (CH3): LEVEL 1 100%, 2 50%, 3 25%
+#   n POLY T VOL ENV           a noise burst (CH4): POLY is NR43 in hex
+#   r T                        a rest
+# NOTE is like C5, F#4, Bb3 (A4 = 440 Hz).
+
+# A seat going out: two soft notes stepping down (the website's D5, G4).
+cue OUT 2
+take
+ch 2
+p D5 22 7 -2 2
+p G4 60 7 -2 2
+
+# A good said: two small bright notes a fifth apart (C6, G6).
+cue GOOD 1
+take
+ch 2
+p C6 12 5 -1 1
+p G6 34 5 -1 1
+
+# The shield or the sword changing seats: air, then something set down.
+cue HAND_OFF 1
+take
+ch 4
+n 10 26 1 +2
+n 56 14 6 -1
+
+# One firework: the shell whistles up for its 8 frames (32 ticks, the
+# loop frame of main.c FW_FRAME), then the burst and its crackle.
+cue BURST 1
+take
+ch 1
+p E5 32 3 0 3 27
+r 1
+ch 4
+r 32
+n 01 4 12 0
+n 21 10 9 0
+n 31 40 6 -1
+n 13 30 2 -1
+
+# The game over, the viewer not the fool, a city with no motif of its own:
+# four notes up a major chord and the octave held.
+cue FINISH 3
+take
+ch 1
+p C5 18 9 0 2
+p E5 18 9 0 2
+p G5 18 9 0 2
+p C6 120 10 -3 2
+ch 3
+w C3 54 1 0
+w C3 120 1 0
+
+# Miami: the tresillo (3+3+2) in C major, bright, with a shaker.
+cue FINISH_MIAMI 3
+take
+ch 1
+p G5 90 9 -4 2
+p E5 90 9 -4 2
+p G5 60 9 -4 2
+p C6 180 10 -3 2
+ch 2
+p E5 90 4 -4 1
+p C5 90 4 -4 1
+p E5 60 4 -4 1
+p G5 180 5 -3 1
+ch 3
+w C3 90 1 0
+w G2 90 1 0
+w C3 60 1 0
+w C3 180 1 0
+ch 4
+n 00 4 3 -1
+r 26
+n 00 4 2 -1
+r 26
+n 00 4 3 -1
+r 26
+n 00 4 2 -1
+r 26
+n 00 4 3 -1
+r 26
+n 00 4 2 -1
+r 26
+n 00 4 3 -1
+r 26
+n 00 4 2 -1
+r 26
+
+# New York: a swung blues line over a walking bass, a brushed ride.
+cue FINISH_NEW_YORK 3
+take
+ch 1
+p C5 40 8 -6 2
+p Eb5 20 8 -6 2
+p E5 40 8 -6 2
+p G5 20 8 -6 2
+p A5 40 8 -6 2
+p G5 20 8 -6 2
+p C6 70 9 -4 2
+g B5 10
+g Bb5 40
+ch 3
+w C3 60 1 0
+w E3 60 1 0
+w G3 60 1 0
+w A3 60 1 0
+w Bb3 60 1 0
+ch 4
+n 01 6 2 -1
+r 34
+n 01 4 1 -1
+r 16
+n 01 6 2 -1
+r 34
+n 01 4 1 -1
+r 16
+n 01 6 2 -1
+r 34
+n 01 4 1 -1
+r 16
+
+# Seoul: pentatonic, a plucked string (short duty, quick decay) with its
+# echo a beat behind on the second pulse, over a drone.
+cue FINISH_SEOUL 3
+take
+ch 1
+p E5 30 11 -1 0
+p G5 30 11 -1 0
+p A5 60 11 -1 0
+p G5 30 11 -1 0
+p E5 30 11 -1 0
+p D5 30 11 -1 0
+p E5 120 11 -2 0
+ch 2
+r 15
+p E5 30 4 -1 0
+p G5 30 4 -1 0
+p A5 60 4 -1 0
+p G5 30 4 -1 0
+p E5 30 4 -1 0
+p D5 30 4 -1 0
+p E5 120 4 -2 0
+ch 3
+w A2 330 2 0
+
+# Moscow: A minor, bells: a long ringing pulse at the octave over a slow bass.
+cue FINISH_MOSCOW 3
+take
+ch 1
+p A5 48 11 -5 0
+p E5 48 10 -5 0
+p C5 48 10 -5 0
+p E5 48 10 -5 0
+p A4 200 11 -6 0
+ch 2
+p A4 48 5 -5 0
+p E4 48 4 -5 0
+p C4 48 4 -5 0
+p E4 48 4 -5 0
+p A3 200 6 -6 0
+ch 3
+w A2 96 1 0
+w E2 96 1 0
+w A2 200 1 0
+
+# The viewer is the fool: four notes down by semitones, the last one sagging,
+# a tuba under it, and the cap's bells shaken at the end.
+cue FOOL 3
+take
+ch 1
+p G4 40 9 -6 2
+p F#4 40 9 -6 2
+p F4 40 9 -6 2
+p E4 130 9 -7 2 3F
+ch 3
+w G2 40 1 0
+w F#2 40 1 0
+w F2 40 1 0
+w E2 130 1 0
+ch 4
+r 250
+n 0B 6 6 -1
+r 5
+n 0B 6 5 -1
+r 5
+n 0B 6 6 -1
+r 5
+n 0B 20 4 -1

@@ -8,6 +8,7 @@
 #include <gb/gb.h>
 #include "input.h"
 #include "live.h"
+#include "snd.h"
 
 static volatile uint8_t isr_now, isr_pressed;   // down now; went down since last taken
 static volatile int8_t isr_steps;               // LEFT/RIGHT presses and repeats not yet taken
@@ -28,7 +29,50 @@ static uint8_t live_idle;              // ticks since the think handler last ran
 static uint8_t now, pressed;
 static int8_t steps;
 
+// The profiling ROM (Makefile durak_sndprof.gb) times the interrupt: how late
+// it ran after the timer's overflow, and how long the sound tick took, in
+// steps of 256 clocks (61 us), read from TIMA (reloaded to IN_TMA at the
+// overflow, then counting every 1024 clocks) and DIV's low two bits (every
+// 256: both run off the one divider, so DIV's bits are 0 at each TIMA step).
+#define IN_TMA 188u            // 4096 Hz / (256 - 188) = 60.2 ticks a second
+#ifdef SND_PROF
+// lateness with the LCD on and off (a screen load), from the first second on
+// (the first tick after the timer starts is late by the boot)
+uint8_t  snd_prof_late_max, snd_prof_late_off_max, snd_prof_tick_max;
+uint16_t snd_prof_ticks, snd_prof_late_at;
+static uint8_t prof_t0;
+// TIMA and DIV are read apart, so DIV is read on both sides and the pair is
+// read again if it moved between (a TIMA step in between read as 4 too few)
+static uint8_t prof_now(void) {
+    uint8_t d0, t, d1;
+    do { d0 = DIV_REG; t = TIMA_REG; d1 = DIV_REG; } while (d0 != d1);
+    return (uint8_t)(((uint8_t)(t - IN_TMA) << 2) | (d1 & 3u));
+}
+// and how late the VBlank interrupt ran: the line it began on, past 144
+// (a VBlank held off past line 153 begins in the next frame's lines)
+uint8_t snd_prof_vbl_max;
+static void prof_vbl(void) {
+    const uint8_t ly = LY_REG, late = ly >= 144u ? (uint8_t)(ly - 144u) : (uint8_t)(ly + 10u);
+    if (late > snd_prof_vbl_max) snd_prof_vbl_max = late;
+}
+#define SND_PROF_ENTER() do { prof_t0 = prof_now(); } while (0)
+#define SND_PROF_LEAVE() do { const uint8_t d = (uint8_t)(prof_now() - prof_t0); if (d > snd_prof_tick_max) snd_prof_tick_max = d; } while (0)
+#else
+#define SND_PROF_ENTER()
+#define SND_PROF_LEAVE()
+#endif
+
 static void in_tick(void) {
+#ifdef SND_PROF
+    {
+        const uint8_t late = prof_now();
+        snd_prof_ticks++;
+        if (snd_prof_ticks > 60u) {
+            if (!(LCDC_REG & LCDCF_ON)) { if (late > snd_prof_late_off_max) snd_prof_late_off_max = late; }
+            else if (late > snd_prof_late_max) { snd_prof_late_max = late; snd_prof_late_at = sys_time; }
+        }
+    }
+#endif
     const uint8_t j = joypad();
     uint8_t live_due = 0;
     isr_pressed |= (uint8_t)(j & (uint8_t)~isr_now);
@@ -48,15 +92,40 @@ static void in_tick(void) {
     } else lr_frames = 0;
     if (j & J_A) { if (a_frames < 255) a_frames++; } else a_frames = 0;
     if (j & J_SELECT) { if (sel_frames < 255) sel_frames++; } else sel_frames = 0;
-    if (live_on && (live_due || isr_steps)) { live_idle = 0; live_tick(); }
+    // A think: the sound has given the bots' scratch up (main.c think_begin
+    // calls snd_yield before live_start, so snd_active is 0 and no strike is
+    // taken until snd_claim after live_stop), and only the screen's handler
+    // runs, last (README "What the sound merge must respect").
+    if (live_on) {
+        if (live_due || isr_steps) { live_idle = 0; live_tick(); }
+        return;
+    }
+    // The sound driver's 60 Hz (README "Sound"), with interrupts on again: a
+    // tick that starts a cue runs for up to 4 ms of SDCC's code, and held in
+    // here it held the VBlank interrupt off by up to 37 lines (the OAM copy
+    // then lands in the picture). Only VBlank can come in meanwhile (the next
+    // timer interrupt is a tick away, longer than any tick), and it touches
+    // nothing of the sound's; the pad is read above, before it. The tick maps
+    // its tables' ROM bank shadow first (SWITCH_ROM) and puts back the bank
+    // it found; it never touches the cart RAM bank or the stack.
+    // Nothing sounding: no call, no frame, no nesting.
+    if (!snd_active) return;
+    enable_interrupts();
+    SND_PROF_ENTER();
+    snd_tick();
+    SND_PROF_LEAVE();
 }
 
-// 4096 Hz / (256 - 188) = 60.2 ticks a second, one a frame near enough.
-#define IN_TMA 188u
 
 void in_init(void) {
+    // the sound's state and its HRAM bytes, before the timer that ticks it
+    // (here, so every ROM that starts the timer starts the sound too)
+    snd_init();
     CRITICAL {
         add_TIM(in_tick);
+#ifdef SND_PROF
+        add_VBL(prof_vbl);
+#endif
 #ifdef LIVE_STRESS
         TMA_REG = 252u;            // 4096 Hz / 4: 1024 ticks a second
         TIMA_REG = 252u;

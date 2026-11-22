@@ -1,0 +1,26 @@
+# Sound (README "Sound", "The deal"): the opening deal, heard card by card.
+# deal.txt's seed (0x1f). Each card strikes DEAL as it leaves the deck (the
+# frame its flight's first step is drawn: fly_t0) and DEAL_LAND held for its
+# landing (DEAL_FRAMES 8 later), started a frame early so its quiet lead-in
+# row plays in the flight's last frame and its impact in the landing frame;
+# the trump strikes TURN and FLIP the same way. The mark is a landing frame.
+@99  poke _sys_time 1f 00
+@99  audio start
+@100 press A
+# my first card (the second dealt): DEAL at take-off, DEAL_LAND a frame
+# before the landing, its impact heard in the landing frame or up to 2 after
++1   until _dl_seat 00
++0   until _fly_t 01
++0   mark _fly_t0 8
++0   changes -9 1 _snd_starts -8 -1
+# gate 9: DEAL_LAND is a soft thud, and its lead-in sits within 12 dB of it
++0   onsets -1 2 9 0
+# the trump turned up: TURN at take-off, FLIP a frame before it lands
++0   until _dl_seat 02
++4   mark _fly_t0 8
++0   changes -9 1 _snd_starts -8 -1
++0   onsets -1 2 12 0
+# the whole deal: two strikes a card, 13 cards, none refused
++0   until _fly_n 00
++20  expect _snd_starts 1a
++0   expect _snd_refused 00

@@ -11,9 +11,9 @@ LCC      = $(GBDK)/bin/lcc
 LCCFLAGS =
 HOSTCC  ?= clang
 # mGBA for the headless runner: Homebrew's paths by default (the Mac); on Linux
-# libmgba-dev is on the default paths, so MGBA_CFLAGS= MGBA_LIBS='-lmgba -lpng'.
+# libmgba-dev is on the default paths, so MGBA_CFLAGS= MGBA_LIBS='-lmgba -lpng -lm'.
 MGBA_CFLAGS ?= -I/opt/homebrew/include
-MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng
+MGBA_LIBS   ?= -L/opt/homebrew/lib -lmgba -lpng -lm
 B        = build
 FOOLISH  = ../foolish/c/src
 SHARED   = ../shared/c
@@ -22,14 +22,18 @@ CORE     = src/gd_rules.c src/gd_menu.c src/gd_play.c src/gd_rng.c src/gd_botlib
 CORE_H   = src/gd_bank.h src/gd_botlib.h src/gd_sim.h src/gd_simboard.h src/gd_solve.h $(B)/gd_simtab.h src/gd_rules.h src/gd_play.h src/gd_rng.h src/gd_bot_hw.h $(B)/gd_binom.h
 # Link order matters: the fixed bank 0 fills first (the rules core, the RNG,
 # the input interrupt, then GBDK's library); each other file names its bank.
-ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_stack.c src/gd_botlib.c src/input.c src/live.c src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c
+# The sound driver (audio/snd.c) runs in the timer interrupt, so it is bank 0
+# code next to input.c; its tables and the game's cues are bank 9 (README "Sound").
+ROM_SRC  = src/gd_rules.c src/gd_rng.c src/gd_stack.c src/gd_botlib.c src/input.c src/live.c audio/snd.c audio/snd_hram.s src/main.c src/gfx.c src/gd_play.c src/gd_menu.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c src/gd_bot_moscow.c src/gd_solve.c audio/snd_tab.c src/gd_sound.c
 ROM_BANK1 = main gfx
 ROM_BANK4 = gd_bot_hw
 ROM_BANK5 = gd_menu gd_play
 ROM_BANK6 = gd_sim
 ROM_BANK7 = gd_bot_seoul gd_bot_moscow
 ROM_BANK8 = gd_solve
-ROM_H    = src/gfx.h src/input.h src/gd_stack.h src/live.h $(CORE_H) src/gd_bot_seoul.h src/gd_bot_moscow.h $(wildcard art/gbdk/*.h)
+ROM_BANK9 = snd_tab gd_sound
+SND_BANK  = 9
+ROM_H    = src/gfx.h src/input.h src/gd_stack.h src/live.h $(CORE_H) src/gd_bot_seoul.h src/gd_bot_moscow.h src/gd_sound.h audio/snd.h $(wildcard art/gbdk/*.h)
 ART      = art/gbdk
 # All the art (the table's tile banks, 2.3 KB, and the four full-screen
 # pictures, 9.5 KB) goes to ROM bank 2 of an MBC1 cart (gfx.c ART_BANK): with
@@ -43,7 +47,7 @@ ART      = art/gbdk
 # with BANK(), so this list is the one place that decides it.
 ART_BANK2 = cards ui sprites pile lacquer paper plane fireworks dashboard dashboard_new lose
 ART_BANK3 = win_miami win_new_york win_seoul win_moscow
-ROM_OBJ   = $(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC))) \
+ROM_OBJ   = $(patsubst %.s,$(B)/rom/%.o,$(patsubst %.c,$(B)/rom/%.o,$(notdir $(ROM_SRC)))) \
             $(patsubst %,$(B)/rom/%.o,$(ART_BANK2) $(ART_BANK3))
 
 HOSTFLAGS = -std=c11 -O2 -g -Wall -Wextra -Wno-unused-parameter
@@ -72,9 +76,17 @@ $(B)/rom:
 	mkdir -p $@
 
 $(B)/rom/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/rom
-	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) -I$(B) -I$(ART) -c -o $@ $<
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) -I$(B) -I$(ART) -Iaudio -c -o $@ $<
 
-bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5,$(if $(filter $1,$(ROM_BANK6)),-Wf-bo6,$(if $(filter $1,$(ROM_BANK7)),-Wf-bo7,$(if $(filter $1,$(ROM_BANK8)),-Wf-bo8))))))
+# the driver: its state over the bots' candidate list, its tables in SND_BANK
+SND_DEFS = -DSND_BANK=$(SND_BANK) '-DSND_OVERLAY=<gd_botlib.h>'
+$(B)/rom/%.o: audio/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/rom
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD $(call bank_of,$*) $(SND_DEFS) -I$(B) -Isrc -Iaudio -c -o $@ $<
+
+$(B)/rom/%.o: audio/%.s Makefile | $(B)/rom
+	$(LCC) $(LCCFLAGS) -c -o $@ $<
+
+bank_of = $(if $(filter $1,$(ROM_BANK1)),-Wf-bo1,$(if $(filter $1,$(ROM_BANK4)),-Wf-bo4,$(if $(filter $1,$(ROM_BANK5)),-Wf-bo5,$(if $(filter $1,$(ROM_BANK6)),-Wf-bo6,$(if $(filter $1,$(ROM_BANK7)),-Wf-bo7,$(if $(filter $1,$(ROM_BANK8)),-Wf-bo8,$(if $(filter $1,$(ROM_BANK9)),-Wf-bo9)))))))
 
 $(B)/rom/%.o: $(ART)/%.c Makefile | $(B)/rom
 	$(LCC) $(LCCFLAGS) -Wf-bo$(if $(filter $*,$(ART_BANK3)),3,2) -c -o $@ $<
@@ -206,6 +218,26 @@ PROF_OBJ = $(B)/prof/gb_prof.o $(filter-out $(B)/rom/gd_bot_seoul.o,$(ROM_OBJ)) 
 $(B)/durak_prof.gb: $(PROF_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(PROF_OBJ)
 
+# ---- the sound, timed on the Game Boy (README "Sound") ---------------------------------
+# The game ROM with input.c and main.c built with SND_PROF: the timer
+# interrupt's lateness and the sound tick's length (TIMA and DIV, 61 us steps),
+# the ticks counted, and how long each think waited for a cue to finish.
+$(B)/sndprof:
+	mkdir -p $@
+
+$(B)/sndprof/%.o: src/%.c $(ROM_H) $(B)/gd_binom.h Makefile | $(B)/sndprof
+	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -DSND_PROF $(call bank_of,$*) -I$(B) -I$(ART) -Iaudio -c -o $@ $<
+
+SNDPROF_OBJ = $(patsubst $(B)/rom/input.o,$(B)/sndprof/input.o,$(patsubst $(B)/rom/main.o,$(B)/sndprof/main.o,$(ROM_OBJ)))
+$(B)/durak_sndprof.gb: $(SNDPROF_OBJ)
+	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -Wm-yn"DURAK" -o $@ $(SNDPROF_OBJ) 2>&1 | tee $(B)/sndprof.link
+	! grep -qi overflow $(B)/sndprof.link
+
+sndprof: $(B)/durak_sndprof.gb $(B)/gbrun
+	sh tests/sndprof.sh
+
+.PHONY: sndprof
+
 # ---- Seoul's cross-compiler check (a banked ROM, laid out like the game) --------------
 $(B)/seoulcheck_host: tests/seoulcheck.c $(MATCH_SRC) $(CORE_H) | $(B)
 	$(HOSTCC) $(HOSTFLAGS) -DSEOULCHECK_HOST -I$(B) -o $@ tests/seoulcheck.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_bot_seoul.c
@@ -257,8 +289,10 @@ $(B)/moscowcheck_host: tests/moscowcheck.c $(MATCH_SRC) $(CORE_H) src/gd_bot_mos
 $(B)/rom/moscowcheck.o: tests/moscowcheck.c $(CORE_H) src/gd_bot_moscow.h src/input.h src/live.h | $(B)/rom
 	$(LCC) $(LCCFLAGS) -DGD_BANKED_BUILD -I$(B) -c -o $@ $<
 
-# input.o and live.o: the live-think handler ticks through the whole check.
-MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_stack.o $(B)/rom/gd_botlib.o $(B)/rom/input.o $(B)/rom/live.o $(B)/rom/moscowcheck.o \
+# input.o and live.o: the live-think handler ticks through the whole check;
+# the sound driver because input.c ticks it (silent here: nothing strikes).
+SND_OBJ = $(B)/rom/snd.o $(B)/rom/snd_hram.o $(B)/rom/snd_tab.o
+MC_OBJ = $(B)/rom/gd_rules.o $(B)/rom/gd_rng.o $(B)/rom/gd_stack.o $(B)/rom/gd_botlib.o $(B)/rom/input.o $(B)/rom/live.o $(SND_OBJ) $(B)/rom/moscowcheck.o \
          $(B)/rom/gd_menu.o $(B)/rom/gd_bot_hw.o $(B)/rom/gd_sim.o $(B)/rom/gd_solve.o $(B)/rom/gd_bot_moscow.o
 $(B)/moscowcheck.gb: $(MC_OBJ)
 	$(LCC) -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $@ $(MC_OBJ) 2>&1 | tee $(B)/moscowcheck.link

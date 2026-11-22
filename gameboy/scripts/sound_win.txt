@@ -1,0 +1,42 @@
+# Sound (README "Sound"): the end of a game I win. A board set by hand right
+# after a deal against Miami: the stock gone, I lead with my last card, the
+# six of spades (Miami holds five hearts). From my move (the mark): the lift
+# and OUT on the first tick after it (exact), OUT's two notes heard within 2
+# frames; the card's landing (its lead-in on the first tick of the flight's
+# last frame). Then, from the frame the win picture is lit
+# (END_DELAY later, the LCD back on after the load): Miami's motif on the
+# first tick after it, heard within 2 frames; a firework's whistle each time
+# a shell rises (every 32 frames: Miami has one shell a loop) for the first
+# 4 seconds (240 frames) and none after.
+@99  poke _sys_time 06 00
+@99  audio start
+@100 press A
++1   until _screen 01
+# the deal lands first (README "The deal")
++0   until _dl_seat 02
++0   until _fly_n 00
++0   poke _G+0 01 00 00 00 00 00 3e 00 00 00 00 00 00 00 00 00
++0   poke _G+16 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+32 00 00 00 23 00 03 ff ff ff ff ff ff ff ff ff ff
++0   poke _G+48 ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
++0   poke _G+64 ff ff ff ff ff ff ff ff ff ff 00 00 01 00 00 01
++0   poke _G+80 1e 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+96 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _disp 00
++0   poke _disp_n 01
++0   poke _cur 00
++0   poke _selm 00 00 00 00 00
++1   press UP
++0   until _G+79 02
++0   mark
++0   expect _G+78 01
++0   changes 0 14 _snd_starts 0 0 11
++0   onsets 0 1 12 0
++0   until _screen 02
++0   until 0xFF40 53
++0   until 0xFF40 d3
++0   mark
+# (each a tick after its frame: the shell is drawn late in the loop, and
+# since the deal's two seconds the tick's phase puts the first one in frame 1)
++0   changes 0 300 _snd_starts 1 33 65 97 129 161 193 225
++0   onsets 0 1 12 0

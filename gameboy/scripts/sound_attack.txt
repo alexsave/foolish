@@ -1,0 +1,17 @@
+# Sound (README "Sound"): an attack of two cards, heard in mGBA's audio.
+# Miami opens with two eights (target_cover.txt's deal). The mark is the
+# landing frame: the frame in which sys_time reaches the flight's take-off
+# (fly_t0) plus its 12 frames.
+# Strikes (snd_starts): the lift at the move (12 frames before), then the two
+# landings a stagger (3 ticks) apart, the first on the first tick of the
+# flight's last frame (its quiet lead-in row, then its impact a tick later).
+# Audio: the two impacts at the landing frame or up to 2 frames after it,
+# never before (the lift's slide and the lead-in are under the gate), 3
+# frames apart.
+@99  poke _sys_time 01 00
+@99  audio start
+@100 press A
++1   until _fly_n 02
++8   mark _fly_t0 12
++0   changes -13 6 _snd_starts -12 -1 2
++0   onsets -1 5 12 0 3

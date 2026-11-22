@@ -1,0 +1,31 @@
+# Sound (README "Sound"): eight cards land at once and strike six times (the
+# website's cap, SND_MAX_HITS), a stagger apart. A board is set by hand right
+# after the deal against New York: four battles of spades 6..9 covered by
+# 10..K, New York (attacking) holding the 6..9 of hearts and clubs, I hold
+# eight diamonds; New York throws in the most non-trump cards it can, all
+# eight. Four fly, the rest land at once; the landing strikes six times, 3
+# ticks apart, the first on the first tick of the flight's last frame (its
+# lead-in), each impact a tick after its strike: from the landing frame (the
+# mark) on.
+@99  poke _sys_time 07 00
+@99  audio start
+@100 press DOWN
++8   press A
++1   until _screen 01
+# the deal lands first (README "The deal")
++0   until _dl_seat 02
++0   until _fly_n 00
++0   expect _bot_city 01
++0   poke _G+0 00 00 00 f8 07 00 1e 3c 00 00 08 0d 0e 0f 10 11
++0   poke _G+16 16 17 18 19 1a 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+32 00 00 0b 23 01 03 00 01 02 03 ff ff ff ff ff ff
++0   poke _G+48 ff ff ff ff ff ff ff ff 04 05 06 07 ff ff ff ff
++0   poke _G+64 ff ff ff ff ff ff ff ff ff ff 04 01 00 00 00 01
++0   poke _G+80 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
++0   poke _G+96 00 00 00 00 00 00 00 00 00 00 00 00
++0   until _fly_n 04
+
++8   mark _fly_t0 12
++0   expect _G+74 0c
++0   changes -13 20 _snd_starts -12 -1 2 5 8 11 14
++0   onsets -1 18 12 0 3 6 9 12 15

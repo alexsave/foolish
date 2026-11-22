@@ -9,13 +9,13 @@ LCC=${LCC:-$GBDK/bin/lcc}
 S=build/stress
 mkdir -p $S
 set -e
-$LCC -DGD_BANKED_BUILD -DLIVE_STRESS -Ibuild -c -o $S/input.o src/input.c
+$LCC -DGD_BANKED_BUILD -DLIVE_STRESS -Ibuild -Iaudio -c -o $S/input.o src/input.c
 $LCC -DGD_BANKED_BUILD -DLIVE_STRESS -Ibuild -c -o $S/moscowcheck.o tests/moscowcheck.c
 # solvecheck on its first game only (-DSC_GAMES=1, the clang side too): under
 # the stress it runs about 11 times slower, past gbrun's wait for three games
 $LCC -DGD_BANKED_BUILD -DLIVE_STRESS -DSC_GAMES=1 -Ibuild -c -o $S/solvecheck.o tests/solvecheck.c
 ${HOSTCC:-clang} -std=c11 -O2 -DSOLVECHECK_HOST -DSC_GAMES=1 -Ibuild -o $S/solvecheck_host tests/solvecheck.c src/gd_rules.c src/gd_menu.c src/gd_rng.c src/gd_botlib.c src/gd_bot_hw.c src/gd_sim.c src/gd_solve.c
-common="build/rom/gd_rules.o build/rom/gd_rng.o build/rom/gd_stack.o build/rom/gd_botlib.o $S/input.o build/rom/live.o build/rom/gd_menu.o build/rom/gd_bot_hw.o build/rom/gd_sim.o build/rom/gd_solve.o"
+common="build/rom/gd_rules.o build/rom/gd_rng.o build/rom/gd_stack.o build/rom/gd_botlib.o $S/input.o build/rom/live.o build/rom/snd.o build/rom/snd_hram.o build/rom/snd_tab.o build/rom/gd_menu.o build/rom/gd_bot_hw.o build/rom/gd_sim.o build/rom/gd_solve.o"
 $LCC -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $S/moscowcheck.gb $common $S/moscowcheck.o build/rom/gd_bot_moscow.o
 $LCC -Wl-m -Wl-j -Wl-b_HOME=0x0200 -Wl-b_CODE=0x0800 -Wm-yt0x02 -Wm-ya4 -Wm-yo16 -o $S/solvecheck.gb $common $S/solvecheck.o
 set +e

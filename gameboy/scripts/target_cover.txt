@@ -36,6 +36,9 @@
 +0   expect _tgt_i 01
 +0   shot shots/12_target_cover_second.png 3
 # down cancels back to the cards; up again aims at the first eight, up covers it
+# (6 frames: the press can land in the redraw after Miami's silent good, which
+# the sound's tick, about 1 ms a frame while the attack's cues play, makes a
+# frame later)
 +1   press DOWN
 +1   until _in_target 00
 +1   press UP

@@ -19,6 +19,9 @@ repeat 400
 endrepeat
 +0   expect _G+79 02
 +0   expect _screen 02
+# no strike refused, and no think began over a cue still sounding (README "Sound")
++0   expect _snd_refused 00
++0   expect _snd_cut 00
 +0   shot shots/seoul_02_end.png 3
 +0   peek _bot_lines_max 4
 +0   peek _bot_lines_sum 4

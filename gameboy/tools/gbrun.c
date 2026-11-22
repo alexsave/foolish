@@ -33,6 +33,29 @@
 //                               symbol is at least MIN (a headroom, a count)
 //   +N   same PATH              fail unless every screen pixel is the shade of the
 //                               same pixel of the PNG at PATH (a shot, any SCALE)
+//   +N   audio start            start keeping the sound (mGBA's audio, 48 kHz,
+//                               left and right mixed to mono) and HRAM as it
+//                               was at the end of every frame
+//   +N   audio save PATH        write the sound kept as a 16-bit WAV
+//   +N   mark [SYM K]           this step's frame is the mark (frame 0 below);
+//                               with SYM, run on to the frame in which the
+//                               16-bit sys_time reaches the 16-bit value at SYM
+//                               plus K, and mark that one (a flight's landing:
+//                               mark _fly_t0 12); if it already has, the first
+//                               frame since audio start that had
+//   +N   onsets A B GATE T...   find the onsets in the sound kept from frame A
+//                               to frame B (from the mark; run on to B first):
+//                               a 1 ms window 6 dB over the quietest of the
+//                               20 ms before it, within GATE dB of the loudest
+//                               window from A to B, over -60 dBFS, 40 ms after
+//                               the last; fail unless there is exactly one for
+//                               each T, at frame T or up to 2 frames later (a
+//                               sound may trail its picture, never lead it)
+//   +N   changes A B SYM T...   the frames from A to B (from the mark, B
+//                               included) in which the HRAM byte SYM went up,
+//                               once for each step it went up (a counter): fail
+//                               unless there is exactly one for each T, at
+//                               frame T or up to 2 frames later
 //   +N   end                    stop
 //   repeat COUNT ... endrepeat  the lines between, COUNT times (may nest)
 //
@@ -40,13 +63,17 @@
 // step but press acts after its frame ran; a press holds its keys while its
 // first frame runs. So a press and a check on the same frame see the press.
 // A symbol is looked up in the .noi file the linker writes ("DEF _name 0xADDR").
+#define _DEFAULT_SOURCE 1      // strdup and PATH_MAX (libmgba's headers) under -std=c11 on glibc
+#include <limits.h>
 #include <mgba/core/core.h>
+#include <mgba/core/blip_buf.h>
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
 #include <mgba-util/png-io.h>
 #include <mgba-util/vfs.h>
 
 #include <fcntl.h>
+#include <math.h>
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -55,7 +82,8 @@
 #define UNTIL_MAX 200000      // frames an until waits; GBRUN_UNTIL_MAX overrides (slow stress runs)
 static long until_max = UNTIL_MAX;
 
-enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_ATLEAST, ST_SAME, ST_END };
+enum { ST_PRESS, ST_SHOT, ST_PEEK, ST_EXPECT, ST_POKE, ST_UNTIL, ST_PIXEL, ST_PIXSPR, ST_NOTBOTH, ST_ATLEAST, ST_SAME, ST_END,
+       ST_AUDIO_START, ST_AUDIO_SAVE, ST_ONSETS, ST_CHANGES, ST_MARK };
 
 typedef struct {
     int absolute, n;        // @n or +n
@@ -64,6 +92,10 @@ typedef struct {
     char arg[256];
     unsigned char bytes[16];
     int nbytes;
+    double t[16];           // onsets: the frames expected
+    int nt;
+    double gate;            // onsets: dB under the loudest window that still counts
+    int from;               // onsets, changes: the first frame, from the mark (len: the last)
 } Step;
 
 static Step *steps;
@@ -169,6 +201,28 @@ static void parse_line(int i) {
     } else if (!strcmp(cmd, "same") && n >= 2) {
         s->kind = ST_SAME;
         snprintf(s->arg, sizeof s->arg, "%s", a1);
+    } else if (!strcmp(cmd, "audio") && n >= 2 && !strcmp(a1, "start")) {
+        s->kind = ST_AUDIO_START;
+    } else if (!strcmp(cmd, "audio") && n >= 3 && !strcmp(a1, "save")) {
+        s->kind = ST_AUDIO_SAVE;
+        snprintf(s->arg, sizeof s->arg, "%s", a2);
+    } else if (!strcmp(cmd, "mark")) {
+        s->kind = ST_MARK;
+        if (n >= 3) { snprintf(s->arg, sizeof s->arg, "%s", a1); s->len = atoi(a2); s->nbytes = 1; }
+    } else if ((!strcmp(cmd, "onsets") || !strcmp(cmd, "changes")) && n >= 3) {
+        const int on = !strcmp(cmd, "onsets");
+        char *p = strstr(l, cmd) + strlen(cmd);
+        int used;
+        double v;
+        s->kind = on ? ST_ONSETS : ST_CHANGES;
+        if (on ? sscanf(p, " %d %d %lf%n", &s->from, &s->len, &s->gate, &used) != 3
+               : sscanf(p, " %d %d %255s%n", &s->from, &s->len, s->arg, &used) != 3) {
+            fprintf(stderr, "script line %d: %s\n", i + 1, on ? "onsets A B GATE T..." : "changes A B SYM T...");
+            exit(2);
+        }
+        if (s->len <= s->from) { fprintf(stderr, "script line %d: B must be after A\n", i + 1); exit(2); }
+        p += used;
+        while (s->nt < 16 && sscanf(p, " %lf%n", &v, &used) == 1) { s->t[s->nt++] = v; p += used; }
     } else if (!strcmp(cmd, "end")) {
         s->kind = ST_END;
     } else {
@@ -273,12 +327,113 @@ static int frame_next;                  // the next frame to run
 static struct { int from, to; uint32_t keys; } held[256];
 static int nheld;
 
+// ---- the sound ------------------------------------------------------------------------
+// mGBA mixes the APU into two blip buffers (left, right); every frame they are
+// drained, so they never fill, and while keeping, the samples are kept (mono)
+// with the sample count at the end of each frame, which turns a sample into a
+// frame.
+#define AUD_RATE 48000
+static struct blip_t *aud_l, *aud_r;
+static int16_t *aud;
+static size_t aud_n, aud_cap;
+static int aud_on, aud_frame0;          // keeping since the start of frame aud_frame0
+static size_t *aud_end;                 // aud_end[k]: samples kept by the end of frame aud_frame0 + k
+static size_t aud_nend, aud_capend;
+static uint8_t *aud_hram;               // HRAM at the end of each kept frame, 127 bytes a frame
+static uint16_t *aud_clock;             // sys_time at the end of each kept frame
+static uint32_t clock_at;               // sys_time's address
+
+static void audio_drain(void) {
+    static int16_t l[4096], r[4096];
+    int avail;
+    while ((avail = blip_samples_avail(aud_l)) > 0) {
+        if (avail > 4096) avail = 4096;
+        const int nl = blip_read_samples(aud_l, l, avail, 0);
+        const int nr = blip_read_samples(aud_r, r, nl, 0);
+        if (!aud_on) continue;
+        if (aud_n + (size_t)nl > aud_cap) {
+            aud_cap = (aud_cap ? aud_cap * 2 : (size_t)AUD_RATE * 16) + (size_t)nl;
+            aud = realloc(aud, aud_cap * sizeof *aud);
+            if (!aud) { perror("realloc"); exit(2); }
+        }
+        for (int k = 0; k < nl; k++) aud[aud_n++] = (int16_t)(((int)l[k] + (k < nr ? r[k] : 0)) / 2);
+    }
+    if (!aud_on) return;
+    if (aud_nend == aud_capend) {
+        aud_capend = aud_capend ? aud_capend * 2 : 4096;
+        aud_end = realloc(aud_end, aud_capend * sizeof *aud_end);
+        if (!aud_end) { perror("realloc"); exit(2); }
+    }
+    aud_end[aud_nend] = aud_n;
+    aud_hram = realloc(aud_hram, aud_capend * 127);
+    if (!aud_hram) { perror("realloc"); exit(2); }
+    for (int k = 0; k < 127; k++) aud_hram[aud_nend * 127 + (size_t)k] = (uint8_t)core->busRead8(core, 0xFF80u + (uint32_t)k);
+    aud_clock = realloc(aud_clock, aud_capend * sizeof *aud_clock);
+    if (!aud_clock) { perror("realloc"); exit(2); }
+    aud_clock[aud_nend] = (uint16_t)((core->busRead8(core, clock_at) & 0xFF) | (core->busRead8(core, clock_at + 1) & 0xFF) << 8);
+    aud_nend++;
+}
+
+static void audio_save(const char *path) {
+    FILE *f = fopen(path, "wb");
+    if (!f) { perror(path); exit(2); }
+    const uint32_t bytes = (uint32_t)(aud_n * 2), rate = AUD_RATE, brate = AUD_RATE * 2;
+    const uint16_t pcm = 1, ch = 1, align = 2, bits = 16;
+    const uint32_t riff = 36 + bytes, fmt = 16;
+    fwrite("RIFF", 1, 4, f); fwrite(&riff, 4, 1, f); fwrite("WAVEfmt ", 1, 8, f);
+    fwrite(&fmt, 4, 1, f); fwrite(&pcm, 2, 1, f); fwrite(&ch, 2, 1, f); fwrite(&rate, 4, 1, f);
+    fwrite(&brate, 4, 1, f); fwrite(&align, 2, 1, f); fwrite(&bits, 2, 1, f);
+    fwrite("data", 1, 4, f); fwrite(&bytes, 4, 1, f); fwrite(aud, 2, aud_n, f);
+    fclose(f);
+}
+
+// The frame (from aud_frame0, with a fraction) a kept sample falls in.
+static double sample_frame(size_t i) {
+    size_t k = 0;
+    while (k < aud_nend && aud_end[k] <= i) k++;
+    const size_t a = k ? aud_end[k - 1] : 0, b = k < aud_nend ? aud_end[k] : a + 1;
+    return (double)(aud_frame0 + (int)k) + (double)(i - a) / (double)(b > a ? b - a : 1);
+}
+
+// Onsets in the kept sound from sample `from` to `to`, in 1 ms windows (a
+// 5 ms window put an onset up to 0.3 frames before the sound began): a window
+// is an onset when it is at least 6 dB over the quietest of the 20 before it
+// (the history reaches back before `from`), within `gate` dB of the loudest
+// window of the range and over -60 dBFS, and 40 ms have passed since the last
+// onset (every row of a noise take retriggers, 17 ms apart; two cards are a
+// stagger, 50 ms, apart). The gate keeps a quiet cue (a lift's slide) and a
+// take's own tail from counting beside a loud one. Writes their frames.
+#define ONSET_WIN (AUD_RATE / 1000)
+static double win_db(size_t w) {
+    double e = 0;
+    for (size_t k = w; k < w + ONSET_WIN; k++) e += (double)aud[k] * aud[k];
+    return 10.0 * log10(e / ONSET_WIN / (32768.0 * 32768.0) + 1e-12);
+}
+static int find_onsets(size_t from, size_t to, double gate, double *out, int max) {
+    double top = -120.0;
+    int n = 0, since = 1000;
+    for (size_t w = from; w + ONSET_WIN <= to; w += ONSET_WIN) { const double d = win_db(w); if (d > top) top = d; }
+    for (size_t w = from; w + ONSET_WIN <= to; w += ONSET_WIN) {
+        const double db = win_db(w);
+        double lo = 1e9;
+        for (size_t k = 1; k <= 20; k++) { const double p = w >= k * ONSET_WIN ? win_db(w - k * ONSET_WIN) : -120.0; if (p < lo) lo = p; }
+        since++;
+        if (db > -60.0 && db >= top - gate && db - lo >= 6.0 && since >= 40) {
+            if (n < max) out[n] = sample_frame(w);
+            n++;
+            since = 0;
+        }
+    }
+    return n;
+}
+
 static void run_frame(void) {
     uint32_t keys = 0;
     for (int i = 0; i < nheld; i++)
         if (frame_next >= held[i].from && frame_next < held[i].to) keys |= held[i].keys;
     core->setKeys(core, keys);
     core->runFrame(core);
+    audio_drain();
     frame_next++;
     // forget presses that are over
     int k = 0;
@@ -356,6 +511,11 @@ int main(int argc, char **argv) {
     mCoreInitConfig(core, NULL);
     mCoreConfigSetValue(&core->config, "gb.model", "DMG");
     mCoreConfigSetValue(&core->config, "useBios", "0");
+    // full volume; the bare config leaves it 0 (silent). As a default, not a
+    // plain value: with no port (mCoreInitConfig's NULL) a plain value goes to
+    // a section mCoreConfigMap does not read on Homebrew's libmgba 0.10.5, and
+    // every capture there was silence
+    mCoreConfigSetDefaultIntValue(&core->config, "volume", 0x100);
     mCoreLoadConfig(core);
     unsigned w, h;
     core->desiredVideoDimensions(core, &w, &h);
@@ -363,9 +523,17 @@ int main(int argc, char **argv) {
     stride = w;
     core->setVideoBuffer(core, video, w);
     if (!mCoreLoadFile(core, argv[1])) { fprintf(stderr, "cannot load %s\n", argv[1]); return 2; }
+    // mGBA ends a blip frame every 4096 clocks (1 ms), and drops samples only
+    // when this many wait unread: drained every frame, none ever do, and a
+    // frame's samples are the ones drained after it (to 1 ms)
+    core->setAudioBufferSize(core, 4096);
+    aud_l = core->getAudioChannel(core, 0);
+    aud_r = core->getAudioChannel(core, 1);
+    blip_set_rates(aud_l, core->frequency(core), AUD_RATE);
+    blip_set_rates(aud_r, core->frequency(core), AUD_RATE);
     core->reset(core);
 
-    int fail = 0, now = 0, last_press_end = 0;
+    int fail = 0, now = 0, last_press_end = 0, mark = -1;
     for (int i = 0; i < nsteps; i++) {
         const Step *s = &steps[i];
         const int f = s->absolute ? s->n : now + s->n;
@@ -420,6 +588,69 @@ int main(int argc, char **argv) {
             const int pass = ok && got == s->bytes[3];
             printf("frame %d: pixelspr %s at (%d, %d) = %d%s\n", f, s->arg, x, y, got, pass ? "  ok" : "  FAILED");
             if (!pass) fail = 1;
+        } else if (s->kind == ST_AUDIO_START) {
+            clock_at = resolve("_sys_time");
+            aud_on = 1; aud_n = 0; aud_nend = 0; aud_frame0 = frame_next;
+            printf("frame %d: audio start\n", f);
+        } else if (s->kind == ST_AUDIO_SAVE) {
+            audio_save(s->arg);
+            printf("frame %d: audio save %s (%.2f s)\n", f, s->arg, (double)aud_n / AUD_RATE);
+        } else if (s->kind == ST_MARK) {
+            if (s->nbytes) {
+                const uint32_t a = resolve(s->arg), st = resolve("_sys_time");
+                const unsigned want = ((core->busRead8(core, a) & 0xFF) | (core->busRead8(core, a + 1) & 0xFF) << 8) + (unsigned)s->len;
+                const unsigned cur = (core->busRead8(core, st) & 0xFF) | (core->busRead8(core, st + 1) & 0xFF) << 8;
+                if (!((cur - want) & 0x8000u) && aud_on) {
+                    // already reached: the first kept frame that had reached it
+                    size_t k = aud_nend;
+                    while (k > 0 && !(((unsigned)aud_clock[k - 1] - want) & 0x8000u)) k--;
+                    if (k == 0) { fprintf(stderr, "script line %d: mark before audio start\n", s->line); return 2; }
+                    mark = aud_frame0 + (int)k;     // the steps after go on from now
+                    printf("frame %d: mark (frame %d)\n", now, mark);
+                    continue;
+                } else {
+                    int waited = 0;
+                    while ((((core->busRead8(core, st) & 0xFF) | (core->busRead8(core, st + 1) & 0xFF) << 8) - want) & 0x8000u) {
+                        run_frame();
+                        if (++waited > until_max) { printf("frame %d: mark %s+%d never came  FAILED\n", frame_next - 1, s->arg, s->len); fail = 1; break; }
+                    }
+                    now = frame_next - 1;
+                }
+            }
+            mark = now;
+            printf("frame %d: mark\n", mark);
+        } else if (s->kind == ST_ONSETS || s->kind == ST_CHANGES) {
+            if (!aud_on || mark < 0) { fprintf(stderr, "script line %d: needs audio start and a mark first\n", s->line); return 2; }
+            const int fa = mark + s->from, fb = mark + s->len;
+            if (fa <= aud_frame0) { fprintf(stderr, "script line %d: frame %d is before audio start\n", s->line, fa); return 2; }
+            while (frame_next <= fb) run_frame();
+            now = frame_next - 1;
+            double got[64];
+            int ng = 0;
+            if (s->kind == ST_ONSETS) {
+                ng = find_onsets(aud_end[fa - aud_frame0 - 1], aud_end[fb - aud_frame0], s->gate, got, 64);
+                for (int k = 0; k < ng && k < 64; k++) got[k] -= mark;
+            } else {
+                const uint32_t a = resolve(s->arg);
+                if (a < 0xFF80 || a > 0xFFFE) { fprintf(stderr, "script line %d: changes watches HRAM only\n", s->line); return 2; }
+                for (int fr = fa; fr <= fb; fr++) {
+                    const uint8_t was = aud_hram[(size_t)(fr - 1 - aud_frame0) * 127 + (a - 0xFF80)];
+                    const uint8_t is = aud_hram[(size_t)(fr - aud_frame0) * 127 + (a - 0xFF80)];
+                    for (uint8_t d = (uint8_t)(is - was); d && ng < 64; d--) got[ng++] = fr - mark;
+                }
+            }
+            int ok = ng == s->nt;
+            printf("frame %d: %s %d to %d from %d%s%s, at:", now, s->kind == ST_ONSETS ? "onsets" : "changes", s->from, s->len, mark,
+                   s->kind == ST_CHANGES ? " of " : "", s->kind == ST_CHANGES ? s->arg : "");
+            for (int k = 0; k < ng && k < 64; k++) {
+                const int in = k < s->nt && got[k] >= s->t[k] && got[k] < s->t[k] + 2.0;
+                if (!in) ok = 0;
+                printf(s->kind == ST_ONSETS ? " %.2f%s" : " %.0f%s", got[k], k < s->nt ? (in ? "" : "(!)") : "(+)");
+            }
+            printf("  expected");
+            for (int k = 0; k < s->nt; k++) printf(" %g", s->t[k]);
+            printf(ok ? "  ok\n" : "  FAILED\n");
+            if (!ok) fail = 1;
         } else if (s->kind == ST_PEEK) {
             show("peek", f, s, -1);
         } else if (s->kind == ST_EXPECT) {

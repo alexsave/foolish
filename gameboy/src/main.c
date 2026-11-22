@@ -13,6 +13,8 @@
 #include "gd_bot_hw.h"
 #include "gd_bot_seoul.h"
 #include "gd_bot_moscow.h"
+#include "gd_sound.h"
+#include "snd.h"
 #include "gfx.h"
 #include "input.h"
 #include "gd_stack.h"
@@ -171,7 +173,7 @@ static gd_game before;
 #define FLY_MAX    4
 #define FLY_FRAMES 12
 uint8_t fly_n, fly_t;
-static uint16_t fly_t0;         // sys_time at take-off: a flight runs on frames, not on loop passes
+uint16_t fly_t0;                // sys_time at take-off: a flight runs on frames, not on loop passes (gbrun reads it)
 static uint8_t fly_card[FLY_MAX];
 // THE DEAL (README "The deal"): the opening deal and every refill from the
 // stock fly one card at a time through this same flight, DEAL_FRAMES frames a
@@ -191,6 +193,7 @@ uint8_t dl_seat = 0xFFu;
 #define DL_OPEN  1u     // the opening deal: alternate, the bot first; DEALING on the rail
 #define DL_TURN  2u     // the trump is still to be turned up
 #define DL_TDRAW 4u     // the face-up trump was drawn and has not left (0, 4) yet
+#define DL_CUE   8u     // the card in flight is not heard yet: its cues go with its first frame
 static uint8_t dealing(void) { return dl_seat != DL_NONE || dl_n[HUMAN] || dl_n[BOT] || (dl_flags & DL_TURN); }
 static uint8_t trump_hidden(void) { return (dl_flags & DL_TURN) || dl_seat == DL_TRUMP; }
 static uint8_t bot_shown(void);
@@ -214,6 +217,8 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
     if (!gd_apply(&G, &R, seat, m)) { fly_n = 0; return 0; }
     note_new_cards(&before);
     fly_to(seat);
+    // the move's cues, on its own flight (before a refill takes the flight over)
+    gd_snd_move(seat, &before, &G, m, fly_n, (uint16_t)(fly_t0 + FLY_FRAMES));
     deal_refill();
     if (!fly_n) deal_next();
     idle = 0;
@@ -432,6 +437,16 @@ static void human_input(void) {
     if (in_pressed(J_UP)) { up(); dirty = 1; }
 }
 
+// The profiling ROM: how long a think waited for a cue to finish, in frames
+// over BOT_DELAY (the most, and the sum over the thinks).
+#ifdef SND_PROF
+uint8_t snd_prof_wait_max;
+uint16_t snd_prof_wait_sum, snd_prof_thinks;
+#define SND_PROF_WAIT() do { const uint8_t w = (uint8_t)(idle - BOT_DELAY); if (w > snd_prof_wait_max) snd_prof_wait_max = w; snd_prof_wait_sum += w; snd_prof_thinks++; } while (0)
+#else
+#define SND_PROF_WAIT()
+#endif
+
 // The screen while a bot thinks (below).
 static void think_begin(void);
 static void think_end(void);
@@ -451,6 +466,8 @@ static void bot_turn(void) {
         // Seoul: Monte Carlo over sampled worlds (gd_bot_seoul.c). It thinks for
         // seconds; the rail says so, and the hand stays live (think_begin).
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        if (snd_busy()) return;     // a cue still sounding: the think waits for it (README "Sound")
+        SND_PROF_WAIT();
         think_begin();
         t0 = line_clock();
         gd_seoul_choose(&G, BOT, &m);
@@ -461,6 +478,8 @@ static void bot_turn(void) {
     } else if (bot_city == BOT_MOSCOW) {
         // Moscow: cut-down cordite (gd_bot_moscow.c), seconds of thought too
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        if (snd_busy()) return;
+        SND_PROF_WAIT();
         think_begin();
         t0 = line_clock();
         gd_moscow_choose(&G, BOT, &m);
@@ -707,6 +726,7 @@ static void deal_next(void) {
     fly_n = 1;
     fly_t = 0;
     fly_t0 = sys_time;
+    dl_flags |= DL_CUE;
     dirty = 1;
 }
 
@@ -1015,11 +1035,15 @@ static void think_begin(void) {
     bot_thinking = 1;
     think_rail();
     gfx_flush();
+    // the bots' scratch is the search's now: the sound gives it up (silent,
+    // snd_active 0) before the handler can run (README "Sound")
+    snd_yield();
     live_start(live_think);
 }
 
 static void think_end(void) {
     live_stop();
+    snd_claim();
     bot_thinking = 0;
 }
 
@@ -1073,6 +1097,8 @@ static const uint8_t fw_sched[4][3] = {
     { 0, 0xFE, 0xFF }, { 1, 0, 0xFE }, { 2, 1, 0 }, { 0xFF, 2, 1 },
 };
 uint8_t fw_t;                 // not static: gbrun's win_fireworks.txt pokes the loop frame
+static uint8_t fw_quiet;        // the bursts are heard for the first FW_LOUD frames only
+#define FW_LOUD 240
 
 static void fireworks(void) {
     uint8_t k;
@@ -1082,13 +1108,18 @@ static void fireworks(void) {
         const uint8_t ph = fw_sched[f][k];
         const int16_t x = fw_c[bot_city][2u * k], y = fw_c[bot_city][2u * k + 1u];
         if (ph == 0xFF) continue;
-        if (ph == 0xFE) { gfx_spr(x - 4, y + 10, T_FW_SHELL, 0); continue; }
+        if (ph == 0xFE) {
+            gfx_spr(x - 4, y + 10, T_FW_SHELL, 0);
+            if (!fw_quiet) snd_strike(SND_BURST, 0, 1, 0);
+            continue;
+        }
         gfx_spr(x - 8, y - 8, (uint8_t)(T_FW_SPARK + ph), 0);
         gfx_spr(x, y - 8, (uint8_t)(T_FW_SPARK + ph), S_FLIPX);
         gfx_spr(x - 8, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPY);
         gfx_spr(x, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPX | S_FLIPY);
     }
     gfx_spr_end();
+    if (fw_t >= FW_LOUD) fw_quiet = 1;
 }
 
 static uint8_t won(void) { return gd_result(&G) == GD_RESULT_FOOL1; }
@@ -1103,7 +1134,10 @@ static void draw_end(void) {
     }
     gfx_flush();
     gd_stack_scan();                   // the stack's deepest reach so far (scripts check it)
+    // the city's motif, or the fool's tune, as the picture comes up
+    snd_strike(won() ? (uint8_t)(SND_FINISH_MIAMI + bot_city) : SND_FOOL, 0, 1, 0);
     fw_t = 0;
+    fw_quiet = 0;
     gfx_spr_begin();
     gfx_spr_end();
 }
@@ -1201,7 +1235,15 @@ void main(void) {
                 draw_table();
                 draw_table_sprites();
                 // a dealt card's flight starts when its first frame is drawn
-                if (fly_n && dl_seat != DL_NONE && !fly_t) fly_t0 = sys_time;
+                if (fly_n && dl_seat != DL_NONE && !fly_t) {
+                    fly_t0 = sys_time;
+                    // its sound, once: it leaves the deck now and lands DEAL_FRAMES on
+                    if (dl_flags & DL_CUE) {
+                        dl_flags &= (uint8_t)~DL_CUE;
+                        if (dl_seat == DL_TRUMP) gd_snd_trump((uint16_t)(fly_t0 + DEAL_FRAMES));
+                        else gd_snd_deal(dl_seat, (uint16_t)(fly_t0 + DEAL_FRAMES));
+                    }
+                }
                 draw_lines_last = (uint16_t)lines_since(t0);
                 if (shown == SCREEN_TABLE && draw_lines_last > draw_lines_max) draw_lines_max = draw_lines_last;
             }
