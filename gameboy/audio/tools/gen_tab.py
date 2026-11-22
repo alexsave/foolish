@@ -33,8 +33,10 @@ N_CUES = 24
 # or a pickup starts with), and the priority (a landing outranks a lift).
 # pre is what the Game Boy has time for: a landing is known a whole flight
 # (200 ms) ahead, so its pre-roll fits; a take-off cue starts as the button is
-# pressed, so only the last 40-60 ms before its moment are kept, and that
-# moment trails the card leaving by as much (trailing is the rule).
+# pressed, so only the last 40-60 ms before its moment are kept (150 for the
+# lift, whose thumb slide peaks 130 ms before the card leaves: it is heard 20
+# ms after take-off), and the take's moment trails the card leaving by as
+# much (trailing is the rule).
 CARDS = [
     # cue        takes         pre post prefix                  prio
     ("DEAL",      "deal_tight", 50, 150, None,                   1),
@@ -310,7 +312,15 @@ def env_byte(vol, env):
     return (vol << 4) | (0x08 if env > 0 else 0) | min(7, abs(env))
 
 
+# The tunes sit under the card set, as the website's placeholders were turned
+# down to (AUDIO.md, open question 12: the game over just under a card
+# landing): every pulse and noise volume of jingles.txt times this, and the
+# wave channel one level quieter.
+JINGLE_GAIN = 0.55
+
+
 def parse_jingles(path, tick_hz):
+    jv = lambda v: max(1, int(round(int(v) * JINGLE_GAIN)))
     cues = {}
     cur = take = None
     ch = None
@@ -329,16 +339,16 @@ def parse_jingles(path, tick_hz):
         elif op == "p":
             f = note_hz(a[0]); x = int(round(2048 - 131072 / f))
             sweep = int(a[5], 16) if len(a) > 5 else 0x08 if ch == 1 else 0
-            take[ch].append((int(a[1]), sweep, int(a[4]) << 6, env_byte(int(a[2]), a[3]), x & 0xFF, 0x80 | (x >> 8)))
+            take[ch].append((int(a[1]), sweep, int(a[4]) << 6, env_byte(jv(a[2]), a[3]), x & 0xFF, 0x80 | (x >> 8)))
         elif op == "g":
             f = note_hz(a[0]); x = int(round(2048 - 131072 / f))
             last = take[ch][-1]
             take[ch].append((int(a[1]), last[1], last[2], last[3], x & 0xFF, x >> 8))
         elif op == "w":
             f = note_hz(a[0]); x = int(round(2048 - 65536 / f))
-            take[ch].append((int(a[1]), int(a[3]), 0, int(a[2]) << 5, x & 0xFF, 0x80 | (x >> 8)))
+            take[ch].append((int(a[1]), int(a[3]), 0, min(3, int(a[2]) + 1) << 5, x & 0xFF, 0x80 | (x >> 8)))
         elif op == "n":
-            take[ch].append((int(a[1]), 0, 0, env_byte(int(a[2]), a[3]), int(a[0], 16), 0x80))
+            take[ch].append((int(a[1]), 0, 0, env_byte(jv(a[2]), a[3]), int(a[0], 16), 0x80))
         elif op == "r":
             take[ch].append((int(a[0]), 0, 0, 0, 0, 0))
         else:
