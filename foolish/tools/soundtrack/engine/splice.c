@@ -8,13 +8,16 @@
 //                                             gain of the full mix and sum back to it
 //   LEVEL lufs|off                            level of the following lines (default -16)
 //   MASTER lufs dbtp                          default -16 -1.5
+//   TAILS rt:db:len|off                       every following CLIP without a WASH of its own, and without DRY 1, gets
+//                                             that WASH: what is cut off rings on under the next attack (high-passed by
+//                                             the hall), so a join is dry only where the cue says so. LAYERs are not touched.
 //   CLIP  name a b [key value]...             a, b: cut points in source seconds (b may be `end`)
 //   LAYER name a b [key value]...
 // Placement: a CLIP's `a` lands at the previous CLIP's `b` + GAP (exact to a sample, whatever PRE, POST, fades or effects).
 // A LAYER never moves that chain: its `a` lands at the `b` of the latest preceding CLIP + AT, or at that CLIP's `a` + OFF.
 // With RATE r a source span s lasts s/r song seconds. A clip is audible from a-PRE to b+POST in the source.
 // Keys (CLIP and LAYER): PRE POST FIN FOUT LUFS GAIN RIDE BASS EQ LPOUT LPIN HPOUT HPIN WASH ECHO SWELL RATE SEMI VARI
-//   BRAKE ROLE JOIN; CLIP only: GAP; LAYER only: AT OFF (not both).
+//   BRAKE ROLE JOIN; CLIP only: GAP DRY; LAYER only: AT OFF (not both).
 // Order of processing: rate/pitch, DC removal, level and GAIN and RIDE, BASS, EQ, filters, effect sends (pre-fade), fades, sum.
 // The only random source is the Rng of dsp.h (the pink noise that calibrates the reverb sends, with a fixed seed).
 // Sources are decoded when first needed and freed after their last statement, so a long song with many sources stays small.
@@ -29,8 +32,9 @@
 #include "mix.h"
 #pragma clang diagnostic pop
 
-#define LEAD (SR / 2)     // settling run before the audible start (DC removal, bands, sweeps)
-#define APAD (SR * 3 / 2) // real padding either side of an AudioToolbox render
+// whole numbers of samples, worked out once here and never inside a floating point expression
+static const long LEAD = SR / 2;     // settling run before the audible start (DC removal, bands, sweeps)
+static const long APAD = SR * 3 / 2; // real padding either side of an AudioToolbox render
 
 static void die(int line, const char *fmt, ...) __attribute__((noreturn));
 static void die(int line, const char *fmt, ...) {
@@ -92,6 +96,7 @@ typedef struct {
     double gain; Curve ride, bass; double eq[3]; int has_eq;
     Sweep sw[4];                                // 0 LPOUT 1 LPIN 2 HPOUT 3 HPIN
     int wash; double w_rt, w_db, w_len;
+    int dry;
     int echo; double e_d, e_fb, e_db, e_len;
     int swell; double s_len, s_db;
     double rate, semi; int vari; double brake;
@@ -133,7 +138,7 @@ static const char *swname[4] = {"LPOUT", "LPIN", "HPOUT", "HPIN"};
 
 static void parse(const char *path, double *m_lufs, double *m_tp) {
     FILE *f = fopen(path, "r"); if (!f) { perror(path); exit(1); }
-    char *line = 0; size_t cap = 0; int ln = 0; double level = -16; int level_on = 1;
+    char *line = 0; size_t cap = 0; int ln = 0; double level = -16, tails[3] = {0}; int level_on = 1, tails_on = 0;
     while (getline(&line, &cap, f) >= 0) {
         ln++; char *h = strchr(line, '#'); if (h) *h = 0;
         char **tok = 0; int nt = 0, ct = 0;
@@ -153,6 +158,13 @@ static void parse(const char *path, double *m_lufs, double *m_tp) {
         } else if (!strcmp(tok[0], "LEVEL")) {
             if (nt != 2) die(ln, "LEVEL lufs|off");
             if (!strcmp(tok[1], "off")) level_on = 0; else { level_on = 1; level = num(tok[1], ln, "LEVEL"); }
+        } else if (!strcmp(tok[0], "TAILS")) {
+            if (nt != 2) die(ln, "TAILS rt:db:len|off");
+            if (!strcmp(tok[1], "off")) tails_on = 0;
+            else {
+                colon_parse(tok[1], tails, 3, ln, "TAILS"); tails_on = 1;
+                if (tails[0] <= 0 || tails[2] <= 0) die(ln, "TAILS wants rt > 0 and len > 0");
+            }
         } else if (!strcmp(tok[0], "MASTER")) {
             if (nt != 3) die(ln, "MASTER lufs dbtp");
             *m_lufs = num(tok[1], ln, "MASTER"); *m_tp = num(tok[2], ln, "MASTER");
@@ -167,6 +179,7 @@ static void parse(const char *path, double *m_lufs, double *m_tp) {
                 const char *k = tok[i], *v = tok[i + 1];
                 #define KEYD(NAME, FIELD, SETF) if (!strcmp(k, NAME)) { c->FIELD = num(v, ln, NAME); SETF; continue; }
                 if (!strcmp(k, "GAP") && c->kind == 0) { c->gap = num(v, ln, k); continue; }
+                if (!strcmp(k, "DRY") && c->kind == 0) { if (num(v, ln, k) != 1) die(ln, "DRY wants 1"); c->dry = 1; continue; }
                 if (!strcmp(k, "AT") && c->kind == 1) { if (c->has_off) die(ln, "AT and OFF together"); c->at = num(v, ln, k); c->has_at = 1; continue; }
                 if (!strcmp(k, "OFF") && c->kind == 1) { if (c->has_at) die(ln, "AT and OFF together"); c->off = num(v, ln, k); c->has_off = 1; continue; }
                 KEYD("PRE", pre, c->pre_set = 1) KEYD("POST", post, (void)0) KEYD("FIN", fin, (void)0) KEYD("FOUT", fout, (void)0)
@@ -190,6 +203,8 @@ static void parse(const char *path, double *m_lufs, double *m_tp) {
                 }
                 die(ln, "unknown key %s on %s", k, tok[0]);
             }
+            if (c->dry && c->wash) die(ln, "DRY and WASH together");
+            if (c->kind == 0 && tails_on && !c->dry && !c->wash) { c->wash = 1; c->w_rt = tails[0]; c->w_db = tails[1]; c->w_len = tails[2]; }
             if (!(c->rate > 0)) die(ln, "RATE must be positive");
             if (c->vari && c->rate == 1) die(ln, "VARI needs a RATE other than 1");
             if (c->vari && c->semi != 0) die(ln, "VARI and SEMI together");

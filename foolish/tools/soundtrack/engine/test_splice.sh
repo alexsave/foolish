@@ -3,8 +3,9 @@
 # One PASS or FAIL line per check, non-zero exit if any check fails. Every check was mutation checked (the code it covers
 # broken, the named check seen to fail, the code restored).
 #   SPLICE_C=/path/to/copy.c  test a (mutated) copy of splice.c instead of the real one
+#   PYTHON=/path/to/python  the python with numpy and scipy (default python3)
 #   ONLY=text                 run only the checks whose name contains the text
-PY=/Users/alex/Dev/soundtrack-tools/venv/bin/python
+PY="${PYTHON:-python3}"     # any python with numpy and scipy
 D="$(cd "$(dirname "$0")" && pwd)"
 T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
 SRC_C="${SPLICE_C:-$D/splice.c}"
@@ -265,6 +266,17 @@ def wash_ring():
     tot = len(y) / SR - end
     return R.rc == 0 and -20 < a < 0 and c < a - 15 and 1.5 < tot < 1.3 * 2 + 0.5 + 0.41, f'ring {a:.1f} dB, later {c:.1f} dB, tail {tot:.2f} s'
 check('WASH rings and decays', wash_ring)
+def tails_stmt():
+    def after(first, stmt='TAILS 2:0:1'):
+        y = run(['LEVEL off', f'SRC p {PN}', stmt, f'{first} PRE 0', 'CLIP p 1 2 PRE 0 DRY 1 GAP 6'], 'ts').y[:, 0]
+        return rms_db(sg_(y, 5.1, 5.6))
+    wet, dry, off = after('CLIP p 1 6'), after('CLIP p 1 6 DRY 1'), after('CLIP p 1 6', 'TAILS 2:0:1\nTAILS off')
+    own = after('CLIP p 1 6 WASH 2:-30:1')
+    ok = wet > -60 and dry < -80 and off < -80 and own < wet - 20
+    lay = run(['LEVEL off', f'SRC p {PN}', 'TAILS 2:0:1', 'CLIP p 1 2 PRE 0 DRY 1', 'LAYER p 1 2 AT 0 PRE 0', 'CLIP p 1 2 PRE 0 DRY 1 GAP 5'], 'tl').y[:, 0]
+    la = rms_db(sg_(lay, 2.1, 2.6))
+    return ok and la < -80, f'tail {wet:.1f} dB, DRY {dry:.1f}, off {off:.1f}, own WASH {own:.1f}, layer {la:.1f}'
+check('TAILS rings under every cut unless DRY', tails_stmt)
 def wash_level():
     R0 = run(['LEVEL off', f'SRC p {PN}', 'CLIP p 1 13 PRE 0'], 'w0'); R1 = run(['LEVEL off', f'SRC p {PN}', 'CLIP p 1 13 PRE 0 WASH 2:0:9'], 'w2')
     a, b = int(8 * SR), int(11 * SR); x = R1.y[a:b, 0]; r = R0.y[a:b, 0]; al = np.dot(x, r) / np.dot(r, r)

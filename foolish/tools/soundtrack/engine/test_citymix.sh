@@ -1,12 +1,12 @@
 #!/bin/bash
 # test_citymix.sh: checks of citymix.py's seams, verify and song on synthetic signals. Seconds, self-cleaning.
 #   test_citymix.sh              prints one PASS or FAIL line per check, exits 1 on any FAIL
-# Environment: PYTHON (default the soundtrack venv), CITYMIX (the script under test, default the one beside this file;
+# Environment: PYTHON (default python3), CITYMIX (the script under test, default the one beside this file;
 # a copy with a deliberate break is how a check is mutation-checked), CITYMIX_TMP (where the scratch folder goes), KEEP=1
 # (keep the scratch folder for inspection).
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
-PYTHON="${PYTHON:-/Users/alex/Dev/soundtrack-tools/venv/bin/python}"
+PYTHON="${PYTHON:-python3}"     # any python with numpy, scipy, soundfile and matplotlib
 CM="${CITYMIX:-$HERE/citymix.py}"
 T="$(mktemp -d "${CITYMIX_TMP:-${TMPDIR:-/tmp}}/citymix_test.XXXXXX")" || exit 2
 [ -n "${KEEP:-}" ] || trap 'rm -rf "$T"' EXIT
