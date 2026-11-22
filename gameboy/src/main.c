@@ -13,6 +13,8 @@
 #include "gd_bot_hw.h"
 #include "gd_bot_seoul.h"
 #include "gd_bot_moscow.h"
+#include "gd_sound.h"
+#include "snd.h"
 #include "gfx.h"
 #include "input.h"
 #include "art_tiles.h"
@@ -189,6 +191,7 @@ static uint8_t play(uint8_t seat, const gd_move *m) {
     if (!gd_apply(&G, &R, seat, m)) { fly_n = 0; return 0; }
     note_new_cards(&before);
     fly_to(seat);
+    gd_snd_move(seat, &before, &G, m, fly_n ? FLY_FRAMES : 0);
     idle = 0;
     dirty = 1;
     // The website's afterMove leaves target mode after my own move. A bot move
@@ -391,6 +394,16 @@ static void human_input(void) {
     if (in_pressed(J_UP)) { up(); dirty = 1; }
 }
 
+// The profiling ROM: how long a think waited for a cue to finish, in frames
+// over BOT_DELAY (the most, and the sum over the thinks).
+#ifdef SND_PROF
+uint8_t snd_prof_wait_max;
+uint16_t snd_prof_wait_sum, snd_prof_thinks;
+#define SND_PROF_WAIT() do { const uint8_t w = (uint8_t)(idle - BOT_DELAY); if (w > snd_prof_wait_max) snd_prof_wait_max = w; snd_prof_wait_sum += w; snd_prof_thinks++; } while (0)
+#else
+#define SND_PROF_WAIT()
+#endif
+
 static void bot_turn(void) {
     uint32_t n, r, t0;
     gd_move m;
@@ -405,24 +418,32 @@ static void bot_turn(void) {
         // Seoul: Monte Carlo over sampled worlds (gd_bot_seoul.c). It thinks for
         // seconds, with the screen still, so the rail says so first.
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        if (snd_busy()) return;     // a cue still sounding: the think waits for it (README "Sound")
         gfx_rail(17, "SEOUL THINKS", "");
         gfx_flush();
+        SND_PROF_WAIT();
+        snd_yield();                // the scratch is the bot's now
         t0 = line_clock();
         bot_thinking = 1;
         gd_seoul_choose(&G, BOT, &m);
         bot_thinking = 0;
+        snd_claim();
         seoul_playouts_sum += gd_seoul_playouts;
         seoul_plies_sum += gd_seoul_plies;
         if (m.type == 0xFF) { dirty = 1; return; }
     } else if (bot_city == BOT_MOSCOW) {
         // Moscow: cut-down cordite (gd_bot_moscow.c), seconds of thought too
         if (gd_menu_kind(&G, BOT) == GD_KIND_NONE || (gd_menu_kind(&G, BOT) == GD_KIND_DEFENDER && !gd_uncovered(&G))) return;
+        if (snd_busy()) return;
         gfx_rail(17, "MOSCOW THINKS", "");
         gfx_flush();
+        SND_PROF_WAIT();
+        snd_yield();
         t0 = line_clock();
         bot_thinking = 1;
         gd_moscow_choose(&G, BOT, &m);
         bot_thinking = 0;
+        snd_claim();
         moscow_playouts_sum += gd_moscow_playouts;
         moscow_plies_sum += gd_moscow_plies;
         moscow_nodes_sum += gd_moscow_nodes;
@@ -825,6 +846,8 @@ static const uint8_t fw_sched[4][3] = {
     { 0, 0xFE, 0xFF }, { 1, 0, 0xFE }, { 2, 1, 0 }, { 0xFF, 2, 1 },
 };
 static uint8_t fw_t;
+static uint8_t fw_quiet;        // the bursts are heard for the first FW_LOUD frames only
+#define FW_LOUD 240
 
 static void fireworks(void) {
     uint8_t k;
@@ -834,13 +857,18 @@ static void fireworks(void) {
         const uint8_t ph = fw_sched[f][k];
         const int16_t x = fw_x[bot_city][k], y = fw_y[bot_city][k];
         if (ph == 0xFF) continue;
-        if (ph == 0xFE) { gfx_spr(x - 4, y + 10, T_FW_SHELL, 0); continue; }
+        if (ph == 0xFE) {
+            gfx_spr(x - 4, y + 10, T_FW_SHELL, 0);
+            if (!fw_quiet) snd_strike(SND_BURST, 0, 1, 0);
+            continue;
+        }
         gfx_spr(x - 8, y - 8, (uint8_t)(T_FW_SPARK + ph), 0);
         gfx_spr(x, y - 8, (uint8_t)(T_FW_SPARK + ph), S_FLIPX);
         gfx_spr(x - 8, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPY);
         gfx_spr(x, y, (uint8_t)(T_FW_SPARK + ph), S_FLIPX | S_FLIPY);
     }
     gfx_spr_end();
+    if (fw_t >= FW_LOUD) fw_quiet = 1;
 }
 
 static uint8_t won(void) { return gd_result(&G) == GD_RESULT_FOOL1; }
@@ -854,7 +882,10 @@ static void draw_end(void) {
         gfx_load_full(FULL_LOSE);
     }
     gfx_flush();
+    // the city's motif, or the fool's tune, as the picture comes up
+    snd_strike(won() ? (uint8_t)(SND_FINISH_MIAMI + bot_city) : SND_FOOL, 0, 1, 0);
     fw_t = 0;
+    fw_quiet = 0;
     gfx_spr_begin();
     gfx_spr_end();
 }
@@ -893,6 +924,7 @@ void main(void) {
     *(volatile uint8_t *)0x0000u = 0x0Au;
     *(volatile uint8_t *)0x6000u = 0x01u;
     gfx_init();
+    snd_init();         // before the timer that ticks it
     in_init();
     dirty = 1;
     for (;;) {

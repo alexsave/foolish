@@ -38,4 +38,6 @@
 +0   shot shots/52_multi_attack.png 3
 # Miami beats two and takes all three (the foot rail says so for a moment)
 +90  expect _G+74 00
-+0   shot shots/55_bot_takes.png 3
+# once the cards have landed in its hand, and the board redrawn
++0   until _fly_n 00
++4   shot shots/55_bot_takes.png 3

@@ -7,6 +7,7 @@
 // the LCD off there are no VBlank interrupts. The repeat timing counts ticks.
 #include <gb/gb.h>
 #include "input.h"
+#include "snd.h"
 
 static volatile uint8_t isr_now, isr_pressed;   // down now; went down since last taken
 static volatile int8_t isr_steps;               // LEFT/RIGHT presses and repeats not yet taken
@@ -18,7 +19,27 @@ static volatile uint8_t first_press_seen;
 static uint8_t now, pressed;
 static int8_t steps;
 
+// The profiling ROM (Makefile durak_sndprof.gb) times the interrupt: how late
+// it ran after the timer's overflow, and how long the sound tick took, in
+// steps of 256 clocks (61 us), read from TIMA (reloaded to IN_TMA at the
+// overflow, then counting every 1024 clocks) and DIV's low two bits (every
+// 256: both run off the one divider, so DIV's bits are 0 at each TIMA step).
+#ifdef SND_PROF
+uint8_t  snd_prof_late_max, snd_prof_tick_max;
+uint16_t snd_prof_ticks;
+static uint8_t prof_t0;
+static uint8_t prof_now(void) { const uint8_t t = TIMA_REG, d = DIV_REG; return (uint8_t)(((uint8_t)(t - 188u) << 2) | (d & 3u)); }
+#define SND_PROF_ENTER() do { prof_t0 = prof_now(); } while (0)
+#define SND_PROF_LEAVE() do { const uint8_t d = (uint8_t)(prof_now() - prof_t0); if (d > snd_prof_tick_max) snd_prof_tick_max = d; } while (0)
+#else
+#define SND_PROF_ENTER()
+#define SND_PROF_LEAVE()
+#endif
+
 static void in_tick(void) {
+#ifdef SND_PROF
+    { const uint8_t late = prof_now(); if (late > snd_prof_late_max) snd_prof_late_max = late; snd_prof_ticks++; }
+#endif
     const uint8_t j = joypad();
     isr_pressed |= (uint8_t)(j & (uint8_t)~isr_now);
     if (isr_pressed && !first_press_seen) { first_press_time = sys_time; first_press_seen = 1; }
@@ -33,6 +54,9 @@ static void in_tick(void) {
     } else lr_frames = 0;
     if (j & J_A) { if (a_frames < 255) a_frames++; } else a_frames = 0;
     if (j & J_SELECT) { if (sel_frames < 255) sel_frames++; } else sel_frames = 0;
+    SND_PROF_ENTER();
+    snd_tick();          // the sound driver's 60 Hz (README "Sound")
+    SND_PROF_LEAVE();
 }
 
 // 4096 Hz / (256 - 188) = 60.2 ticks a second, one a frame near enough.

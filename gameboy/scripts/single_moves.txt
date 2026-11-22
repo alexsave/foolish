@@ -19,4 +19,6 @@
 +5   expect _in_target 00
 +0   expect _G+74 02
 +0   expect _G+76 01
-+0   shot shots/31_passed_at_once.png 3
+# a frame after the move's redraw (the attack's cues are still playing: the
+# sound's tick takes about 1 ms of each frame while they do)
++1   shot shots/31_passed_at_once.png 3

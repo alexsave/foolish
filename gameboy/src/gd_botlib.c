@@ -2,7 +2,7 @@
 #include "gd_botlib.h"
 
 gd_game gd_bot_world;
-gd_move gd_bot_cand[GD_BOT_CANDS];
+gd_bot_scratch_t gd_bot_scratch;     // the candidates, and the sound driver's state (gd_botlib.h)
 gd_sim  gd_bot_sim[3];
 
 // ---- getTrumpAttackProbability, as a threshold on a 16-bit draw ----------------------------
