@@ -555,7 +555,7 @@ The opening deal and every refill from the stock fly, one card at a time, throug
 - The board shows the deal as it goes: a card not yet arrived leaves its place empty (the hand and the bot's backs are laid out for their final count, so every card lands where the settled board draws it), the deck count and the bot's count on the top rail count the cards as they leave and land, the trump suit icon appears with the trump, and the foot rail says DEALING during the opening.
 - While cards are dealt the bot waits (its half second starts when the last card lands) and your presses are kept, not dropped: they act once the deal has landed; START still leaves at once.
 - The state is 5 bytes (`dl_n[2]`, `dl_first`, `dl_flags`, `dl_seat`) beside the flight's.
-  It is not overlaid on the bots' scratch: the phases are exclusive today (the bot never thinks during a deal), but another branch makes the screen live while a bot thinks, and a refill then would run beside the search.
+  It is not overlaid on the bots' scratch, though the phases are exclusive: `bot_turn` returns while `dealing()`, and the live think's handler ("The screen while a bot thinks") runs only inside a think, which never starts during a deal, so a refill never runs beside the search. An overlay would make that exclusion load-bearing for memory as well; 5 bytes do not justify it.
 
 ### Hypothesis (written before measuring)
 
@@ -569,14 +569,15 @@ The opening deal and every refill from the stock fly, one card at a time, throug
 ### Measured (marking the hypothesis)
 
 On a Linux VM's mGBA 0.10.2 (frame and scanline counts are the emulated Game Boy's; the Mac re-measures).
+Re-measured on the Mac (Homebrew's libmgba), merged with the discard pile, the fireworks, the stack guard and the live think: the opening takes 128 frames (2.14 s) from the first card's first step to the trump's landing, the same for seeds 0x1f, 3 and 7; 142 frames (2.38 s) from the press that starts the game, the table's load included.
 
 | | predicted | measured |
 | --- | --- | --- |
 | the opening, first card's first frame to the trump's landing | about 125 frames (110 to 140) | 128 frames (2.13 s), seed 0x1f: right |
 | a card | 8 frames + about 1.5 of redraw | 10 frames: 8 of flight, then 2 on its place while the board redraws under it |
 | a landing's board redraw | 150 to 300 scanlines | 309 to 387 scanlines (2.0 to 2.5 frames): wrong, the range was low, but under the 460 falsifier |
-| ROM bank 1 | about +600 bytes | +1362 bytes (13579 to 14941; 1443 free): wrong, over the 1.2 KB falsifier; SDCC's code for the deal's 16-bit pixel arithmetic and the board's extra conditions is about twice my guess |
-| RAM | 5 bytes static, the stack about the same | 5 bytes (WRAM free 539 to 534); the stack's deepest reach over a whole `game_lose.txt` game 268 bytes before, 270 after: the gap shrank by 7 bytes, under the 8-byte falsifier, just |
+| ROM bank 1 | about +600 bytes | +1362 bytes (13579 to 14941; 1443 free); on the merged base +1418 (14421 to 15839; 545 free): wrong, over the 1.2 KB falsifier; SDCC's code for the deal's 16-bit pixel arithmetic and the board's extra conditions is about twice my guess |
+| RAM | 5 bytes static, the stack about the same | 5 bytes (WRAM free 539 to 534; on the merged base `s__HEAP_END` 0xDD75 to 0xDD7A, the gap 651 to 646 bytes); the stack's deepest reach over a whole `game_lose.txt` game 268 bytes before, 270 after: the gap shrank by 7 bytes, under the 8-byte falsifier, just |
 
 So `DEAL_FRAMES` stays 8: 2.1 s for the opening, and each quarter of the flip shows for exactly two frames.
 A landing draws the flight once more on its place before the board's redraw, so the redraw puts the card under its own sprite; without that the landed card showed beside the sprite a step short for the two frames of the redraw (seen in the frame-by-frame shots).
@@ -587,11 +588,13 @@ A landing draws the flight once more on its place before the board's redraw, so 
 - the flip of my first card, frame by frame: a back (six sprites; the ring and the sprig, `pixelspr`), the narrow back (three sprites, the fourth's OAM slot empty), the edge (black, white, black, the table either side), the face (the six of spades); shots `deal_1_back` to `deal_4_face`; a bot's card mid-flight is a back (`deal_0_bot_back`);
 - my king of clubs in flight: its eight seam pixels light grey (OBP1 and the club's sprite copies, `deal_5_club`);
 - the trump turning up (its edge frame, three sprites, `deal_6_trump_edge`; its face, `deal_7_trump_face`);
-- every one of the 13 landings, where the board draws the card: when the next card takes off, `_fly_pos` still holds the place the last flight was drawn at (the bot's backs at columns 6 to 11 of row 1, mine at columns 4 to 14 of row 13, the trump at (0, 4));
-- the settled board equals the old instant deal's board for the same seed, every pixel (`same shots/deal_instant_ref.png`, the old ROM's `02_deal.png`; the new `02_deal.png` is byte for byte the same file).
+- every one of the 13 landings, where the board draws the card: when the next card takes off, `_fly_pos` still holds the place the last flight was drawn at (the bot's backs at columns 5 to 10 of row 1, centred in columns 0 to 16 beside the discard pile, mine at columns 4 to 14 of row 13, the trump at (0, 4));
+- the settled board equals the old instant deal's board for the same seed, every pixel (`same shots/deal_instant_ref.png`, the `02_deal.png` of the ROM before the deal animation, on the same board; the new `02_deal.png` is byte for byte the same file).
 
 `scripts/dashboard.txt` checks that RIGHT pressed mid-deal acts only once the deal has landed, and `scripts/target_cover.txt` that the bot leads only after it.
 `scripts/done.txt` checks a refill: after DONE, my card (I attacked) leaves the deck while the bot's waits (`_dl_n` 0 and 1), then the bot's, each landing in its place.
+`scripts/deal_resume.txt` leaves mid-deal: START with my fourth card in flight (`_dl_n` 3 and 3), then 60 frames on the dashboard in which nothing more leaves the deck, then CONTINUE: the card in flight lands, the bot's fourth leaves next and then mine (the deal's order kept), the trump turns up last, and the settled board equals `deal_instant_ref.png`.
+The card in flight when START was pressed lands at once on the way back (its flight's clock ran on during the dashboard), rather than finishing its flight.
 
 Mutants, each built into the ROM and run, each failing on the check named:
 
@@ -601,11 +604,16 @@ Mutants, each built into the ROM and run, each failing on the check named:
 | my cards land one column right | `deal.txt`, `_fly_pos` at each of my landings (28 68 for 20 68) |
 | the bot's backs land one slot right | `deal.txt`, `_fly_pos` at each bot landing |
 | a club in the deal on OBP0 | `deal.txt`, the king of clubs' seams read dark grey |
-| the settled board draws the bot's hand one column right (flights untouched) | `deal.txt`, `same`: 475 pixels differ, the first at (49, 8) |
+| the settled board draws the bot's hand one column right (flights untouched) | `deal.txt`, `same`: 475 pixels differ, the first at (41, 8) |
 | a refill draws the defender first | `done.txt`, `_dl_n` at the first refill card |
 | presses during the deal dropped, not kept | `dashboard.txt`, `_cur` still none after the deal |
 | presses act during the deal | `dashboard.txt`, `_cur` set while the cards still fly |
 | the bot does not wait for the deal | `target_cover.txt`, two attacks on the table while the trump turns up |
+| the deal goes on while the dashboard is shown | `deal_resume.txt`, `_dl_n` 0 and 0 after the 60 frames on the dashboard |
+| CONTINUE drops the card in flight, and the deal stops | `deal_resume.txt`, `_dl_n` stays 3 and 3 (the bot's fourth never leaves) |
+| START mid-deal gives up the rest of the deal | `deal_resume.txt`, `_dl_n` 0 and 0 on the dashboard |
+
+The last three are in `tests/rom_mutants.txt`, so `make rom-mutants` runs them; the nine above them were run by hand.
 
 ## gbrun, the headless runner
 
@@ -615,6 +623,7 @@ Every script in `scripts/` sets the seed by poking `sys_time` just before its fi
 | Script | What it proves | Shots |
 | --- | --- | --- |
 | `deal.txt` | the dashboard, the deal card by card (the flip pinned frame by frame, a club in flight, the trump turned up, every landing, the settled board against the old instant deal's), the cursor appearing, an attack, the bot's answer | `01` to `05`, `deal_*` |
+| `deal_resume.txt` | START mid-deal: nothing leaves the deck on the dashboard; CONTINUE resumes the deal in its order to the same settled board | none |
 | `target_cover.txt` | TARGET mode over two attacks, moving the aim (watched frame by frame: never the old arrowhead beside the new arrow's dots), DOWN backing out, the cover | `10` to `13` |
 | `cover_or_pass.txt` | TARGET mode with the pass space, passing | `20` to `22` |
 | `single_moves.txt` | UP passes at once with a pass-only card | `30`, `31` |
