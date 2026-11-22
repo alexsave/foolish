@@ -22,3 +22,6 @@ main.c~    snd_yield();~    ;~Seoul and Moscow think without taking the sound's 
 gd_sound.c~    if (g->status != GD_PLAYING && gd_result(g) != GD_RESULT_DRAW) snd_strike(SND_OUT, 0, 1, 0);~~no OUT on the game's last move
 main.c~            if (!fw_quiet) snd_strike(SND_BURST, 0, 1, 0);~            snd_strike(SND_BURST, 0, 1, 0);~the fireworks heard past their first 4 seconds
 main.c~    snd_claim();~    ;~the sound never takes its RAM back after a think
+main.c~                    if (dl_flags & DL_CUE) {~                    if (0) {~the deal is silent
+main.c~                        else gd_snd_deal(dl_seat, (uint16_t)(fly_t0 + DEAL_FRAMES));~                        else gd_snd_deal(dl_seat, (uint16_t)(fly_t0 + DEAL_FRAMES + 2u));~a dealt card's landing heard two frames late
+main.c~                        if (dl_seat == DL_TRUMP) gd_snd_trump(~                        if (0) gd_snd_trump(~the trump turned up sounds as a dealt card

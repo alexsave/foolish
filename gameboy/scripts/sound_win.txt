@@ -12,6 +12,9 @@
 @99  audio start
 @100 press A
 +1   until _screen 01
+# the deal lands first (README "The deal")
++0   until _dl_seat 02
++0   until _fly_n 00
 +0   poke _G+0 01 00 00 00 00 00 3e 00 00 00 00 00 00 00 00 00
 +0   poke _G+16 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 +0   poke _G+32 00 00 00 23 00 03 ff ff ff ff ff ff ff ff ff ff
@@ -33,5 +36,7 @@
 +0   until 0xFF40 53
 +0   until 0xFF40 d3
 +0   mark
-+0   changes 0 300 _snd_starts 0 32 64 96 128 160 192 224
+# (each a tick after its frame: the shell is drawn late in the loop, and
+# since the deal's two seconds the tick's phase puts the first one in frame 1)
++0   changes 0 300 _snd_starts 1 33 65 97 129 161 193 225
 +0   onsets 0 1 12 0

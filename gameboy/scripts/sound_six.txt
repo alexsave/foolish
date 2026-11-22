@@ -12,6 +12,9 @@
 @100 press DOWN
 +8   press A
 +1   until _screen 01
+# the deal lands first (README "The deal")
++0   until _dl_seat 02
++0   until _fly_n 00
 +0   expect _bot_city 01
 +0   poke _G+0 00 00 00 f8 07 00 1e 3c 00 00 08 0d 0e 0f 10 11
 +0   poke _G+16 16 17 18 19 1a 00 00 00 00 00 00 00 00 00 00 00

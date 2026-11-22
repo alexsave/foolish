@@ -511,7 +511,11 @@ int main(int argc, char **argv) {
     mCoreInitConfig(core, NULL);
     mCoreConfigSetValue(&core->config, "gb.model", "DMG");
     mCoreConfigSetValue(&core->config, "useBios", "0");
-    mCoreConfigSetIntValue(&core->config, "volume", 0x100);   // full; the bare config leaves it 0 (silent)
+    // full volume; the bare config leaves it 0 (silent). As a default, not a
+    // plain value: with no port (mCoreInitConfig's NULL) a plain value goes to
+    // a section mCoreConfigMap does not read on Homebrew's libmgba 0.10.5, and
+    // every capture there was silence
+    mCoreConfigSetDefaultIntValue(&core->config, "volume", 0x100);
     mCoreLoadConfig(core);
     unsigned w, h;
     core->desiredVideoDimensions(core, &w, &h);

@@ -9,6 +9,9 @@
 @99  audio start
 @100 press A
 +1   until _screen 01
+# the deal lands first (README "The deal")
++0   until _dl_seat 02
++0   until _fly_n 00
 +0   poke _G+0 00 3e 00 00 00 01 00 00 00 00 00 00 00 00 00 00
 +0   poke _G+16 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 +0   poke _G+32 00 00 00 23 00 03 ff ff ff ff ff ff ff ff ff ff

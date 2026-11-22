@@ -1,11 +1,14 @@
 # Sound (README "Sound"): a bout ending on the discard. The deal of done.txt:
 # I attack, Miami covers, I say DONE (DOWN). From the move (the mark: the
 # frame the table emptied): the good (CH2) and the sweep (CH4) on the first
-# tick after it, the pile 16 ticks later (exact); heard on the move's frame or
-# up to 2 frames after it.
+# tick after it, the pile when the sweep lands; heard within 2 frames of the
+# tick (below).
 @99  poke _sys_time 1f 00
 @99  audio start
 @100 press A
+# the deal lands first (README "The deal")
++1   until _dl_seat 02
++0   until _fly_n 00
 +20  press RIGHT
 +6   press UP
 +0   until _G+56 20
@@ -16,5 +19,11 @@
 +0   until _G+74 00
 +0   mark
 +0   expect _G+80 02
-+0   changes 0 25 _snd_starts 0 0 16
-+0   onsets 0 1 12 0
+# On the merged board (the sweep flies, README "The discard pile and the
+# sweep"; the deal refills): the good and the sweep on the first tick after
+# the move, which now falls in frame 1 (the deal's two seconds moved the
+# tick's phase); the pile held for the sweep's landing (12 frames); the
+# refill's card leaving as the board redraws after it, and its landing's
+# lead-in a frame before its own landing.
++0   changes 0 25 _snd_starts 1 1 12 16 22
++0   onsets 1 3 12 1
