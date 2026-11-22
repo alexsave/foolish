@@ -1,0 +1,32 @@
+# Moscow's think time on decisions that do not depend on the ROM's timing: every
+# press comes in the 20 frames after a move (Moscow waits 30 frames after the
+# board last changed), never during a think, so a ROM that thinks slower
+# plays the same game and the times compare decision for decision (README
+# "The screen while a bot thinks"). The seed is poked into sys_time.
+@99  poke _sys_time 07 00
+@100 press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
+# 25 rounds: the game ends with the 25th move
+repeat 25
++0   until _bot_thinking 01
++0   until _bot_thinking 00
++1   press RIGHT
++5   press UP
++5   press UP
++5   press DOWN
+endrepeat
++0   peek _bot_lines_max 4
++0   peek _bot_lines_sum 4
++0   peek _bot_moves 2
++0   peek _moscow_playouts_sum 4
++0   peek _moscow_plies_sum 4
++0   peek _moscow_thinks 2
++0   peek _G+79 1
+# the same game in any ROM: these do not depend on how long a think takes
++0   expect _bot_moves 19 00
++0   expect _moscow_playouts_sum 7a 03 00 00
++0   expect _moscow_plies_sum 24 81 00 00
++0   expect _G+79 02

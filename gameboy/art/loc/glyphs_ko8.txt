@@ -1,0 +1,460 @@
+# ko8: from Galmuri7.ttf at 8 px, 8x8 cells (see loc/extract.py for the licence)
+U+AC00 가
+........
+XXX..X..
+..X..X..
+..X..X..
+.X...XX.
+.X...X..
+X....X..
+.....X..
+U+AC01 각
+........
+XXX..X..
+..X..XX.
+.X...X..
+X....X..
+........
+.XXXXX..
+.....X..
+U+AC19 같
+........
+XXX..X..
+..X..XX.
+.X...X..
+XXXXXX..
+.XXXX...
+.X......
+.XXXXX..
+U+ACB0 결
+........
+XXX.XX..
+..X..X..
+XX..XX..
+.XXX.X..
+...XXX..
+.XX.....
+.XXXXX..
+U+ACC4 계
+........
+XXX.X.X.
+..XXX.X.
+..X.X.X.
+.X..X.X.
+.X.XX.X.
+X...X.X.
+....X.X.
+U+ACF5 공
+........
+.XXXXX..
+.....X..
+...X.X..
+XXXXXXX.
+..XXX...
+.X...X..
+..XXX...
+U+AE30 기
+........
+XXX..X..
+..X..X..
+..X..X..
+.X...X..
+.X...X..
+X....X..
+.....X..
+U+B274 뉴
+........
+.X......
+.X......
+.XXXXX..
+........
+XXXXXXX.
+..X.X...
+..X.X...
+U+B2C8 니
+........
+X....X..
+X....X..
+X....X..
+X....X..
+X....X..
+XXXX.X..
+.....X..
+U+B2D8 님
+........
+X....X..
+X....X..
+XXXX.X..
+........
+.XXXXX..
+.X...X..
+.XXXXX..
+U+B2E4 다
+........
+XXXX.X..
+X....X..
+X....X..
+X....XX.
+X....X..
+XXXX.X..
+.....X..
+U+B2F9 당
+........
+XXXX.X..
+X....XX.
+XXXX.X..
+........
+..XXX...
+.X...X..
+..XXX...
+U+B300 대
+........
+XXX.X.X.
+X...X.X.
+X...X.X.
+X...XXX.
+X...X.X.
+XXX.X.X.
+....X.X.
+U+B450 두
+........
+.XXXXX..
+.X......
+.XXXXX..
+........
+XXXXXXX.
+...X....
+...X....
+U+B77D 락
+........
+XXXX.X..
+..XX.XX.
+XX...X..
+XXXX.X..
+........
+.XXXXX..
+.....X..
+U+B9AC 리
+........
+XXXX.X..
+...X.X..
+XXXX.X..
+X....X..
+X....X..
+XXXX.X..
+.....X..
+U+B9C8 마
+........
+XXXX.X..
+X..X.X..
+X..X.X..
+X..X.XX.
+X..X.X..
+XXXX.X..
+.....X..
+U+B9C9 막
+........
+XXXX.X..
+X..X.XX.
+X..X.X..
+XXXX.X..
+........
+.XXXXX..
+.....X..
+U+BAA8 모
+........
+.XXXXX..
+.X...X..
+.X...X..
+.XXXXX..
+...X....
+XXXXXXX.
+........
+U+BAA9 목
+........
+.XXXXX..
+.X...X..
+.XXXXX..
+...X....
+XXXXXXX.
+.XXXXX..
+.....X..
+U+BBF8 미
+........
+XXXX.X..
+X..X.X..
+X..X.X..
+X..X.X..
+X..X.X..
+XXXX.X..
+.....X..
+U+BC14 바
+........
+X..X.X..
+X..X.X..
+XXXX.X..
+X..X.XX.
+X..X.X..
+XXXX.X..
+.....X..
+U+BC1C 발
+........
+X..X.X..
+XXXX.XX.
+X..X.X..
+XXXXXX..
+...XXX..
+.XX.....
+.XXXXX..
+U+BC29 방
+........
+X..X.X..
+XXXX.XX.
+X..X.X..
+XXXX.X..
+..XXX...
+.X...X..
+..XXX...
+U+BCF4 보
+........
+.X...X..
+.XXXXX..
+.X...X..
+.XXXXX..
+...X....
+XXXXXXX.
+........
+U+C0DD 생
+........
+.X..X.X.
+.X..XXX.
+X.X.X.X.
+........
+..XXXX..
+.X....X.
+..XXXX..
+U+C11C 서
+........
+..X..X..
+..X..X..
+..X.XX..
+.X.X.X..
+.X.X.X..
+X...XX..
+.....X..
+U+C120 선
+........
+..X..X..
+..X.XX..
+.X.X.X..
+X...XX..
+.....X..
+.X......
+.XXXXX..
+U+C18D 속
+........
+...X....
+.XX.XX..
+...X....
+XXXXXXX.
+........
+.XXXXX..
+.....X..
+U+C2A4 스
+........
+...X....
+...X....
+..X.X...
+.X...X..
+........
+XXXXXXX.
+........
+U+C2B9 승
+........
+...X....
+.XX.XX..
+XXXXXXX.
+........
+..XXX...
+.X...X..
+..XXX...
+U+C2E0 신
+........
+..X..X..
+..X..X..
+.X.X.X..
+X...XX..
+.....X..
+.X......
+.XXXXX..
+U+C560 애
+........
+.X..X.X.
+X.X.X.X.
+X.X.X.X.
+X.X.XXX.
+X.X.X.X.
+.X..X.X.
+....X.X.
+U+C5B4 어
+........
+.XX..X..
+X..X.X..
+X..XXX..
+X..X.X..
+X..X.X..
+.XX..X..
+.....X..
+U+C624 오
+........
+..XXX...
+.X...X..
+.X...X..
+..XXX...
+...X....
+XXXXXXX.
+........
+U+C695 욕
+........
+..XXX...
+.X...X..
+..X.X...
+XXXXXXX.
+........
+.XXXXX..
+.....X..
+U+C6B8 울
+........
+..XXX...
+.X...X..
+XXXXXXX.
+...X....
+.XXXX...
+...X....
+..XXXX..
+U+C740 은
+........
+..XXX...
+.X...X..
+..XXX...
+XXXXXXX.
+........
+.X......
+.XXXXX..
+U+C774 이
+........
+.XX..X..
+X..X.X..
+X..X.X..
+X..X.X..
+X..X.X..
+.XX..X..
+.....X..
+U+C785 입
+........
+.XX..X..
+X..X.X..
+X..X.X..
+.XX..X..
+.X...X..
+.XXXXX..
+.XXXXX..
+U+C7AC 재
+........
+XXX.X.X.
+.X..X.X.
+.X..X.X.
+X.X.XXX.
+X.X.X.X.
+X.X.X.X.
+....X.X.
+U+C838 져
+........
+XXX..X..
+.X.XXX..
+.X...X..
+X.XXXX..
+X.X..X..
+X.X..X..
+.....X..
+U+C911 중
+........
+.XXXXX..
+...X....
+XXX.XXX.
+...X....
+..XXX...
+.X...X..
+..XXX...
+U+CD9C 출
+........
+...X....
+.XXXXX..
+.XX.XX..
+XXXXXXX.
+...X....
+.XXXX...
+..XXXX..
+U+D06C 크
+........
+.XXXXX..
+.....X..
+.XXXXX..
+.....X..
+........
+XXXXXXX.
+........
+U+D0D1 탑
+........
+XXXX.X..
+XXX..XX.
+X....X..
+XXXX.X..
+.X...X..
+.XXXXX..
+.XXXXX..
+U+D0DD 택
+........
+XXX.X.X.
+XX..XXX.
+X...X.X.
+XXX.X.X.
+........
+.XXXXXX.
+......X.
+U+D3B8 편
+........
+XXXX.X..
+.XX.XX..
+.XX.XX..
+XXXX.X..
+.....X..
+.X......
+.XXXXX..
+U+D45C 표
+........
+.XXXXX..
+..X.X...
+..X.X...
+.XXXXX..
+..X.X...
+XXXXXXX.
+........
+U+D56D 항
+........
+.X...X..
+XXXXXX..
+X..X.XX.
+.XX..X..
+..XXX...
+.X...X..
+..XXX...
+U+D648 홈
+........
+...X....
+XXX.XXX.
+.XXXXX..
+...X....
+XXXXXXX.
+.X...X..
+.XXXXX..

@@ -7,6 +7,7 @@
 // the LCD off there are no VBlank interrupts. The repeat timing counts ticks.
 #include <gb/gb.h>
 #include "input.h"
+#include "live.h"
 #include "snd.h"
 
 static volatile uint8_t isr_now, isr_pressed;   // down now; went down since last taken
@@ -15,6 +16,15 @@ static volatile uint8_t lr_frames, a_frames, sel_frames;
 
 static volatile uint16_t first_press_time;     // sys_time at the first press ever seen
 static volatile uint8_t first_press_seen;
+
+static uint8_t live_idle;              // ticks since the think handler last ran
+// LIVE_STRESS (make livestress only): the handler on every tick of a timer
+// about 17 times faster, so the search is interrupted at many more points
+#ifdef LIVE_STRESS
+#define LIVE_IDLE_TICKS 1
+#else
+#define LIVE_IDLE_TICKS 3
+#endif
 
 static uint8_t now, pressed;
 static int8_t steps;
@@ -64,8 +74,13 @@ static void in_tick(void) {
     }
 #endif
     const uint8_t j = joypad();
+    uint8_t live_due = 0;
     isr_pressed |= (uint8_t)(j & (uint8_t)~isr_now);
     if (isr_pressed && !first_press_seen) { first_press_time = sys_time; first_press_seen = 1; }
+    // a bot thinking: the screen's handler (live.h), when a key wants it (a
+    // press, a step, SELECT going down or up) or every LIVE_IDLE_TICKS ticks
+    // (the dots); run below, once this tick's keys are in
+    if (live_on) live_due = (uint8_t)(isr_pressed || ((j ^ isr_now) & J_SELECT) || ++live_idle >= LIVE_IDLE_TICKS);
     isr_now = j;
     if (j & (J_LEFT | J_RIGHT)) {
         const int8_t dir = (j & J_LEFT) ? -1 : 1;
@@ -77,14 +92,23 @@ static void in_tick(void) {
     } else lr_frames = 0;
     if (j & J_A) { if (a_frames < 255) a_frames++; } else a_frames = 0;
     if (j & J_SELECT) { if (sel_frames < 255) sel_frames++; } else sel_frames = 0;
+    // A think: the sound has given the bots' scratch up (main.c think_begin
+    // calls snd_yield before live_start, so snd_active is 0 and no strike is
+    // taken until snd_claim after live_stop), and only the screen's handler
+    // runs, last (README "What the sound merge must respect").
+    if (live_on) {
+        if (live_due || isr_steps) { live_idle = 0; live_tick(); }
+        return;
+    }
     // The sound driver's 60 Hz (README "Sound"), with interrupts on again: a
     // tick that starts a cue runs for up to 4 ms of SDCC's code, and held in
     // here it held the VBlank interrupt off by up to 37 lines (the OAM copy
     // then lands in the picture). Only VBlank can come in meanwhile (the next
     // timer interrupt is a tick away, longer than any tick), and it touches
-    // nothing of the sound's; the pad is read above, before it.
-    // Nothing sounding (always so while a bot thinks): no call, no frame, no
-    // nesting, so a think's stack and time are as they were.
+    // nothing of the sound's; the pad is read above, before it. The tick maps
+    // its tables' ROM bank shadow first (SWITCH_ROM) and puts back the bank
+    // it found; it never touches the cart RAM bank or the stack.
+    // Nothing sounding: no call, no frame, no nesting.
     if (!snd_active) return;
     enable_interrupts();
     SND_PROF_ENTER();
@@ -94,13 +118,21 @@ static void in_tick(void) {
 
 
 void in_init(void) {
+    // the sound's state and its HRAM bytes, before the timer that ticks it
+    // (here, so every ROM that starts the timer starts the sound too)
+    snd_init();
     CRITICAL {
         add_TIM(in_tick);
 #ifdef SND_PROF
         add_VBL(prof_vbl);
 #endif
+#ifdef LIVE_STRESS
+        TMA_REG = 252u;            // 4096 Hz / 4: 1024 ticks a second
+        TIMA_REG = 252u;
+#else
         TMA_REG = IN_TMA;
         TIMA_REG = IN_TMA;
+#endif
         TAC_REG = 0x04u;           // timer on, 4096 Hz
         set_interrupts(IE_REG | TIM_IFLAG);
     }
@@ -128,6 +160,13 @@ void in_keep_except(uint8_t used) {
         isr_steps = (int8_t)(isr_steps + steps);
         pressed = 0;
         steps = 0;
+    }
+}
+
+void in_give_back(uint8_t mask) {
+    CRITICAL {
+        isr_pressed |= (uint8_t)(pressed & mask);
+        pressed &= (uint8_t)~mask;
     }
 }
 

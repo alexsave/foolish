@@ -1,0 +1,79 @@
+# The screen while Moscow thinks (README "The screen while a bot thinks"):
+# the rail's dots step as a wave, and the hand keys work before the move
+# lands; UP pressed meanwhile is dropped, not played after the move.
+# The seed is set by poking sys_time (the one entropy source) before the first press.
+@99  poke _sys_time 07 00
+@100 press DOWN
++8   press DOWN
++8   press DOWN
++8   press A
++1   until _screen 01
++0   expect _bot_city 03
++20  pixel 114 130 0
+# Moscow leads; the frame the think begins, no dots. The dots are the rail
+# font's full stop at columns 13 to 15, white on the rail's dark grey.
++0   until _bot_thinking 01
++0   expect _bot_moves 00 00
++0   expect _cur ff
++2   pixel 106 142 2
++0   pixel 114 142 2
++0   pixel 122 142 2
+# a step every 15 frames (the first 17 frames in): ".", "..", "...", " ..",
+# "  .", "" (each checked mid-step)
++22  pixel 106 142 0
++0   pixel 114 142 2
++0   shot shots/live_01_dot.png 3
++15  pixel 106 142 0
++0   pixel 114 142 0
++0   pixel 122 142 2
++15  pixel 106 142 0
++0   pixel 114 142 0
++0   pixel 122 142 0
++0   shot shots/live_02_dots.png 3
++15  pixel 106 142 2
++0   pixel 114 142 0
++0   pixel 122 142 0
++15  pixel 106 142 2
++0   pixel 114 142 2
++0   pixel 122 142 0
++15  pixel 122 142 2
++0   pixel 106 142 2
+# LEFT, mid-think: the cursor appears on the leftmost card, its underline
+# on the screen within two frames (one or two: the input timer's 60.2 ticks a
+# second drift against the frames), while Moscow still thinks
++1   press LEFT
++2   expect _cur 00
++0   pixel 34 130 3
++0   expect _bot_thinking 01
++0   expect _bot_moves 00 00
+# LEFT again wraps to the last card
++3   press LEFT
++2   expect _cur 05
++0   pixel 114 130 3
++0   pixel 34 130 0
++0   expect _bot_thinking 01
+# A selects it (raised a row), SELECT held + LEFT moves it one place left
++3   press A
++6   expect _bot_thinking 01
++0   shot shots/live_03_selected.png 3
++1   press SELECT+LEFT
++6   expect _cur 04
++0   expect _bot_thinking 01
++0   shot shots/live_04_moved.png 3
+# B clears the selection; RIGHT twice wraps the cursor to the ten of spades,
+# a trump that covers the jack of hearts Moscow is about to lead
++2   press B
++4   expect _selm 00 00 00 00 00
++2   press RIGHT
++4   press RIGHT
++4   expect _cur 00
++0   expect _bot_thinking 01
+# UP while it thinks: dropped, so the ten does not cover the jack once it lands
++2   press UP
++0   expect _bot_moves 00 00
++0   until _bot_moves 01 00
++20  expect _disp_n 06
++0   expect _in_target 00
++0   expect _cur 00
++0   expect _G+56 ff
++0   shot shots/live_05_after.png 3

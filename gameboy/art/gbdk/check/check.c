@@ -9,6 +9,7 @@
 #include "../cards.h"
 #include "../ui.h"
 #include "../sprites.h"
+#include "../pile.h"
 #include "check_screens.h"
 #include "../dashboard.h"
 #include "../dashboard_new.h"
@@ -52,6 +53,7 @@ static void load_banks(void)
     set_bkg_data(ART_CARDS_BASE, ART_CARDS_COUNT, cards_tiles);
     set_bkg_data(ART_UI_BASE, ART_UI_COUNT, ui_tiles);
     set_sprite_data(ART_SPRITES_BASE, ART_SPRITES_COUNT, sprites_tiles);
+    set_bkg_data(ART_PILE_BASE, ART_PILE_COUNT, pile_tiles);
 }
 
 static void show_full(uint8_t k)

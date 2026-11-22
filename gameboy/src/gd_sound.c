@@ -26,14 +26,15 @@ static void land_at(uint8_t cue, uint16_t land, uint8_t lead, uint8_t n, uint8_t
 }
 
 void gd_snd_move(uint8_t seat, const gd_game *b, const gd_game *g, const gd_move *m, uint8_t flew, uint16_t land) GD_BANKED {
-    // the bout ended on the discard: the table is swept at once, no flight
+    // the bout ended on the discard: the table's top cards fly to the pile
+    // (README "The discard pile and the sweep"), and its sound is the sweep's
     const uint8_t swept = b->nb && !g->nb && m->type != GD_PICKUP;
     switch (m->type) {
     case GD_ATTACK:
     case GD_COVER:
     case GD_PASS:
         if (!swept) snd_strike(SND_LIFT, 0, 1, 0);
-        if (flew) {
+        if (flew && !swept) {
             land_at(m->type == GD_COVER ? SND_COVER : SND_PLACE, land, IMPACT, m->n, 0);
             // the transfer's slide, 15 ticks (249 ms) after it lands (the take's own late start)
             if (m->type == GD_PASS) snd_strike_at(SND_PASS, land, 15, 1, 0);
@@ -50,7 +51,9 @@ void gd_snd_move(uint8_t seat, const gd_game *b, const gd_game *g, const gd_move
     }
     if (swept) {
         snd_strike(SND_SWEEP, 0, 1, 0);
-        snd_strike(SND_PILE, 16, 1, 0);
+        // the cards come to rest on the pile as the sweep's flight lands
+        if (flew) land_at(SND_PILE, land, 0, 1, 0);
+        else snd_strike(SND_PILE, 16, 1, 0);
     }
     // a seat out: at two players, the game's last move (a draw has no one out)
     if (g->status != GD_PLAYING && gd_result(g) != GD_RESULT_DRAW) snd_strike(SND_OUT, 0, 1, 0);

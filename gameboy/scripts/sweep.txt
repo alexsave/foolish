@@ -1,0 +1,50 @@
+# The seed is set by poking sys_time (the one entropy source) just before the
+# first press, so the deal does not depend on how long the ROM takes to start.
+# Every command at frame N acts after frame N ran (gbrun), so an expect and a
+# press on the same frame see the press: steps leave a frame between them.
+#
+# The discard pile and the sweep. Same game as done.txt: I lead the six of
+# spades, Miami covers it with the jack of diamonds, DOWN says DONE and the
+# bout ends on the discard. The pile (columns 17-19, rows 1-3: pixels 136..159
+# by 8..31) is absent while the discard is empty and drawn once it is not; the
+# two cards of the table fly to its top back (143, 8) in 12 frames, pinned at
+# frames 6 and 11 of the flight, and the table is empty when they land.
+# (65, 48) is the black edge of my attack card, wool once the table is swept.
+# The pile is black at (141, 20) and (156, 20) and wool, a light grey, before it.
+@99  poke _sys_time 1f 00
+@100 press A
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
++4   expect _G+80 00
++0   pixel 141 20 1
++0   pixel 156 20 1
++0   pixel 156 24 1
++1   press RIGHT
++6   press UP
++6   expect _G+74 01
++45  expect _G+56 20
++0   expect _fly_n 00
++0   pixel 141 20 1
++0   pixel 65 48 3
++0   shot shots/sweep_01_before.png 3
++1   press DOWN
+# the sweep: both cards of the battle fly (the cover first, then the attack)
++1   until _fly_n 02
++0   expect _G+74 00
++0   expect _G+80 02
++0   expect _fly_t 00
++0   shot shots/sweep_02_takeoff.png 3
++0   until _fly_t 06
++0   expect _fly_pos 6b 20
++0   shot shots/sweep_03_midflight.png 3
++0   until _fly_t 0b
++0   expect _fly_pos 89 0c
++0   shot shots/sweep_04_landing.png 3
++0   until _fly_n 00
+# the board redraws a few frames after the landing; the pile is all that is left
++8   expect _G+74 00
++0   pixel 141 20 3
++0   pixel 65 48 1
++0   pixel 156 20 3
++0   shot shots/sweep_05_pile.png 3

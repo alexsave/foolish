@@ -8,7 +8,10 @@
 # plays the selected set. My attack; hand (diamonds trump): 6s As 6h Qh Kc 6d.
 @99  poke _sys_time 1f 00
 @100 press A
-+20  press RIGHT
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
++1   press RIGHT
 +6   expect _cur 00
 # A raises the six of spades; B clears it again
 +1   press A
@@ -38,6 +41,6 @@
 +0   shot shots/52_multi_attack.png 3
 # Miami beats two and takes all three (the foot rail says so for a moment)
 +90  expect _G+74 00
-# once the cards have landed in its hand, and the board redrawn
+# the refill from the stock lands (README "The deal")
 +0   until _fly_n 00
 +4   shot shots/55_bot_takes.png 3

@@ -8,6 +8,9 @@
 # and passes through a hand too big for the screen (19 shown, tabs count the rest).
 @99  poke _sys_time 01 00
 @100 press A
+# the deal lands (README "The deal") before the first move
++1   until _fly_n 01
++0   until _fly_n 00
 repeat 28
 +12  press RIGHT
 +6   press UP
@@ -16,7 +19,7 @@ repeat 28
 +30  press RIGHT
 endrepeat
 +0   shot shots/70_big_hand.png 3
-+0   expect _disp_n 1b
++0   expect _disp_n 17
 # The loop runs past the end of the game on purpose: the end picture ignores
 # LEFT, RIGHT, UP and DOWN, so the game's real-time pace cannot break the script.
 repeat 100

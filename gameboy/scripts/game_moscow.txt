@@ -9,7 +9,8 @@
 +8   press A
 +1   until _screen 01
 +0   expect _bot_city 03
-+20  shot shots/moscow_01_deal.png 3
++0   until _fly_n 00
++4   shot shots/moscow_01_deal.png 3
 # the first time Moscow thinks, the rail says so while the screen holds still
 +0   until _bot_thinking 01
 +30  expect _bot_thinking 01
@@ -30,6 +31,10 @@ endrepeat
 +0   expect _snd_refused 00
 +0   expect _snd_cut 00
 +0   shot shots/moscow_03_end.png 3
+# the stack guard (src/gd_stack.c): after a whole game against Moscow at least 48
+# bytes of the gap between the data and the stack are still untouched
++4   peek _gd_stack_free 2
++0   atleast _gd_stack_free 2 48
 +0   peek _bot_lines_max 4
 +0   peek _bot_lines_sum 4
 +0   peek _bot_moves 2
