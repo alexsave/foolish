@@ -207,7 +207,7 @@ def ride_check():
 check('RIDE curve', ride_check)
 
 # ---------------------------------------------------------------- filter sweeps
-SW = sine(10, 300, 0.2) + sine(10, 12000, 0.1); SWP = W('sw', SW)
+SW = sine(10, 60, 0.2) + sine(10, 12000, 0.1); SWP = W('sw', SW)
 def d2max(x): return np.max(np.abs(x[2:] - 2 * x[1:-1] + x[:-2]))
 SREF = {}
 def sref():
@@ -223,11 +223,16 @@ def sweep_case(key, hz, out, lowcomp, hicomp):
     def rel(sig): return db(tone_amp(sig, hicomp, ca, cb) / tone_amp(sig, lowcomp, ca, cb))
     drop = rel(x) - rel(ref)
     click = d2max(x) / (abs(g) * d2max(ref))
-    return R.rc == 0 and ident < 1e-3 and drop < -20 and click < 1.2, f'outside residual {ident:.2e}, removed {drop:.1f} dB, click ratio {click:.2f}'
-check('sweep LPOUT', lambda: sweep_case('LPOUT', 500, True, 300, 12000))
-check('sweep HPOUT', lambda: sweep_case('HPOUT', 3000, True, 12000, 300))
-check('sweep LPIN', lambda: sweep_case('LPIN', 500, False, 300, 12000))
-check('sweep HPIN', lambda: sweep_case('HPIN', 3000, False, 12000, 300))
+    # no phase jump of the tone the filter shifts, where the sweep engages (OUT) or lets go (IN): the blend makes it a glide
+    tone = hicomp; win = 48 if tone == 12000 else 480
+    ra, rb = (5.9, 6.1) if out else (2.0, 2.3)
+    z = sg.hilbert(x)[int(ra * SR):int(rb * SR)] * np.exp(-2j * np.pi * tone * (np.arange(int(ra * SR), int(rb * SR)) / SR))
+    z = np.convolve(z, np.ones(win) / win, 'valid'); ph = np.unwrap(np.angle(z)); kick = np.max(np.abs(ph[win:] - ph[:-win]))
+    return R.rc == 0 and ident < 1e-3 and drop < -20 and click < 1.2 and kick < 0.25, f'outside residual {ident:.2e}, removed {drop:.1f} dB, click ratio {click:.2f}, phase step {kick:.3f} rad'
+check('sweep LPOUT', lambda: sweep_case('LPOUT', 500, True, 60, 12000))
+check('sweep HPOUT', lambda: sweep_case('HPOUT', 3000, True, 12000, 60))
+check('sweep LPIN', lambda: sweep_case('LPIN', 500, False, 60, 12000))
+check('sweep HPIN', lambda: sweep_case('HPIN', 3000, False, 12000, 60))
 
 # ---------------------------------------------------------------- effects
 def burst(sec, t0, f=1000, amp=0.4, width=0.04):
