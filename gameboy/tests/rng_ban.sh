@@ -3,7 +3,7 @@
 # based seed anywhere in the game's sources, tests and tools.
 cd "$(dirname "$0")/.." || exit 2
 hits=$(grep -nE '\b(rand|random|srand|srandom|arc4random[a-z_]*|drand48|lrand48|time|clock|gettimeofday)[[:space:]]*\(' \
-        src/*.c src/*.h tests/*.c tools/*.c 2>/dev/null | grep -v '^src/gd_rng\.')
+        src/*.c src/*.h tests/*.c tools/*.c audio/*.c audio/*.h audio/host/*.c 2>/dev/null | grep -v '^src/gd_rng\.')
 if [ -n "$hits" ]; then
     echo "rng_ban: a stray random or time source:"
     echo "$hits"

@@ -2,7 +2,8 @@
 # after a deal against Miami: the stock gone, I lead with my last card, the
 # six of spades (Miami holds five hearts). From my move (the mark): the lift
 # and OUT on the first tick after it (exact), OUT's two notes heard within 2
-# frames; the card's landing. Then, from the frame the win picture is lit
+# frames; the card's landing (its lead-in on the first tick of the flight's
+# last frame). Then, from the frame the win picture is lit
 # (END_DELAY later, the LCD back on after the load): Miami's motif on the
 # first tick after it, heard within 2 frames; a firework's whistle each time
 # a shell rises (every 32 frames: Miami has one shell a loop) for the first
@@ -26,7 +27,7 @@
 +0   until _G+79 02
 +0   mark
 +0   expect _G+78 01
-+0   changes 0 14 _snd_starts 0 0 12
++0   changes 0 14 _snd_starts 0 0 11
 +0   onsets 0 1 12 0
 +0   until _screen 02
 +0   until 0xFF40 53

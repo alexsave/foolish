@@ -90,13 +90,30 @@ int main(void) {
     { const uint8_t s0 = snd_starts; int t;
       snd_strike_at(SND_PLACE, 0x0004u, 0, 2, 0);
       for (t = 0; t < 19; t++) { snd_tick(); snd_host_clock++; }   // the clock reaches 0x0003
-      CHECK(snd_starts == s0, "a held strike started before its clock (%d starts)", (uint8_t)(snd_starts - s0));
+      CHECK(snd_starts == s0, "a held strike started before its time on the clock, %d starts", (uint8_t)(snd_starts - s0));
       snd_tick(); snd_host_clock++;                                  // 0x0004 now
       CHECK(snd_starts == s0, "a held strike started on the tick the clock reached it, before the tick saw it");
       snd_tick();
       CHECK((uint8_t)(snd_starts - s0) == 1, "a held strike did not start on the first tick at its clock");
       CHECK(ticks_to_start(10) == (int)SND_STAGGER, "the held beat's second card was not a stagger after the first"); }
     snd_host_clock = 0;
+
+    // the slide into the hand takes the noise channel from the pickup it is
+    // struck under (the same priority): its first row is written
+    {
+        int took = 0;
+        snd_init();
+        snd_strike(SND_PICKUP, 0, 1, 0);
+        for (int t = 0; t < 12; t++) snd_tick();
+        last[0x21] = 0xEE; last[0x22] = 0xEE;
+        snd_strike(SND_INTO_HAND, 0, 1, 0);
+        snd_tick();
+        for (int k = 0; k < snd_cues[SND_INTO_HAND].n_takes; k++) {
+            const snd_row *r = snd_cues[SND_INTO_HAND].takes[k].v[3];
+            if (last[0x21] == r->r2 && last[0x22] == r->r3) took = 1;
+        }
+        CHECK(took, "the slide into the hand did not take the channel from the pickup (NR42 0x%02X NR43 0x%02X)", last[0x21], last[0x22]);
+    }
 
     // the round robin: the same cue struck twice running plays two takes
     // (PLACE's takes differ in their third row's volume, NR42)

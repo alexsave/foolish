@@ -81,7 +81,7 @@ void snd_init(void);
 // SND_STAGGER apart, from the delay on (never before it: a sound trails its
 // picture).
 void snd_strike(uint8_t cue, uint8_t delay, uint8_t n, uint8_t flags);
-// The same, held until the frame clock (SND_CLOCK: sys_time, the VBlanks, on
+// The same, held until the frame clock, SND_CLOCK (sys_time, the VBlanks, on
 // the Game Boy) reaches `at`, then `delay` ticks more: a landing, on the clock
 // its flight runs on. A tick (60.24 Hz) slides against a frame (59.73 Hz), so
 // a delay in ticks alone lands anywhere within a frame of the VBlank it aims
@@ -98,8 +98,6 @@ void snd_claim(void);
 #ifdef SND_HOST
 extern volatile uint16_t snd_host_clock;
 #define SND_CLOCK snd_host_clock
-#else
-#define SND_CLOCK sys_time
 #endif
 
 // The register write. The Game Boy's is a store; the host defines its own.

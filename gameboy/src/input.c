@@ -83,6 +83,9 @@ static void in_tick(void) {
     // then lands in the picture). Only VBlank can come in meanwhile (the next
     // timer interrupt is a tick away, longer than any tick), and it touches
     // nothing of the sound's; the pad is read above, before it.
+    // Nothing sounding (always so while a bot thinks): no call, no frame, no
+    // nesting, so a think's stack and time are as they were.
+    if (!snd_active) return;
     enable_interrupts();
     SND_PROF_ENTER();
     snd_tick();

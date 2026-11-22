@@ -13,5 +13,5 @@
 +0   until _fly_n 01
 +8   mark _fly_t0 12
 +0   expect _G+76 01
-+0   changes -13 20 _snd_starts -12 0 15
-+0   onsets -1 6 12 0
++0   changes -13 20 _snd_starts -12 -1 15
++0   onsets -1 2 12 0

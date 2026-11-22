@@ -1,4 +1,5 @@
-# file ~ exact text ~ replacement ~ what the mutant breaks (tests/rom_mutants.sh)
+# file ~ exact text ~ replacement ~ what the mutant breaks (tests/rom_mutants.sh);
+# a file is under src/ (../audio/ for the sound driver)
 main.c~    if (nc == 0 && pass_ok) { fire(GD_PASS, &card, 1); return; }~    if (0) { fire(GD_PASS, &card, 1); return; }~UP no longer passes at once with a pass-only card
 main.c~    if (in_pressed(J_DOWN)) { if (in_target) in_target = 0; else take_or_good(); dirty = 1; }~    if (in_pressed(J_DOWN)) { take_or_good(); dirty = 1; }~DOWN in target mode takes instead of backing out
 main.c~    else if (in_a_held()) sweep(step);~    else if (0) sweep(step);~A held + RIGHT moves without selecting
@@ -8,3 +9,12 @@ main.c~    if (pills & GD_PILL_PICKUP) fire(GD_PICKUP, 0, 0);~    if (0) fire(GD
 main.c~        if (dash_item == DASH_CONTINUE) { go_table(); return; }~        if (0) { go_table(); return; }~CONTINUE deals a new game instead
 main.c~        in_keep_except(J_START);~        ;~presses latched with START are dropped
 input.c~        add_TIM(in_tick);~        add_VBL(in_tick);~buttons read on VBlank (none while the LCD is off)
+gd_sound.c~    snd_strike_at(cue, (uint16_t)(land - lead), 0, n, flags);~    snd_strike_at(cue, (uint16_t)(land - lead - 1u), 0, n, flags);~a landing's sound held a frame early
+../audio/snd.h~#define SND_MAX_HITS   6u~#define SND_MAX_HITS   7u~seven strikes a beat, not the website's six
+../audio/snd.h~#define SND_STAGGER    3u~#define SND_STAGGER    0u~the cards of a beat strike at once, not a stagger apart
+../audio/snd.c~            if ((int16_t)(clock - S.q_at[i]) < 0) { live = 1; continue; }~            ;~a landing's sound not held for its frame
+../audio/snd.c~    BANK_OUT;~    ;~the sound tick leaves the tables' bank mapped
+main.c~        if (snd_busy()) return;~        ;~Seoul and Moscow think over a cue still sounding
+main.c~        snd_yield();~        ;~Seoul and Moscow think without taking the sound's RAM
+gd_sound.c~    if (g->status != GD_PLAYING && gd_result(g) != GD_RESULT_DRAW) snd_strike(SND_OUT, 0, 1, 0);~~no OUT on the game's last move
+main.c~            if (!fw_quiet) snd_strike(SND_BURST, 0, 1, 0);~            snd_strike(SND_BURST, 0, 1, 0);~the fireworks heard past their first 4 seconds

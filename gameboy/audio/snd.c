@@ -42,8 +42,22 @@ static snd_state S;
 // back is always the bank the interrupted code wants.
 #ifdef __SDCC
 #include <gb/gb.h>          // sys_time, the frame clock
+// The frame clock as the picture has it: sys_time, plus one for a VBlank that
+// has begun (LY 144 on) but whose interrupt has not run yet (main.c
+// line_clock does the same). A tick can land there, and without the plus one
+// it held a landing a whole tick past its VBlank. Read again until sys_time
+// reads the same on both sides, so a VBlank in between (the tick runs with
+// interrupts on) never tears or skews it; nothing here turns interrupts off.
+static uint16_t frame_clock(void) {
+    uint16_t c;
+    uint8_t ly, f;
+    do { c = sys_time; ly = LY_REG; f = IF_REG; } while (c != sys_time);
+    if (ly >= 144u && (f & VBL_IFLAG)) c++;
+    return c;
+}
+#define SND_CLOCK frame_clock()
 #endif
-// a queued strike held for the frame clock (snd_strike_at), in q_flags
+// a queued strike held for the frame clock, by snd_strike_at: in q_flags
 #define SND_HELD 0x80u
 
 #ifdef SND_BANK
@@ -224,11 +238,17 @@ void snd_strike_at(uint8_t cue, uint16_t at, uint8_t delay, uint8_t n, uint8_t f
 
 void snd_tick(void) {
     uint8_t live = 0;
+    uint16_t clock;
     // nothing sounding, or a bot thinking (snd_yield cleared this, and
     // snd_strike will not set it again until snd_claim): one load and a branch
     if (!snd_active) return;
     {
     BANK_IN;
+    // The frame clock, read once for the whole tick: the tick runs with
+    // interrupts on (src/input.c), so a VBlank can come in between two reads,
+    // and a held beat's cards read on either side of it began a tick apart
+    // (a 2-tick stagger, caught by scripts/sound_attack.txt).
+    clock = SND_CLOCK;
     STEP_VOICE(0);
     STEP_VOICE(1);
     STEP_VOICE(2);
@@ -242,7 +262,7 @@ void snd_tick(void) {
             if (!*w) continue;
             if (S.q_flags[i] & SND_HELD) {
                 // held until the frame clock reaches q_at (16 bits, across its wrap)
-                if ((int16_t)(SND_CLOCK - S.q_at[i]) < 0) { live = 1; continue; }
+                if ((int16_t)(clock - S.q_at[i]) < 0) { live = 1; continue; }
                 S.q_flags[i] &= (uint8_t)~SND_HELD;
             }
             if (--*w) { live = 1; continue; }

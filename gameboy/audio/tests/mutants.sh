@@ -23,7 +23,16 @@ try "backwards ignored" 's/while (r\[1\].t) r++;/;/'
 try "far ignored" 's/if (flags \& SND_FAR) r2 =/if (0) r2 =/'
 try "yield leaves the tick running" '/^void snd_yield/,/^}/ s/snd_active = 0;/;/'
 try "yield counts no cut" 's/if (snd_busy()) snd_cut++;/;/'
-try "held strike not held" 's/if ((int16_t)(SND_CLOCK - S.q_at\[i\]) < 0) { live = 1; continue; }/;/'
+try "held strike not held" 's/if ((int16_t)(clock - S.q_at\[i\]) < 0) { live = 1; continue; }/;/'
 try "round robin always take 0" 's/    t = \&c->takes\[k\];/    t = \&c->takes[0];/'
+# the tables' own rules (snd_tab.c is generated: a mutant of the generator's output)
+trytab() {
+    name=$1; script=$2
+    sed "$script" snd_tab.c > build/mut/snd_tab.c
+    if cmp -s snd_tab.c build/mut/snd_tab.c; then echo "mutant $name: pattern not found"; fail=$((fail+1)); return; fi
+    $CC -O2 -std=c11 -w -I. -I host -DSND_HOST -DSND_OVERLAY='"scratch.h"' host/snd_test.c snd.c build/mut/snd_tab.c -o build/mut/t || { echo "mutant $name: does not build"; fail=$((fail+1)); return; }
+    if build/mut/t > build/mut/out.txt; then echo "mutant $name: SURVIVED"; fail=$((fail+1)); else echo "mutant $name: caught ($(grep -m1 FAIL build/mut/out.txt | sed 's/.*: //'))"; pass=$((pass+1)); fi
+}
+trytab "slide into the hand at priority 1" 's/\[SND_INTO_HAND\] = { 2,/[SND_INTO_HAND] = { 1,/'
 echo "mutants: $pass caught, $fail not"
 [ $fail -eq 0 ]

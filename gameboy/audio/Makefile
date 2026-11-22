@@ -13,7 +13,7 @@ CC       ?= cc
 CFLAGS   := -O2 -std=c11 -Wall -Wextra -I. -DSND_HOST
 PY       := python3 -I
 
-.PHONY: preview web tables render compare clean test
+.PHONY: preview web tables render compare clean test tablecheck
 
 build/soundgen: $(wildcard $(SOUNDGEN)/*.c $(SOUNDGEN)/c/*.c $(SOUNDGEN)/c/*.h $(SOUNDGEN)/tuning.tsv)
 	@mkdir -p build
@@ -60,3 +60,10 @@ build/snd_test: host/snd_test.c host/scratch.h snd.c snd.h snd_tab.c
 test: build/snd_test
 	build/snd_test
 	sh tests/mutants.sh
+	sh tests/snd_no_di.sh
+
+# snd_tab.c must be what the generator makes of the takes and jingles.txt,
+# byte for byte (it is committed; this regenerates it into build/ and compares)
+tablecheck: build/web.stamp
+	$(PY) tools/gen_tab.py build/web_wav build/cue_takes.c jingles.txt build/snd_tab_check.c build/check 60 > /dev/null
+	cmp build/snd_tab_check.c snd_tab.c && echo "tablecheck: snd_tab.c regenerates byte for byte"

@@ -20,7 +20,7 @@
 +8   mark _fly_t0 0
 +0   expect _G+79 02
 +0   expect _G+78 02
-+0   changes 0 14 _snd_starts 0 0 12
++0   changes 0 14 _snd_starts 0 0 11
 +0   onsets 0 1 12 0
 +0   until _screen 02
 +0   until 0xFF40 53

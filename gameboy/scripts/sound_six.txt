@@ -3,8 +3,10 @@
 # after the deal against New York: four battles of spades 6..9 covered by
 # 10..K, New York (attacking) holding the 6..9 of hearts and clubs, I hold
 # eight diamonds; New York throws in the most non-trump cards it can, all
-# eight. Four fly, the rest land at once; the landing strikes six times from
-# the first tick after the landing's VBlank (the mark), 3 ticks apart.
+# eight. Four fly, the rest land at once; the landing strikes six times, 3
+# ticks apart, the first on the first tick of the flight's last frame (its
+# lead-in), each impact a tick after its strike: from the landing frame (the
+# mark) on.
 @99  poke _sys_time 07 00
 @99  audio start
 @100 press DOWN
@@ -22,5 +24,5 @@
 
 +8   mark _fly_t0 12
 +0   expect _G+74 0c
-+0   changes -13 20 _snd_starts -12 0 3 6 9 12 15
++0   changes -13 20 _snd_starts -12 -1 2 5 8 11 14
 +0   onsets -1 18 12 0 3 6 9 12 15
