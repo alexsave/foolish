@@ -11,7 +11,7 @@ rm -rf "$d"; mkdir -p "$d/build" "$d/shots"
 cp -R src audio art tests scripts tools Makefile "$d/"
 cp build/gbrun build/gd_binom.h "$d/build/"
 cp shots/*_ref.png "$d/shots/"          # references a script compares against (gbrun same)
-make -s -C "$d" build/durak.gb >"$d/make.log" 2>&1 && (cd "$d" && sh tests/scripts.sh >scripts.log 2>&1) \
+make -s -C "$d" build/durak.gb build/durak_nocatch.gb >"$d/make.log" 2>&1 && (cd "$d" && sh tests/scripts.sh >scripts.log 2>&1) \
     || { echo "control: the unmutated copy fails; see $d"; exit 1; }
 echo "control: the unmutated copy passes"
 while IFS='~' read -r file from to what; do
@@ -24,7 +24,7 @@ while IFS='~' read -r file from to what; do
     cp shots/*_ref.png "$d/shots/"      # references a script compares against (gbrun same)
     FROM="$from" TO="$to" perl -0pi -e 'my $n = s/\Q$ENV{FROM}\E/$ENV{TO}/g; die "no match\n" unless $n' "$d/src/$file" \
         || { echo "mutant $i: TEXT NOT FOUND ($what)"; missed=$((missed+1)); continue; }
-    if ! make -s -C "$d" build/durak.gb >"$d/make.log" 2>&1; then
+    if ! make -s -C "$d" build/durak.gb build/durak_nocatch.gb >"$d/make.log" 2>&1; then
         echo "mutant $i: DOES NOT BUILD ($what)"; missed=$((missed+1)); continue
     fi
     if (cd "$d" && sh tests/scripts.sh >scripts.log 2>&1); then

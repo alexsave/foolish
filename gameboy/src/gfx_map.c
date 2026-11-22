@@ -28,13 +28,17 @@ static void gfx_vbl(void) {
     if (flip_req) { LCDC_REG ^= (uint8_t)(LCDCF_BG9C00 | LCDCF_WIN9C00); flip_req = 0; }
 }
 
-// One row, into both maps (the thinking dots, from the interrupt, while the
-// search, not a flush, has the main loop: one row cannot tear).
+// One row straight into the map on show (the thinking dots, from the
+// interrupt, while the search, not a flush, has the main loop: one row cannot
+// tear); the back map gets it later (stale). A row written twice cost Moscow's
+// think 0.5% (a row is about 11 scanlines). With a flip waiting, the map on
+// show is about to go: then both.
 void gfx_flush_row(uint8_t y) {
     const uint16_t o = (uint16_t)y * SCR_W;
     if (shown_valid && !memcmp(map + o, shown + o, SCR_W)) return;
     set_bkg_tiles(0, y, SCR_W, 1, map + o);
-    set_win_tiles(0, y, SCR_W, 1, map + o);
+    if (flip_req) set_win_tiles(0, y, SCR_W, 1, map + o);
+    else stale[y >> 3] |= (uint8_t)(1u << (y & 7u));
     memcpy(shown + o, map + o, SCR_W);
 }
 
@@ -63,7 +67,9 @@ void gfx_flush(void) {
 // (what is on show, `shown`), so the next flush seldom has to write a row
 // twice: the main loop calls this once a pass. Never while a flip waits (the
 // back map is then the one about to go up).
+#ifndef CATCH_UP_ROWS
 #define CATCH_UP_ROWS 2
+#endif
 void gfx_catch_up(void) {
     uint8_t y, k = CATCH_UP_ROWS;
     if (flip_req || !(stale[0] | stale[1] | stale[2])) return;

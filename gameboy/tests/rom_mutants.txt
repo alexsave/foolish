@@ -26,3 +26,5 @@ main.c~                    if (dl_flags & DL_CUE) {~                    if (0) {
 main.c~                        else gd_snd_deal(dl_seat, (uint16_t)(fly_t0 + DEAL_FRAMES));~                        else gd_snd_deal(dl_seat, (uint16_t)(fly_t0 + DEAL_FRAMES + 2u));~a dealt card's landing heard two frames late
 main.c~                        if (dl_seat == DL_TRUMP) gd_snd_trump(~                        if (0) gd_snd_trump(~the trump turned up sounds as a dealt card
 gfx_map.c~        if (!on) set_bkg_tiles(0, y, SCR_W, 1, map + o);~        set_bkg_tiles(0, y, SCR_W, 1, map + o);~a redraw written into the map on show (it tears)
+gfx_map.c~        if (!changed && !STALE(y)) continue;~        if (!changed) continue;~a flush leaves the rows the back map lacks (shown once the catch-up is off)
+gfx_map.c~        set_win_tiles(0, y, SCR_W, 1, shown + (uint16_t)y * SCR_W);~        set_win_tiles(0, y, SCR_W, 1, shown + (uint16_t)y * SCR_W + 1u);~the catch-up writes a row one tile off
