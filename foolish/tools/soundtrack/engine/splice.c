@@ -401,6 +401,25 @@ static void sweep(float *X[2], long Ns, int lp, long ks, long ke, double f0, dou
     }
 }
 
+// BASS: the band under 150 Hz is taken out with no phase shift (4th order Butterworth, forward and then backward) and
+// added back at the curve's gain, so where the curve is 0 dB the clip is untouched, sample for sample.
+static void bass_band(float *X[2], long Ns, const Stmt *c, const Map *m) {
+    float *lo = xcalloc(Ns, sizeof(float));
+    for (int ch = 0; ch < 2; ch++) {
+        for (long i = 0; i < Ns; i++) lo[i] = X[ch][i];
+        for (int dir = 0; dir < 2; dir++) {
+            Bq a = bq_lp(150, 0.5412), b = bq_lp(150, 1.3066);
+            for (long i = 0; i < Ns; i++) { long k = dir ? Ns - 1 - i : i; lo[k] = (float)bq(&b, bq(&a, lo[k])); }
+        }
+        int seg = 0;
+        for (long i = 0; i < Ns; i++) {
+            double db = curve_at(&c->bass, map_u(m, (double)(i - LEAD)) / SR, &seg);
+            if (db != 0) X[ch][i] += (float)((db2a(db) - 1) * lo[i]);
+        }
+    }
+    free(lo);
+}
+
 static void render_clip(Stmt *c) {
     Src *s = &g_src[c->src]; src_load(s);
     double target = c->lufs_set ? (c->lufs_off ? NAN : c->lufs_v) : c->level, meas = -200, lev_db = 0;
@@ -437,20 +456,18 @@ static void render_clip(Stmt *c) {
     }
     // DC removal, level and rides, bands, EQ
     Bq dc[2] = {bq_hp(18, 0.7071), bq_hp(18, 0.7071)};
-    Bq lp1[2] = {bq_lp(150, 0.7071), bq_lp(150, 0.7071)}, lp2[2] = {bq_lp(150, 0.7071), bq_lp(150, 0.7071)};
-    Bq hp1[2] = {bq_hp(150, 0.7071), bq_hp(150, 0.7071)}, hp2[2] = {bq_hp(150, 0.7071), bq_hp(150, 0.7071)};
     Bq eq[2][3]; for (int ch = 0; ch < 2; ch++) { eq[ch][0] = bq_lshelf(120, c->eq[0]); eq[ch][1] = bq_peak(1000, 0.7, c->eq[1]); eq[ch][2] = bq_hshelf(5000, c->eq[2]); }
-    int rs = 0, bsg = 0;
+    int rs = 0;
     for (long i = 0; i < Ns; i++) {
         double t = map_u(&m, (double)(i - LEAD)) / SR;
         double g = db2a(c->lev_db + (c->ride.n ? curve_at(&c->ride, t, &rs) : 0));
-        double gb = c->bass.n ? db2a(curve_at(&c->bass, t, &bsg)) : 1;
-        for (int ch = 0; ch < 2; ch++) {
-            double x = bq(&dc[ch], X[ch][i]) * g;
-            if (c->bass.n) { double lo = bq(&lp2[ch], bq(&lp1[ch], x)), hi = bq(&hp2[ch], bq(&hp1[ch], x)); x = hi + lo * gb; }
-            if (c->has_eq) for (int q = 0; q < 3; q++) x = bq(&eq[ch][q], x);
-            X[ch][i] = (float)x;
-        }
+        for (int ch = 0; ch < 2; ch++) X[ch][i] = (float)(bq(&dc[ch], X[ch][i]) * g);
+    }
+    if (c->bass.n) bass_band(X, Ns, c, &m);
+    if (c->has_eq) for (int ch = 0; ch < 2; ch++) for (long i = 0; i < Ns; i++) {
+        double x = X[ch][i];
+        for (int q = 0; q < 3; q++) x = bq(&eq[ch][q], x);
+        X[ch][i] = (float)x;
     }
     // filter sweeps
     long B = SR / 20;

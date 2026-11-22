@@ -193,7 +193,9 @@ def bass_flat():
     R = run(['LEVEL off', f'SRC n {BNP}', 'CLIP n 1 19 PRE 0 BASS 0:0'], 'b0')
     bands = [(f * 2 ** (-1 / 6), f * 2 ** (1 / 6)) for f in (40, 63, 100, 150, 250, 400, 1000, 4000, 12000)]
     h = transfer(bref(), R, bands); w = max(abs(v) for v in h)
-    return R.rc == 0 and w < 0.2, f'worst {w:.3f} dB'
+    r0 = bref().y; n = min(len(r0), len(R.y)) - SR
+    d = rms_db(R.y[:n] - r0[:n]) - rms_db(r0[:n])
+    return R.rc == 0 and w < 0.2 and d < -70, f'worst {w:.3f} dB, against no BASS {d:.1f} dB'
 check('BASS 0 dB is flat', bass_flat)
 def eq_check():
     R = run(['LEVEL off', f'SRC n {BNP}', 'CLIP n 1 19 PRE 0 EQ 6:0:-12'], 'eq1'); lo, mid, hi = transfer(bref(), R, [(30, 50), (900, 1100), (10000, 14000)])
