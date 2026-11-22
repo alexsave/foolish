@@ -36,6 +36,8 @@
 // step but press acts after its frame ran; a press holds its keys while its
 // first frame runs. So a press and a check on the same frame see the press.
 // A symbol is looked up in the .noi file the linker writes ("DEF _name 0xADDR").
+#define _DEFAULT_SOURCE 1      // strdup and PATH_MAX (libmgba's headers) under -std=c11 on glibc
+#include <limits.h>
 #include <mgba/core/core.h>
 #include <mgba/core/config.h>
 #include <mgba/core/log.h>
