@@ -267,6 +267,21 @@ The cross-compiler checks: `make moscowcheck` (100 decisions, 6 of them through 
 Mutation checked: a ROM-only Moscow with 5 worlds in stage 1, or 900 solver nodes, fails `moscowcheck`.
 `solvecheck` also caught a real bug no Mac test can see: the probe read the frame (in RAM bank 0) after switching to the table's bank.
 
+## Sound
+
+The design is `audio/DESIGN.md` (approach A, synthesis, for every cue); this section is its build: the driver (`audio/snd.c`) on the input's 60 Hz timer interrupt, its tables (`audio/snd_tab.c`) in ROM bank 9, its working state overlaid on the search bots' candidate list, and the cues struck from the game (`src/gd_sound.c`).
+
+### Hypotheses (written before building or measuring)
+
+- ROM: bank 0 grows by the driver, about 1.5 KB (11.1 to about 12.6 KB; falsifier: over 14 KB, which would crowd the 16 KB bank); bank 9 holds the tables and the game's cue code, about 5.6 KB; bank 1 grows by under 150 bytes (a call or two a hook).
+- Work RAM: 0 bytes (the 53 bytes of state overlay `gd_bot_cand`, 228 bytes); HRAM: 5 bytes (19 to 24 of 127). Falsifier: any growth of `_DATA` beyond what a counter for the tests costs (at most 2 bytes).
+- Stack: the deepest reach over a game against Moscow grows by the driver's frame inside the interrupt, about 15 bytes (320 to about 335), leaving about 65 spare. Falsifier: under 60 spare.
+- `snd_tick` while a cue sounds: about 1,000 M-cycles at its worst (the design's estimate from SDCC's assembly; falsifier: over 1,500, the design's line for moving the state to fixed-address arrays); idle (nothing sounding, or a think): under 60 M-cycles with the bank save and restore.
+- The timer interrupt's lateness (from the timer's overflow to `in_tick`, read from TIMA and DIV, 61 us steps): at most 1.2 ms with the LCD on (the sprite staging copy, 1.07 ms, plus a VBlank handler), at most 1.8 ms in a screen load (one `from_bank` piece, 1.7 ms); no tick lost (the tick count over a script within 1 of the frame count times 60.24 / 59.73).
+- Moscow's think time on `scripts/game_moscow.txt`: the same 26 decisions (the wait for a cue to finish may move the scripted player's presses, so first the game must be the same one: the same playout and ply sums), and the average and worst decision each within +0.2% (the idle tick is about 0.14% of the CPU; falsifier: over +0.5%, the design's bound).
+- The wait before a think (from the board's last change to `snd_yield`): at most 25 frames over `BOT_DELAY` (a transfer's slide), 0 on most moves; over the Moscow game, under 3 frames on average.
+- Onsets in mGBA's audio: a landing's sound begins on the landing frame (`FLY_FRAMES` after the move) or up to 2 frames after it, never before; the take-off cues (LIFT, PICKUP) begin within 2 frames of the move; two cards land 3 frames apart; six or more cards make exactly 6 onsets.
+
 ## Rules: foolish's variant, two seats
 
 Read from `foolish/c/src/game.c`, `legal.c` and `card.h` and ported to `src/gd_rules.c`.
