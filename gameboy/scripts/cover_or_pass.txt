@@ -29,4 +29,7 @@
 # passed: two queens on the table and Miami defends
 +0   expect _G+74 02
 +0   expect _G+76 01
-+0   shot shots/22_passed.png 3
+# the shot once the queen has landed and the board shows it (a redraw goes
+# up whole at the VBlank after it, README "The screen in one piece")
++0   until _fly_n 00
++4   shot shots/22_passed.png 3
