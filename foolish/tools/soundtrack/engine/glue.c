@@ -15,8 +15,25 @@
 //                              exponential decay with a 2.2 s time constant while held, release 0.25 s, a 4.5 Hz tremolo
 //                              of +-1.5 dB, opposite in left and right
 //   SUB  beat dur midi db      a sine with a touch of tanh saturation, attack 15 ms, release 80 ms, mono
-// beat and dur are in beats at TEMPO, midi may be fractional, db is the peak level of that statement in dBFS before the
-// reverb. Output: 48 kHz stereo 24 bit, scaled as a whole when its peak would pass -1 dBFS (the scale is printed on stderr).
+//   PIANO beat dur midi[,midi...] vel   a sampled grand piano note or chord (Salamander Grand Piano V3, 48 kHz 24 bit stereo,
+//                              files <Note><octave>v<layer>.wav with Note one of A C D# F#, a sample every minor third A0..C8,
+//                              layers 1 (softest) to 16, found by probing A4v1, A4v2, ... in the SAMPLES directory). Per note:
+//                              the nearest sampled root, resampled with cubic interpolation to the (fractional) midi pitch, its
+//                              leading silence trimmed (1.5 ms kept before the first sample over 0.3 percent of its peak). vel is
+//                              1..127 (fractions allowed): layer = floor((vel - 1) * nlayers / 127) (1..127 spread evenly over the
+//                              layers present, 127 -> the loudest), and a gain of -30 + 30 * vel / 127 dB on top of the sample's
+//                              own recorded level (so 0 dB at vel 127). The note rings with its natural decay for dur beats, then a
+//                              damper releases it over 0.30 s (a raised-cosine fade to zero), unless the pedal is down. A piano
+//                              statement is not peak-normalised (dynamics come from vel, db plays no part); it goes through the
+//                              same reverb send as the other voices. A sample that ends before the note does just ends.
+//   PEDAL beat dur             the sustain pedal is down for [beat, beat + dur): a PIANO note that starts inside it, or is sounding
+//                              when it goes down (starts before and its own end is at or after the pedal's start), does not release
+//                              at its own end but rings with its natural decay until the span's end, then releases over 0.30 s
+//   SAMPLES /abs/dir           the Salamander directory (default PIANO_SAMPLES_DEFAULT below); a missing directory or sample file is
+//                              fatal and names the path and the line. Samples are read once, only those a score needs.
+// beat and dur are in beats at TEMPO and may be fractional anywhere (TEMPO 60 makes a beat a second, so a score can be written in
+// seconds: PIANO 1.5 0.25 60 80 is a quarter of a second at 1.5 s), midi may be fractional, db is the peak level of that statement
+// in dBFS before the reverb. Output: 48 kHz stereo 24 bit, scaled as a whole when its peak would pass -1 dBFS (the scale is printed on stderr).
 // Every random draw comes from one Rng seeded by SEED, so two runs are byte-identical.
 // mix.h and dsp.h hold helpers (limiter, loudness, wav reader, shelves) that a glue score does not need
 #pragma clang diagnostic ignored "-Wunused-function"
@@ -53,9 +70,19 @@
 #define SUB_ATTACK_S 0.015
 #define SUB_RELEASE_S 0.08
 #define REVERB_RT 2.4
+#define PIANO_SAMPLES_DEFAULT "/Users/alex/Dev/soundtrack-samples/salamander/SalamanderGrandPianoV3_48khz24bit/48khz24bit"
+#define PIANO_ROOT0 21               // A0; roots every 3 semitones up to C8 (108)
+#define PIANO_NROOTS 30
+#define PIANO_MAXLAYERS 16
+#define PIANO_RELEASE_S 0.30
+#define PIANO_DB_RANGE 30.0
+#define PIANO_TRIM_KEEP_S 0.0015
+#define PIANO_TRIM_THRESH 0.003
+#define MAX_PATH_LEN 1024
 
-typedef enum { PAD, KEYS, SUBV } Kind;
-typedef struct { Kind kind; int line; double beat, dur, db; int n; double midi[MAX_NOTES]; } Stmt;
+typedef enum { PAD, KEYS, SUBV, PIANO } Kind;
+typedef struct { Kind kind; int line; double beat, dur, db, vel; int n; double midi[MAX_NOTES]; } Stmt;
+typedef struct { double beat, dur; } Span;
 
 static void die(int line, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
 static void die(int line, const char *fmt, ...) {
@@ -74,11 +101,13 @@ static double num(int line, const char *s, const char *what, double lo, double h
 }
 
 static Stmt g_st[MAX_STMT]; static int g_nst;
+static Span g_ped[MAX_STMT]; static int g_nped;
+static char g_samples[MAX_PATH_LEN] = PIANO_SAMPLES_DEFAULT;
 static double g_tempo, g_len = -1, g_rev_db = -10, g_cutoff = 1800; static uint64_t g_seed = GLUE_SEED;
 
 static void parse(const char *path) {
     FILE *f = fopen(path, "r"); if (!f) { perror(path); exit(1); }
-    char buf[4096]; int line = 0, seen_tempo = 0, seen_len = 0, seen_rev = 0, seen_cut = 0, seen_seed = 0;
+    char buf[4096]; int line = 0, seen_tempo = 0, seen_len = 0, seen_rev = 0, seen_cut = 0, seen_seed = 0, seen_samples = 0;
     while (fgets(buf, sizeof buf, f)) {
         line++;
         if (!strchr(buf, '\n') && !feof(f)) die(line, "line too long");
@@ -98,10 +127,19 @@ static void parse(const char *path) {
         else if (!strcmp(k, "REVERB")) { ARGS(1); ONCE(seen_rev); g_rev_db = num(line, tok[1], "reverb level", -150, 24); }
         else if (!strcmp(k, "CUTOFF")) { ARGS(1); ONCE(seen_cut); g_cutoff = num(line, tok[1], "cutoff", 40, 20000); }
         else if (!strcmp(k, "SEED")) { ARGS(1); ONCE(seen_seed); g_seed = (uint64_t)num(line, tok[1], "seed", 0, 9007199254740992.0); }
-        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB")) {
+        else if (!strcmp(k, "SAMPLES")) {
+            ARGS(1); ONCE(seen_samples);
+            if (strlen(tok[1]) >= sizeof g_samples) die(line, "samples path too long");
+            snprintf(g_samples, sizeof g_samples, "%s", tok[1]);
+        }
+        else if (!strcmp(k, "PEDAL")) {
+            ARGS(2); if (g_nped == MAX_STMT) die(line, "too many pedal spans");
+            g_ped[g_nped].beat = num(line, tok[1], "beat", 0, 1e6); g_ped[g_nped].dur = num(line, tok[2], "duration", 0.001, 1e5); g_nped++;
+        }
+        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB") || !strcmp(k, "PIANO")) {
             if (g_nst == MAX_STMT) die(line, "too many notes");
             Stmt *s = &g_st[g_nst++]; memset(s, 0, sizeof *s); s->line = line;
-            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : SUBV;
+            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : !strcmp(k, "PIANO") ? PIANO : SUBV;
             ARGS(4);
             s->beat = num(line, tok[1], "beat", 0, 1e6);
             s->dur = num(line, tok[2], "duration", 0.001, 1e5);
@@ -112,7 +150,8 @@ static void parse(const char *path) {
                 s->midi[s->n++] = num(line, m, "midi note", 0, 127);
             }
             if (s->kind == SUBV && s->n != 1) die(line, "SUB takes one note");
-            s->db = num(line, tok[4], "level", -150, 0);
+            if (s->kind == PIANO) s->vel = num(line, tok[4], "velocity", 1, 127);
+            else s->db = num(line, tok[4], "level", -150, 0);
         } else die(line, "unknown statement '%s'", k);
     }
     fclose(f);
@@ -185,6 +224,69 @@ static void sub_note(Buf *o, double midi, double dur_s) {
     }
 }
 
+// ---- the sampled piano ----
+typedef struct { float *l, *r; long n; double sr; int loaded; } Smp;
+static Smp g_smp[PIANO_NROOTS][PIANO_MAXLAYERS]; static int g_nlayers;
+
+static void root_path(char *out, size_t sz, int ri, int layer) {   // layer is 1-based
+    static const char *const nm[4] = {"A", "C", "D#", "F#"};
+    int root = PIANO_ROOT0 + 3 * ri;
+    snprintf(out, sz, "%s/%s%dv%d.wav", g_samples, nm[ri % 4], root / 12 - 1, layer);
+}
+static int file_exists(const char *p) { FILE *f = fopen(p, "rb"); if (f) fclose(f); return f != NULL; }
+// layers present: A4v1, A4v2, ... in a row (at most 16)
+static void piano_probe(int line) {
+    char p[MAX_PATH_LEN + 32];
+    if (g_nlayers) return;
+    while (g_nlayers < PIANO_MAXLAYERS) { root_path(p, sizeof p, 16, g_nlayers + 1); if (!file_exists(p)) break; g_nlayers++; }
+    if (!g_nlayers) { root_path(p, sizeof p, 16, 1); die(line, "no piano samples in %s (looked for %s)", g_samples, p); }
+}
+static void smp_trim(Smp *x) {   // as sampler.h: drop leading silence, keeping 1.5 ms before the first sample over 0.3 percent of the peak
+    double pk = 1e-9; for (long i = 0; i < x->n; i++) pk = fmax(pk, fmax(fabsf(x->l[i]), fabsf(x->r[i])));
+    long a = 0; while (a < x->n && fabsf(x->l[a]) < pk * PIANO_TRIM_THRESH && fabsf(x->r[a]) < pk * PIANO_TRIM_THRESH) a++;
+    a -= (long)(PIANO_TRIM_KEEP_S * x->sr); if (a < 0) a = 0;
+    if (a > 0) { memmove(x->l, x->l + a, (x->n - a) * sizeof(float)); memmove(x->r, x->r + a, (x->n - a) * sizeof(float)); x->n -= a; }
+}
+static Smp *piano_sample(int ri, int layer, int line) {   // layer is 0-based; loaded on first use
+    Smp *x = &g_smp[ri][layer];
+    if (!x->loaded) {
+        char p[MAX_PATH_LEN + 32]; root_path(p, sizeof p, ri, layer + 1);
+        if (!file_exists(p)) die(line, "missing piano sample %s", p);
+        g_wav_quiet = 1; x->n = wav_read(p, &x->l, &x->r); x->sr = g_wav_sr; g_wav_quiet = 0;
+        if (x->n < 2) die(line, "empty piano sample %s", p);
+        smp_trim(x); x->loaded = 1;
+    }
+    return x;
+}
+static inline double cubic(const float *x, long n, double pos) {   // as sampler.h
+    long i = (long)pos; double t = pos - i;
+    double y0 = i > 0 ? x[i - 1] : x[0], y1 = i < n ? x[i] : 0, y2 = i + 1 < n ? x[i + 1] : 0, y3 = i + 2 < n ? x[i + 2] : 0;
+    double a = -0.5 * y0 + 1.5 * y1 - 1.5 * y2 + 0.5 * y3, b = y0 - 2.5 * y1 + 2 * y2 - 0.5 * y3, c = -0.5 * y0 + 0.5 * y2;
+    return ((a * t + b) * t + c) * t + y1;
+}
+// when the damper falls for a note held [t0, t1] (in beats): the end of the last pedal span that is down at some point of the note
+static double piano_hold_end(double t0, double t1) {
+    double e = t1;
+    for (int i = 0; i < g_nped; i++) {
+        double ps = g_ped[i].beat, pe = ps + g_ped[i].dur;
+        if (ps <= t1 && pe > t0 && pe > e) e = pe;
+    }
+    return e;
+}
+static void piano_note(float *L, float *R, long n, long at, double midi, double vel, double hold_s, int line) {
+    int ri = (int)lround((midi - PIANO_ROOT0) / 3.0); if (ri < 0) ri = 0; if (ri >= PIANO_NROOTS) ri = PIANO_NROOTS - 1;
+    int layer = (int)floor((vel - 1) * g_nlayers / 127.0); if (layer < 0) layer = 0; if (layer >= g_nlayers) layer = g_nlayers - 1;
+    Smp *x = piano_sample(ri, layer, line);
+    double ratio = pow(2, (midi - (PIANO_ROOT0 + 3 * ri)) / 12.0) * x->sr / SR, g = db2a(-PIANO_DB_RANGE + PIANO_DB_RANGE * vel / 127.0);
+    long len = lround((hold_s + PIANO_RELEASE_S) * SR) + 1; double pos = 0;
+    for (long i = 0; i < len && at + i < n; i++) {
+        double t = (double)i / SR, a = t < hold_s ? 1.0 : 0.5 * (1 + cos(M_PI * fmin(1.0, (t - hold_s) / PIANO_RELEASE_S)));
+        if (pos >= x->n - 1) break;
+        L[at + i] += (float)(cubic(x->l, x->n, pos) * a * g); R[at + i] += (float)(cubic(x->r, x->n, pos) * a * g);
+        pos += ratio;
+    }
+}
+
 static RevCfg hall(double rt) { return (RevCfg){rt, rt * 0.5, 10, 1.4, 200, 6000, 0.14, 1.0, 0.2, 0.25}; }
 // gain that makes a send of 0 dB come back as loud as the dry: steady pink noise through the same hall, wet RMS against dry
 // RMS (the calibration splice.c uses for a WASH; the raw hall returns about 30 dB less than it is given)
@@ -205,7 +307,9 @@ int main(int argc, char **argv) {
     double spb = 60.0 / g_tempo, end_beats = 0;
     for (int i = 0; i < g_nst; i++) {
         const Stmt *s = &g_st[i];
-        if (s->beat + s->dur > end_beats) end_beats = s->beat + s->dur;
+        double e = s->kind == PIANO ? piano_hold_end(s->beat, s->beat + s->dur) + PIANO_RELEASE_S / spb : s->beat + s->dur;
+        if (e > end_beats) end_beats = e;
+        if (s->kind == PIANO) piano_probe(s->line);
     }
     double len_beats = g_len > 0 ? g_len : end_beats;
     long body = lround(len_beats * spb * SR), n = body + lround(TAIL_S * SR);
@@ -214,6 +318,11 @@ int main(int argc, char **argv) {
     Rng rg = {g_seed};
     for (int i = 0; i < g_nst; i++) {
         const Stmt *s = &g_st[i];
+        if (s->kind == PIANO) {
+            long pat = lround(s->beat * spb * SR); double hold = (piano_hold_end(s->beat, s->beat + s->dur) - s->beat) * spb;
+            if (pat < n) for (int k = 0; k < s->n; k++) piano_note(L, R, n, pat, s->midi[k], s->vel, hold, s->line);
+            continue;
+        }
         double rel = s->kind == PAD ? PAD_RELEASE_S : s->kind == KEYS ? KEYS_RELEASE_S : SUB_RELEASE_S;
         double dur_s = s->dur * spb; long at = lround(s->beat * spb * SR), len = lround((dur_s + rel) * SR) + 1;
         if (at >= n) continue;

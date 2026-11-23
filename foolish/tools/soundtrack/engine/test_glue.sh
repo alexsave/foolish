@@ -116,6 +116,61 @@ def tail():
     a = db(rms(seg(m, 2.5, 3.5))); a0 = db(rms(seg(m0, 2.5, 3.5))); late = db(rms(seg(m, 5.5, 5.9)))
     return R.rc == 0 and a > -65 and a0 < -90 and late < a - 20, f'tail {a:.1f} dBFS at 2.5-3.5 s (dry render {a0:.1f}), {late - a:.1f} dB from it at 5.5-5.9 s'
 check('the reverb rings on after the last note', tail)
+# ---- PIANO / PEDAL / SAMPLES (the real Salamander samples; skipped, not failed, when the directory is missing) ----
+SAMP = '/Users/alex/Dev/soundtrack-samples/salamander/SalamanderGrandPianoV3_48khz24bit/48khz24bit'
+HAVE_SAMP = os.path.isdir(SAMP) and os.path.exists(SAMP + '/A4v1.wav')
+def piano(name, fn):
+    if ONLY and ONLY not in name: return
+    if not HAVE_SAMP: print('SKIP ' + name + ' - no sample directory ' + SAMP); sys.stdout.flush(); return
+    check(name, fn)
+def pk_hz(m, a, b, lo=100, hi=2000):
+    f, P = spec(seg(m, a, b)); k = (f > lo) & (f < hi); return f[k][np.argmax(P[k])]
+def piano_pitch():
+    out = []; ok = True
+    for midi, want in ((69, 440.0), (70, 466.1638)):
+        R = run(['TEMPO 60', 'LEN 3', DRY, f'PIANO 0 3 {midi} 90'], 'pp'); m = R.y.mean(axis=1); h = pk_hz(m, 0.3, 2.3, 100, 1000)
+        ok = ok and R.rc == 0 and abs(h - want) / want < 0.01; out.append(f'midi {midi}: {h:.1f} Hz (want {want:.1f})')
+    return ok, '; '.join(out)
+piano('PIANO at midi 69 is 440 Hz and at midi 70 (resampled) 466.2 Hz', piano_pitch)
+def piano_vel():
+    lv = {}
+    for v in (30, 100, 104, 110):
+        R = run(['TEMPO 60', 'LEN 3', DRY, f'PIANO 0 3 60 {v}'], 'pv'); lv[v] = db(rms(seg(R.y.mean(axis=1), 0.0, 1.0)))
+    big = lv[110] - lv[30]; same = lv[104] - lv[100]     # 100 and 104 share layer 12: the gain alone, 30 * 4 / 127 = 0.94 dB
+    return big >= 10 and 0.5 < same < 1.5 and big > 30 * 80 / 127 + 3, f'vel 110 is {big:.1f} dB above vel 30 (want >= 10, and more than the 18.9 dB of gain alone); vel 104 is {same:.2f} dB above vel 100 in the same layer (want 0.94)'
+piano('a higher vel is louder (vel 110 at least 10 dB above vel 30)', piano_vel)
+def piano_release():
+    A = run(['TEMPO 60', 'LEN 3', DRY, 'PIANO 0 1 57 90'], 'pr1'); a = A.y.mean(axis=1)
+    B = run(['TEMPO 60', 'LEN 4', DRY, 'PEDAL 0 4', 'PIANO 0 1 57 90'], 'pr2'); b = B.y.mean(axis=1)
+    da = db(rms(seg(a, 0.45, 0.55))) - db(rms(seg(a, 1.75, 1.85))); dbb = db(rms(seg(b, 0.45, 0.55))) - db(rms(seg(b, 1.75, 1.85)))
+    return A.rc == 0 and B.rc == 0 and da >= 30 and dbb < 12, f'dry: 1.8 s is {da:.1f} dB under 0.5 s (want >= 30); pedalled: {dbb:.1f} dB (want < 12)'
+piano('a note releases after its duration (>= 30 dB at 1.8 s) and rings under PEDAL (< 12 dB)', piano_release)
+def piano_pedal_end():
+    R = run(['TEMPO 60', 'LEN 4', DRY, 'PEDAL 0 3', 'PIANO 0 1 57 90'], 'pe'); m = R.y.mean(axis=1)
+    d = db(rms(seg(m, 2.85, 2.95))) - db(rms(seg(m, 3.75, 3.85)))
+    return R.rc == 0 and d >= 30, f'0.8 s after the pedal span ends the note is {d:.1f} dB under its level just before (want >= 30)'
+piano('a pedalled note is released when the span ends', piano_pedal_end)
+def piano_chord():
+    R = run(['TEMPO 60', 'LEN 3', DRY, 'PIANO 0 3 60,64,67 90'], 'pc'); f, P = spec(seg(R.y.mean(axis=1), 0.3, 2.3)); bad = []
+    for midi in (60, 64, 67):
+        w = 440 * 2 ** ((midi - 69) / 12); k = (f > w * 0.99) & (f < w * 1.01); near = (f > w * 0.9) & (f < w * 1.1)
+        if P[k].max() < 10 ** 0.5 * np.median(P[near]) * 10: bad.append(midi)
+    return R.rc == 0 and not bad, 'fundamentals present' if not bad else f'missing {bad}'
+piano('a chord 60,64,67 shows all three fundamentals', piano_chord)
+def piano_timing():
+    R = run(['TEMPO 120', 'LEN 8', DRY, 'PIANO 4 1 69 90'], 'pt'); m = np.abs(R.y.mean(axis=1))
+    on = int(np.argmax(m > 0.01 * m.max())) / SR
+    return R.rc == 0 and abs(on - 2.0) < 0.008, f'starts at {on:.4f} s'
+piano('a PIANO note at beat 4 of TEMPO 120 starts at 2.000 s', piano_timing)
+def piano_det():
+    sc = ['TEMPO 90', 'LEN 4', 'PEDAL 1 2', 'PIANO 0 2 60,64,67 70', 'PIANO 1.5 1 72.3 100', 'KEYS 1 2 72 -12']
+    a = run(sc, 'pd1'); b = run(sc, 'pd2')
+    return a.rc == 0 and a.bytes == b.bytes, f'same {a.bytes == b.bytes}'
+piano('two PIANO renders are byte-identical', piano_det)
+def piano_nodir():
+    R = run(['TEMPO 60', 'SAMPLES /nonexistent', 'PIANO 0 1 60 90'], 'pn')
+    return R.rc != 0 and '/nonexistent' in R.err and 'line 3' in R.err, f'rc {R.rc}, ' + R.err.strip()
+check('SAMPLES /nonexistent is fatal and names the path and the line', piano_nodir)
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
 T="$T" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"
