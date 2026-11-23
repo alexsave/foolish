@@ -363,6 +363,114 @@ def mixcity_len():
     ok = lambda v: subprocess.run(['bash', D + '/mix_city.sh', '--check-duration', v]).returncode == 0
     return ok('900.0') and ok('12.5') and not ok('900.001') and not ok('1800'), ''
 check('mix_city.sh fails over 900 s', mixcity_len)
+# ---------------------------------------------------------------- FX one-shots and the BUS filter
+ZP = W('zero', np.zeros(14 * SR)); LOWP = W('low', sine(14, 100, 0.05))
+def fxrun(fx, src=ZP, tag='fx', clip='CLIP z 1 11 PRE 0', extra=()):
+    return run(['LEVEL off', 'MASTER -30 -1.5', f'SRC z {src}', clip] + list(extra) + fx, tag)
+def band(x, f, kind):
+    return sg.sosfiltfilt(sg.butter(6, f, kind, fs=SR, output='sos'), x)
+def brms(x, a, b): return rms_db(sg_(x, a, b))
+def centroid(x, a, b):
+    seg = sg_(x, a, b) * np.hanning(int(round((b - a) * SR))); P = np.abs(np.fft.rfft(seg)) ** 2; f = np.fft.rfftfreq(len(seg), 1 / SR)
+    return float(np.sum(f * P) / np.sum(P))
+def fx_crash():
+    R = fxrun(['FX CRASH OFF 2 LEN 3 DB -20'], tag='fxc'); h = band(R.y[:, 0], 3000, 'hp')
+    after = brms(h, 2.0, 2.2); before = brms(h, 1.8, 2.0); late = brms(h, 4.3, 4.5)
+    return R.rc == 0 and after - before > 40 and late - after < -30, f'after {after:.1f} dB, before {before:.1f} dB, at 0.8 LEN {late - after:.1f} dB under the start'
+check('FX CRASH starts at the anchor and decays', fx_crash)
+def fx_revcym():
+    R = fxrun(['FX REVCYM OFF 2 LEN 3 DB -20'], src=LOWP, tag='fxr'); h = band(R.y[:, 0], 3000, 'hp')
+    last = brms(h, 4.8, 5.0); first = brms(h, 2.0, 2.6); gone = brms(h, 5.05, 5.35)
+    return R.rc == 0 and first - last < -30 and gone - last < -60, f'first 20% {first - last:.1f} dB, after the end {gone - last:.1f} dB, last 200 ms {last:.1f} dB'
+check('FX REVCYM swells to its end', fx_revcym)
+def sweep_case(kind, up):
+    R = fxrun([f'FX {kind} OFF 2 LEN 4 DB -20'], tag='fxs'); y = R.y[:, 0]
+    c0 = centroid(y, 2.0, 3.0); c1 = centroid(y, 5.0, 6.0); l0 = brms(y, 2.0, 2.4); l1 = brms(y, 5.5, 5.9); tail = brms(y, 6.05, 6.35)
+    ok = (c1 > 4 * c0 and l1 - l0 > 15) if up else (c0 > 4 * c1 and l0 - l1 > 15)
+    return R.rc == 0 and ok and tail < min(l0, l1) - 40, f'centroid {c0:.0f} -> {c1:.0f} Hz, level {l0:.1f} -> {l1:.1f} dB, after the end {tail:.1f}'
+check('FX RISER sweeps up and swells', lambda: sweep_case('RISER', True))
+check('FX DOWN sweeps down and fades', lambda: sweep_case('DOWN', False))
+def fx_boom():
+    R = fxrun(['FX BOOM OFF 2 LEN 2 DB -20'], tag='fxb'); y = R.y[:, 0]; lo = band(y, 80, 'lp'); hi = band(y, 2000, 'hp')
+    after = brms(lo, 2.05, 2.25); before = brms(lo, 1.5, 1.7); top = brms(hi, 2.05, 3.9)
+    return R.rc == 0 and after - before > 60 and top - after < -60 and np.max(np.abs(R.y[:, 0] - R.y[:, 1])) < 1e-6, f'sub {after:.1f} dB over {before:.1f}, above 2 kHz {top - after:.1f} dB under'
+check('FX BOOM is a mono sub impact', fx_boom)
+def onsets(x, a, b):
+    e = np.convolve(np.abs(band(x, 1500, 'hp')), np.ones(48) / 48, 'same'); out = []; i = int(a * SR)
+    while i < int(b * SR):
+        prev = np.max(e[i - 480:i - 144]) if i > 480 else 0
+        if e[i] > 3 * prev + 1e-5 and e[i] > 2e-4: out.append(i); i += int(0.03 * SR)
+        else: i += 1
+    return out
+def fx_roll():
+    R = fxrun(['FX ROLL OFF 1 LEN 4 BEAT 1 DB -20'], tag='fxo'); y = R.y[:, 0]
+    first = onsets(y, 0.99, 2.99); mid = onsets(y, 2.99, 3.99); last = onsets(y, 3.99, 5.05); allh = onsets(y, 0.99, 5.05)
+    ratio = (len(last) / 1.0) / (len(first) / 2.0)
+    pk = lambda i: np.max(np.abs(band(y, 1500, 'hp')[i:i + int(0.03 * SR)]))
+    rise = db(pk(allh[-1]) / pk(allh[0])) if allh else 0
+    return R.rc == 0 and (len(first), len(mid), len(last)) == (4, 4, 8) and abs(ratio - 4) < 0.5 and rise > 12 and abs(allh[-1] / SR - 4.875) < 0.01, f'hits {len(first)} {len(mid)} {len(last)}, density ratio {ratio:.2f}, last over first {rise:.1f} dB, last at {allh[-1] / SR if allh else 0:.3f}'
+check('FX ROLL builds on its grid', fx_roll)
+def bus_case(typ, curve, band_f, kind):
+    cue = ['LEVEL off', 'MASTER -22 -1.5', f'SRC n {NA}', 'CLIP n 1 11 PRE 0']
+    R0 = run(cue, 'bus0'); R = run(cue + [f'BUS {typ} OFF 2 CURVE {curve}'], 'bus1'); y = R.y[:, 0]
+    g0 = 10 ** (tfr(R0)[0]['gain_db'] / 20); g1 = 10 ** (tfr(R)[0]['gain_db'] / 20)
+    x = band(y, band_f, kind); mid = brms(x, 3.2, 3.8); pre = brms(x, 1.0, 1.8); post = brms(x, 5.5, 6.5)
+    n = min(len(R0.y), len(R.y)); d = np.abs(R.y[:n, 0] / g1 - R0.y[:n, 0] / g0)
+    out = np.concatenate([d[:s(1.99)], d[s(5.01):s(9.9)]])
+    return R.rc == 0 and pre - mid > 30 and post - mid > 30 and np.max(out) < 1e-4 and np.max(d[s(3.2):s(3.8)]) > 0.01, f'in the region {mid:.1f} dB, before {pre:.1f}, after {post:.1f}, outside differs by {np.max(out):.2e}'
+check('BUS LP closes the highs and leaves the rest', lambda: bus_case('LP', '0:20000,1:400,2:400,3:20000', 2000, 'hp'))
+check('BUS HP closes the lows and leaves the rest', lambda: bus_case('HP', '0:20,1:3000,2:3000,3:20', 500, 'lp'))
+def fx_all():
+    fx = ['FX CRASH OFF 1 LEN 2 DB -20', 'FX REVCYM OFF 2 LEN 2 DB -22', 'FX RISER OFF 3 LEN 2 DB -24', 'FX DOWN OFF 4 LEN 2 DB -24',
+          'FX BOOM OFF 5 LEN 2 DB -20', 'FX ROLL OFF 6 LEN 2 BEAT 0.5 DB -22']
+    a = fxrun(fx, src=LOWP, tag='fd1', extra=['BUS LP OFF 1 CURVE 0:20000,1:800,2:20000']); b = fxrun(fx, src=LOWP, tag='fd2', extra=['BUS LP OFF 1 CURVE 0:20000,1:800,2:20000'])
+    ok = a.rc == 0 and open(a.out, 'rb').read() == open(b.out, 'rb').read() and len(a.y) > 7 * SR
+    return ok, 'two renders byte-identical'
+check('FX and BUS render bit-identically', fx_all)
+def fx_level():
+    bad = []
+    for k in ('CRASH', 'REVCYM', 'RISER', 'DOWN', 'BOOM', 'ROLL'):
+        R = fxrun([f'FX {k} OFF 1 LEN 3 DB -20' + (' BEAT 0.5' if k == 'ROLL' else '')], tag='fl'); r = tfr(R)[0]; y = R.y
+        kw = lambda x: sg.lfilter([1, -2, 1], [1, -1.99004745483398, 0.99007225036621], sg.lfilter([1.53512485958697, -2.69169618940638, 1.19839281085285], [1, -1.69065929318241, 0.73248077421585], x))
+        p = kw(y[:, 0]) ** 2 + kw(y[:, 1]) ** 2; cs = np.concatenate([[0], np.cumsum(p)]); w = s(0.4); st = np.arange(0, len(p) - w, s(0.01))
+        loud = -0.691 + 10 * np.log10(np.max(cs[st + w] - cs[st]) / w) - r['gain_db']
+        if abs(loud + 20) > 1 or R.rc != 0: bad.append((k, round(loud, 2)))
+    return not bad, f'off by more than 1 dB: {bad}'
+check('FX DB is the loudest 400 ms window', fx_level)
+def fx_anchor():
+    def onset(line):
+        R = fxrun([line], tag='fa'); y = np.abs(R.y[:, 0]); return R.rc, float(np.argmax(y > 0.05 * np.max(y))) / SR
+    a = onset('FX CRASH AT -2 LEN 1 DB -20'); o = onset('FX CRASH OFF 1 LEN 1 DB -20')
+    return a[0] == 0 and o[0] == 0 and abs(a[1] - 8.0) < 0.01 and abs(o[1] - 1.0) < 0.01, f'AT -2 at {a[1]:.4f} s, OFF 1 at {o[1]:.4f} s'
+check('FX AT and OFF anchors', fx_anchor)
+def fx_bus_anchor():
+    cue = ['LEVEL off', 'MASTER -22 -1.5', f'SRC n {NA}', 'CLIP n 1 11 PRE 0']
+    a = run(cue + ['BUS LP AT -8 CURVE 0:20000,1:400,2:400,3:20000'], 'ba1'); o = run(cue + ['BUS LP OFF 2 CURVE 0:20000,1:400,2:400,3:20000'], 'ba2')
+    n = min(len(a.y), len(o.y)); ga = 10 ** (tfr(a)[0]['gain_db'] / 20); go = 10 ** (tfr(o)[0]['gain_db'] / 20)
+    return a.rc == 0 and o.rc == 0 and np.max(np.abs(a.y[:n] / ga - o.y[:n] / go)) < 1e-4, 'BUS AT -8 equals BUS OFF 2 on a 10 s clip'
+check('BUS AT and OFF anchors', fx_bus_anchor)
+def fx_errors():
+    ok = 'CURVE 0:20000,1:400,2:20000'
+    cases = [(['FX WHOOSH OFF 1 LEN 2 DB -20'], 5), (['FX CRASH OFF 1 DB -20'], 5), (['FX ROLL OFF 1 LEN 2 DB -20'], 5), (['FX CRASH OFF 1 LEN 2'], 5),
+             (['FX CRASH AT 1 OFF 1 LEN 2 DB -20'], 5), (['FX CRASH LEN 2 DB -20'], 5), (['FX CRASH OFF 1 LEN zz DB -20'], 5), (['FX CRASH OFF 1 LEN 2 DB -20 FOO 1'], 5),
+             (['FX CRASH OFF 1 LEN 2 DB -20 BEAT 1'], 5),
+             (['BUS LP OFF 1 CURVE 0:4000,1:400,2:20000'], 5), (['BUS LP OFF 1 CURVE 0:20000,1:400,2:4000'], 5), (['BUS HP OFF 1 CURVE 0:100,1:3000,2:20'], 5),
+             (['BUS LP OFF 1 ' + ok, 'BUS LP OFF 1.5 ' + ok], 6), (['BUS LP OFF 1 CURVE 0:20000'], 5), (['BUS LP OFF 1 AT 1 ' + ok], 5), (['BUS LP OFF 1'], 5),
+             (['BUS XX OFF 1 ' + ok], 5), (['BUS LP OFF 1 CURVE 1:20000,0:400,2:20000'], 5)]
+    bad = []
+    for body, ln in cases:
+        R = run(['LEVEL off', f'SRC z {ZP}', 'CLIP z 1 11 PRE 0'] + [''] + body, 'fe')
+        if R.rc == 0 or f'line {ln}' not in R.err or R.y is not None: bad.append((body, R.err.strip()))
+    R = run(['LEVEL off', f'SRC z {ZP}', 'FX CRASH OFF 1 LEN 2 DB -20', 'CLIP z 1 11'], 'fe2')
+    if R.rc == 0 or 'line 3' not in R.err: bad.append(('FX before CLIP', R.err.strip()))
+    return not bad, str(bad)
+check('FX and BUS errors name the line', fx_errors)
+def fx_not_in_tables():
+    R = fxrun(['FX CRASH OFF 2 LEN 2 DB -20', 'FX ROLL OFF 3 LEN 2 BEAT 0.5 DB -20', 'BUS LP OFF 1 CURVE 0:20000,1:400,2:20000'], tag='ft', extra=['CLIP z 1 5 PRE 0 GAP 0.5'])
+    txt = open(f'{T}/ft.tl').read() + open(f'{T}/ft.seams').read()
+    return R.rc == 0 and len(R.rows) == 2 and len(R.seams) == 1 and 'CRASH' not in txt and 'ROLL' not in txt and 'FX' not in txt and R.err.count('FX ') == 2 and 'BUS LP' in R.err, f'{len(R.rows)} rows, {len(R.seams)} seam, log lines FX {R.err.count("FX ")}'
+check('FX and BUS stay out of the timeline and seams', fx_not_in_tables)
+
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
 T="$T" D="$D" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"

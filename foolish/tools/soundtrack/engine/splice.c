@@ -13,13 +13,33 @@
 //                                             the hall), so a join is dry only where the cue says so. LAYERs are not touched.
 //   CLIP  name a b [key value]...             a, b: cut points in source seconds (b may be `end`)
 //   LAYER name a b [key value]...
+//   FX kind AT|OFF x LEN seconds DB level [BEAT seconds]
+//                                             a synthesized one-shot on top of the mix (never in the timeline or the seams).
+//                                             kind: CRASH (cymbal from the anchor, -60 dB at LEN), REVCYM (the same reversed,
+//                                             loudest at the end: AT -LEN lands it on a seam), RISER (band-passed noise
+//                                             sweeping 300 Hz to 9 kHz, +24 dB, cut at the end), DOWN (9 kHz to 200 Hz, -30 dB),
+//                                             BOOM (mono sub impact, 110 to 38 Hz, -60 dB at LEN), ROLL (snare roll, needs BEAT:
+//                                             hits every half beat for the first half, every quarter for the next quarter,
+//                                             every eighth for the last, rising -18 to 0 dB). DB: the loudest 400 ms window
+//                                             (hop 100 ms, plus the one ending at the end) of the effect, K-weighted as in
+//                                             lufs(), set to that level before the master gain (the domain of a CLIP's LUFS).
+//   BUS LP|HP AT|OFF x CURVE t:hz,t:hz,...    a 24 dB/oct filter (two RBJ biquads, Q 0.707, coefficients every 32 samples, state
+//                                             kept) over the whole summed mix (clips, layers, washes, echoes), after the sum and
+//                                             before the FX; t in seconds from the anchor, ascending, 2 or more points, hz
+//                                             interpolated logarithmically. The first and last points must be open (LP >= 16000,
+//                                             HP <= 30); dry crossfades to wet over 20 ms at each edge, the filter runs 0.5 s
+//                                             before the first point to settle, and outside [first t, last t] the mix is
+//                                             untouched. Two regions of one type may not overlap.
+// FX and BUS are anchored like a LAYER: AT x is seconds from the b of the latest preceding CLIP (song time), OFF x from its a;
+// exactly one is required, x may be negative, and they never move the CLIP chain.
 // Placement: a CLIP's `a` lands at the previous CLIP's `b` + GAP (exact to a sample, whatever PRE, POST, fades or effects).
 // A LAYER never moves that chain: its `a` lands at the `b` of the latest preceding CLIP + AT, or at that CLIP's `a` + OFF.
 // With RATE r a source span s lasts s/r song seconds. A clip is audible from a-PRE to b+POST in the source.
 // Keys (CLIP and LAYER): PRE POST FIN FOUT LUFS GAIN RIDE BASS EQ LPOUT LPIN HPOUT HPIN WASH ECHO SWELL RATE SEMI VARI
 //   BRAKE ROLE JOIN; CLIP only: GAP DRY; LAYER only: AT OFF (not both).
 // Order of processing: rate/pitch, DC removal, level and GAIN and RIDE, BASS, EQ, filters, effect sends (pre-fade), fades, sum.
-// The only random source is the Rng of dsp.h (the pink noise that calibrates the reverb sends, with a fixed seed).
+// The only random source is the Rng of dsp.h: the pink noise that calibrates the reverb sends (a fixed seed), and the noise of
+// the FX, whose seed is FX_SEED and the ordinal of the statement among the FX.
 // Sources are decoded when first needed and freed after their last statement, so a long song with many sources stays small.
 #include <AudioToolbox/AudioToolbox.h>
 #include <stdarg.h>
@@ -134,11 +154,64 @@ static int src_find(const char *n, int line) {
     for (int i = 0; i < g_nsrc; i++) if (!strcmp(g_src[i].name, n)) return i;
     die(line, "no SRC named %s", n);
 }
+// FX and BUS statements, resolved against the layout in main
+enum { FX_CRASH, FX_REVCYM, FX_RISER, FX_DOWN, FX_BOOM, FX_ROLL, FX_KINDS };
+static const char *fxname[FX_KINDS] = {"CRASH", "REVCYM", "RISER", "DOWN", "BOOM", "ROLL"};
+typedef struct { int line, clip, kind, has_at, has_off, has_len, has_db, has_beat; double x, len, db, beat; long a, n; } Fx;
+typedef struct { int line, clip, lp, has_at, has_off, has_curve; double x; Curve c; long a, r0, r1; } Bus;   // c.db holds ln(hz)
+static Fx *g_fx; static int g_nfx; static Bus *g_bus; static int g_nbus;
+static const double BUS_OPEN_LP = 16000, BUS_OPEN_HP = 30, BUS_HZ_MIN = 10, BUS_HZ_MAX = 20000;
+
+static void parse_fx(char **tok, int nt, int ln, int last_clip) {
+    if (nt < 2 || nt % 2) die(ln, "FX kind AT|OFF x LEN seconds DB level [BEAT seconds]");
+    if (last_clip < 0) die(ln, "FX before any CLIP");
+    g_fx = xrealloc(g_fx, (g_nfx + 1) * sizeof(Fx)); Fx *f = &g_fx[g_nfx++]; memset(f, 0, sizeof *f); f->line = ln; f->clip = last_clip; f->kind = -1;
+    for (int k = 0; k < FX_KINDS; k++) if (!strcmp(tok[1], fxname[k])) f->kind = k;
+    if (f->kind < 0) die(ln, "unknown FX kind %s", tok[1]);
+    for (int i = 2; i < nt; i += 2) {
+        const char *k = tok[i], *v = tok[i + 1];
+        if (!strcmp(k, "AT") || !strcmp(k, "OFF")) {
+            if (f->has_at || f->has_off) die(ln, "FX wants exactly one of AT and OFF");
+            f->x = num(v, ln, k); if (k[0] == 'A') f->has_at = 1; else f->has_off = 1;
+        } else if (!strcmp(k, "LEN")) { if (f->has_len) die(ln, "LEN twice"); f->len = num(v, ln, k); f->has_len = 1; }
+        else if (!strcmp(k, "DB")) { if (f->has_db) die(ln, "DB twice"); f->db = num(v, ln, k); f->has_db = 1; }
+        else if (!strcmp(k, "BEAT")) { if (f->has_beat) die(ln, "BEAT twice"); f->beat = num(v, ln, k); f->has_beat = 1; }
+        else die(ln, "unknown key %s on FX", k);
+    }
+    if (!f->has_at && !f->has_off) die(ln, "FX wants AT or OFF");
+    if (!f->has_len) die(ln, "FX wants LEN");
+    if (!f->has_db) die(ln, "FX wants DB");
+    if (!(f->len >= 0.05)) die(ln, "FX LEN must be at least 0.05 s");
+    if (f->kind == FX_ROLL && !(f->has_beat && f->beat > 0)) die(ln, "ROLL wants BEAT seconds > 0");
+    if (f->kind != FX_ROLL && f->has_beat) die(ln, "BEAT only goes with ROLL");
+}
+static void parse_bus(char **tok, int nt, int ln, int last_clip) {
+    if (nt != 6) die(ln, "BUS LP|HP AT|OFF x CURVE t:hz,t:hz,...");
+    if (last_clip < 0) die(ln, "BUS before any CLIP");
+    g_bus = xrealloc(g_bus, (g_nbus + 1) * sizeof(Bus)); Bus *b = &g_bus[g_nbus++]; memset(b, 0, sizeof *b); b->line = ln; b->clip = last_clip;
+    if (!strcmp(tok[1], "LP")) b->lp = 1; else if (strcmp(tok[1], "HP")) die(ln, "BUS wants LP or HP, not %s", tok[1]);
+    for (int i = 2; i < nt; i += 2) {
+        const char *k = tok[i], *v = tok[i + 1];
+        if (!strcmp(k, "AT") || !strcmp(k, "OFF")) {
+            if (b->has_at || b->has_off) die(ln, "BUS wants exactly one of AT and OFF");
+            b->x = num(v, ln, k); if (k[0] == 'A') b->has_at = 1; else b->has_off = 1;
+        } else if (!strcmp(k, "CURVE")) { if (b->has_curve) die(ln, "CURVE twice"); curve_parse(&b->c, v, ln, k); b->has_curve = 1; }
+        else die(ln, "unknown key %s on BUS", k);
+    }
+    if (!b->has_at && !b->has_off) die(ln, "BUS wants AT or OFF");
+    if (!b->has_curve) die(ln, "BUS wants CURVE");
+    if (b->c.n < 2) die(ln, "BUS CURVE wants at least 2 points");
+    for (int i = 0; i < b->c.n; i++) if (b->c.db[i] < BUS_HZ_MIN || b->c.db[i] > BUS_HZ_MAX) die(ln, "BUS CURVE hz must be within %g..%g", BUS_HZ_MIN, BUS_HZ_MAX);
+    double h0 = b->c.db[0], h1 = b->c.db[b->c.n - 1];
+    if (b->lp ? (h0 < BUS_OPEN_LP || h1 < BUS_OPEN_LP) : (h0 > BUS_OPEN_HP || h1 > BUS_OPEN_HP))
+        die(ln, "BUS %s CURVE must start and end open (%s %g Hz)", tok[1], b->lp ? ">=" : "<=", b->lp ? BUS_OPEN_LP : BUS_OPEN_HP);
+    for (int i = 0; i < b->c.n; i++) b->c.db[i] = log(b->c.db[i]);
+}
 static const char *swname[4] = {"LPOUT", "LPIN", "HPOUT", "HPIN"};
 
 static void parse(const char *path, double *m_lufs, double *m_tp) {
     FILE *f = fopen(path, "r"); if (!f) { perror(path); exit(1); }
-    char *line = 0; size_t cap = 0; int ln = 0; double level = -16, tails[3] = {0}; int level_on = 1, tails_on = 0;
+    char *line = 0; size_t cap = 0; int ln = 0; double level = -16, tails[3] = {0}; int level_on = 1, tails_on = 0, last_clip = -1;
     while (getline(&line, &cap, f) >= 0) {
         ln++; char *h = strchr(line, '#'); if (h) *h = 0;
         char **tok = 0; int nt = 0, ct = 0;
@@ -215,7 +288,10 @@ static void parse(const char *path, double *m_lufs, double *m_tp) {
             for (int j = 0; j < 4; j++) if (c->sw[j].set && (c->sw[j].s <= 0 || c->sw[j].hz < 20 || c->sw[j].hz > 20000)) die(ln, "%s wants s > 0 and 20 <= hz <= 20000", swname[j]);
             if (fabs(c->semi) > 24) die(ln, "SEMI out of range");
             g_src[c->src].last_use = g_nst - 1;
-        } else die(ln, "unknown statement %s", tok[0]);
+            if (c->kind == 0) last_clip = g_nst - 1;
+        } else if (!strcmp(tok[0], "FX")) parse_fx(tok, nt, ln, last_clip);
+        else if (!strcmp(tok[0], "BUS")) parse_bus(tok, nt, ln, last_clip);
+        else die(ln, "unknown statement %s", tok[0]);
         free(tok);
     }
     free(line); fclose(f);
@@ -538,6 +614,120 @@ static void render_clip(Stmt *c) {
     free(X[0]); free(X[1]); free(wL); free(wR); free(eL); free(eR); free(sL); free(sR);
 }
 
+// ---------------------------------------------------------------- FX one-shots and the BUS filter
+#define FX_SEED 0x5f3759df2b1e4d6bULL                    // the one seed of every FX; FX number k draws from mix64(FX_SEED + k)
+static const long FX_FADE = SR / 200;                     // 5 ms guards at both ends of every effect
+static const double FX_ATTACK = 0.003, FX_COMMON = 0.84, FX_OWN = 0.54;   // cymbal attack; share of the noise both channels hold
+enum { FX_PARTIALS = 7 };
+static const double FX_DECAY_DB = 60, FX_SWEEP_Q = 3, BOOM_HI = 110, BOOM_LO = 38, BOOM_SWEEP = 0.25, BOOM_ATTACK = 0.002, BOOM_CLICK = 0.01;
+static const double RISE_F0 = 300, RISE_F1 = 9000, RISE_DB = 24, DOWN_F0 = 9000, DOWN_F1 = 200, DOWN_DB = 30, ROLL_DB0 = -18, ROLL_HIT = 0.5;
+static const long BUS_STEP = 32, BUS_EDGE = SR / 50;      // coefficient update interval; the dry-to-wet crossfade at each edge
+
+// two noises that share most of their energy: slightly decorrelated left and right
+static void fx_noise(Rng *g, double *l, double *r) {
+    double c = rn(g), x = rn(g), y = rn(g); *l = FX_COMMON * c + FX_OWN * x; *r = FX_COMMON * c + FX_OWN * y;
+}
+static void fx_crash(Rng *g, long n, float *L, float *R) {
+    double pf[FX_PARTIALS], ph[2][FX_PARTIALS], len = (double)n / SR;
+    for (int k = 0; k < FX_PARTIALS; k++) { pf[k] = 3000 * pow(3, ((double)k + rr(g, 0.1, 0.9)) / FX_PARTIALS); ph[0][k] = rr(g, 0, TAU); ph[1][k] = rr(g, 0, TAU); }
+    Bq hp[2][2] = {{bq_hp(3000, 0.7071), bq_hp(3000, 0.7071)}, {bq_hp(3000, 0.7071), bq_hp(3000, 0.7071)}};
+    for (long i = 0; i < n; i++) {
+        double t = (double)i / SR, nz[2], env = (t < FX_ATTACK ? t / FX_ATTACK : 1) * pow(10, -FX_DECAY_DB / 20 * t / len);
+        fx_noise(g, &nz[0], &nz[1]);
+        for (int c = 0; c < 2; c++) {
+            double p = 0; for (int k = 0; k < FX_PARTIALS; k++) p += sin(TAU * pf[k] * t + ph[c][k]);
+            double x = bq(&hp[c][1], bq(&hp[c][0], nz[c])) + 1.5 * p / FX_PARTIALS * (0.6 + 0.4 * nz[c]);
+            (c ? R : L)[i] = (float)(x * env);
+        }
+    }
+}
+static void fx_reverse(long n, float *L, float *R) {
+    for (long i = 0; i < n / 2; i++) { float a = L[i], b = R[i]; L[i] = L[n - 1 - i]; R[i] = R[n - 1 - i]; L[n - 1 - i] = a; R[n - 1 - i] = b; }
+}
+// band-passed noise: the centre sweeps exponentially f0 to f1, the gain goes linearly in dB from g0 to g1
+static void fx_sweep(Rng *g, long n, float *L, float *R, double f0, double f1, double g0, double g1) {
+    Svf st[2] = {{0, 0}, {0, 0}};
+    for (long i = 0; i < n; i++) {
+        double u = (double)i / (double)n, nz[2], bp, gain = db2a(g0 + (g1 - g0) * u), fc = f0 * pow(f1 / f0, u);
+        fx_noise(g, &nz[0], &nz[1]);
+        for (int c = 0; c < 2; c++) { svf(&st[c], nz[c], fc, FX_SWEEP_Q, &bp, 0); (c ? R : L)[i] = (float)(bp * gain); }
+    }
+}
+static void fx_boom(Rng *g, long n, float *L, float *R) {
+    Bq lp = bq_lp(800, 0.7071); double ph = 0, len = (double)n / SR; long nc = llround(BOOM_CLICK * SR);
+    for (long i = 0; i < n; i++) {
+        double t = (double)i / SR, f = t < BOOM_SWEEP ? BOOM_HI * pow(BOOM_LO / BOOM_HI, t / BOOM_SWEEP) : BOOM_LO;
+        double env = (t < BOOM_ATTACK ? t / BOOM_ATTACK : 1) * pow(10, -FX_DECAY_DB / 20 * t / len);
+        double click = i < nc ? 1.5 * bq(&lp, rn(g)) * (1 - (double)i / (double)nc) : 0;
+        L[i] = R[i] = (float)(sin(ph) * env + click); ph += TAU * f / SR;
+    }
+}
+// hits on a grid from the start: every half beat for the first half, every quarter beat for the next quarter, every eighth for the last
+static void fx_roll(Rng *g, long n, double beat, float *L, float *R) {
+    long hl = llround(ROLL_HIT * SR);
+    for (long p = 0; p < n;) {
+        double gain = db2a(ROLL_DB0 - ROLL_DB0 * (double)p / (double)n);
+        double div = p < n / 2 ? 2 : p < n * 3 / 4 ? 4 : 8;
+        Bq hp[2] = {bq_hp(1500, 0.7071), bq_hp(1500, 0.7071)};
+        for (long i = 0; i < hl && p + i < n; i++) {
+            double t = (double)i / SR, nz[2], body = sin(TAU * 190 * t) * exp(-t / 0.06) * 0.5, att = i < SR / 2000 ? (double)i / (SR / 2000) : 1;
+            fx_noise(g, &nz[0], &nz[1]);
+            for (int c = 0; c < 2; c++) (c ? R : L)[p + i] += (float)((bq(&hp[c], nz[c]) * exp(-t / 0.09) + body) * att * gain);
+        }
+        p += llround(beat / div * SR);
+    }
+}
+// loudest 400 ms window (hop 100 ms, and the one that ends at the end), K-weighted, in LUFS
+static double fx_loud(const float *L, const float *R, long n) {
+    long blk = SR * 4 / 10, hop = SR / 10, m = n > blk ? n : blk;
+    double *pl = xcalloc(m, sizeof(double)), *pr = xcalloc(m, sizeof(double)), *cs = xcalloc(m + 1, sizeof(double)), best = 0;
+    kweight(L, n, 1, pl); kweight(R, n, 1, pr);
+    for (long i = 0; i < m; i++) cs[i + 1] = cs[i] + pl[i] + pr[i];
+    for (long s = 0; s + blk <= m; s += hop) best = fmax(best, cs[s + blk] - cs[s]);
+    best = fmax(best, cs[m] - cs[m - blk]);
+    free(pl); free(pr); free(cs); return -0.691 + 10 * log10(best / blk + 1e-30);
+}
+static void fx_render(const Fx *f, int ord, long lo) {
+    long n = f->n; float *L = xcalloc(n, sizeof(float)), *R = xcalloc(n, sizeof(float)); Rng rg = {mix64(FX_SEED + (uint64_t)ord)};
+    switch (f->kind) {
+    case FX_CRASH: fx_crash(&rg, n, L, R); break;
+    case FX_REVCYM: fx_crash(&rg, n, L, R); fx_reverse(n, L, R); break;
+    case FX_RISER: fx_sweep(&rg, n, L, R, RISE_F0, RISE_F1, -RISE_DB, 0); break;
+    case FX_DOWN: fx_sweep(&rg, n, L, R, DOWN_F0, DOWN_F1, 0, -DOWN_DB); break;
+    case FX_BOOM: fx_boom(&rg, n, L, R); break;
+    default: fx_roll(&rg, n, f->beat, L, R); break;
+    }
+    long nf = FX_FADE < n / 2 ? FX_FADE : n / 2;
+    for (long k = 0; k < nf; k++) {
+        double e = sin(0.5 * M_PI * (double)k / (double)nf);
+        L[k] *= (float)e; R[k] *= (float)e; L[n - 1 - k] *= (float)e; R[n - 1 - k] *= (float)e;
+    }
+    double loud = fx_loud(L, R, n); if (loud < -100) die(f->line, "FX %s is silent", fxname[f->kind]);
+    double g = db2a(f->db - loud);
+    for (long i = 0; i < n; i++) { L[i] *= (float)g; R[i] *= (float)g; }
+    add_at(f->a, L, R, n); free(L); free(R);
+    fprintf(stderr, "FX %-6s %9.3f - %9.3f  %6.1f LUFS\n", fxname[f->kind], (double)(f->a - lo) / SR, (double)(f->a + n - lo) / SR, f->db);
+}
+static void bus_coef(Bq *d, const Bq *s) { d->b0 = s->b0; d->b1 = s->b1; d->b2 = s->b2; d->a1 = s->a1; d->a2 = s->a2; }
+// the filter runs from LEAD before the first point to settle; the mix is written only where the edge blend is above zero
+static void bus_apply(const Bus *b, long lo) {
+    long i0 = b->r0 - LEAD, i1 = b->r1; if (i0 < g_lo) i0 = g_lo; if (i1 > g_lo + g_olen) i1 = g_lo + g_olen;
+    Bq st[2][2] = {{{0}, {0}}, {{0}, {0}}}; int seg = 0;
+    for (long p = i0; p < i1; p++) {
+        if ((p - i0) % BUS_STEP == 0) {
+            double fc = exp(curve_at(&b->c, (double)(p - b->a) / SR, &seg)); fc = clampd(fc, BUS_HZ_MIN, 0.45 * SR);
+            Bq c = b->lp ? bq_lp(fc, 0.7071) : bq_hp(fc, 0.7071);
+            for (int ch = 0; ch < 2; ch++) for (int s = 0; s < 2; s++) bus_coef(&st[ch][s], &c);
+        }
+        double w = smoothstep((double)(p - b->r0) / BUS_EDGE) * smoothstep((double)(b->r1 - p) / BUS_EDGE);
+        for (int ch = 0; ch < 2; ch++) {
+            float *o = (ch ? g_oR : g_oL) + (p - g_lo); double x = *o, y = bq(&st[ch][1], bq(&st[ch][0], x));
+            if (w > 0) *o = (float)(x + w * (y - x));
+        }
+    }
+    fprintf(stderr, "BUS %s  %9.3f - %9.3f  %d points\n", b->lp ? "LP" : "HP", (double)(b->r0 - lo) / SR, (double)(b->r1 - lo) / SR, b->c.n);
+}
+
 // ---------------------------------------------------------------- master and outputs
 typedef struct { long at; double db; } Red;
 static int cmp_start(const void *a, const void *b) {
@@ -551,6 +741,17 @@ int main(int argc, char **argv) {
     int any_clip = 0; for (int i = 0; i < g_nst; i++) if (g_st[i].kind == 0) any_clip = 1;
     if (!any_clip) die(0, "no CLIP");
     layout();
+    for (int i = 0; i < g_nfx; i++) {
+        Fx *f = &g_fx[i]; const Stmt *k = &g_st[f->clip];
+        f->a = (f->has_off ? k->ia : k->ia + k->mid_s) + llround(f->x * SR); f->n = llround(f->len * SR);
+    }
+    for (int i = 0; i < g_nbus; i++) {
+        Bus *b = &g_bus[i]; const Stmt *k = &g_st[b->clip];
+        b->a = (b->has_off ? k->ia : k->ia + k->mid_s) + llround(b->x * SR);
+        b->r0 = b->a + llround(b->c.t[0] * SR); b->r1 = b->a + llround(b->c.t[b->c.n - 1] * SR);
+        for (int j = 0; j < i; j++) if (g_bus[j].lp == b->lp && b->r0 < g_bus[j].r1 && g_bus[j].r0 < b->r1)
+            die(b->line, "BUS %s overlaps the one on line %d", b->lp ? "LP" : "HP", g_bus[j].line);
+    }
     long lo = 0, hi = 0;
     for (int i = 0; i < g_nst; i++) {
         Stmt *c = &g_st[i]; c->idx = i; long a = c->startS, b = c->endS + c->tail;
@@ -558,6 +759,7 @@ int main(int argc, char **argv) {
         if (i == 0 || a < lo) lo = a;
         if (i == 0 || b > hi) hi = b;
     }
+    for (int i = 0; i < g_nfx; i++) { if (g_fx[i].a < lo) lo = g_fx[i].a; if (g_fx[i].a + g_fx[i].n > hi) hi = g_fx[i].a + g_fx[i].n; }
     g_lo = lo; g_olen = hi - lo + 1 + (long)(0.4 * SR);   // the room for the 0.4 s that the master keeps after the last sound
      g_oL = xcalloc(g_olen, sizeof(float)); g_oR = xcalloc(g_olen, sizeof(float));
     for (int i = 0; i < g_nst; i++) {
@@ -566,6 +768,8 @@ int main(int argc, char **argv) {
                 (double)(c->startS - lo) / SR, (double)(c->endS - lo) / SR, g_src[c->src].name, c->src_in, c->src_out, c->meas, c->lev_db, c->rate);
         if (g_src[c->src].last_use == i) src_free(&g_src[c->src]);
     }
+    for (int i = 0; i < g_nbus; i++) bus_apply(&g_bus[i], lo);
+    for (int i = 0; i < g_nfx; i++) fx_render(&g_fx[i], i, lo);
     long n = g_olen; double thr = db2a(-75);
     while (n > 1 && fabsf(g_oL[n - 1]) < thr && fabsf(g_oR[n - 1]) < thr) n--;
     n += (long)(0.4 * SR); if (n > g_olen) n = g_olen;
