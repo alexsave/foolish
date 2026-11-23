@@ -1,0 +1,4 @@
+# c4: written by glue/gen_6_Warsaw.py (cello bridge), TEMPO 60 so a beat is a second; the layer starts at suite 354.139
+TEMPO 60
+SECTION Bridge c4 BARS 6 KEY C
+CELLO: r:1.0000 G#2:3.0000~3.4526@0.495 | r:0.1830 A#2:3.8170~4.3232@0.299 | r:0.1860 C3:3.8140~4.3095@0.459 | r:0.1770 C#3:2.0030~2.2137@0.480 D#3:1.8200~2.5263@0.327 | r:4.0000 | r:4.0000
