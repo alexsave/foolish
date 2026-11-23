@@ -139,6 +139,15 @@ def master_loud():
     ok2 = R2.rc == 0 and abs(I2 + 20) <= 0.1 and P2 <= -3 + 1e-6
     return ok1 and ok2, f'{I:.3f} LUFS {P:.2f} dBTP dur {dur:.3f}; {I2:.3f} LUFS {P2:.2f} dBTP'
 check('master loudness and ceiling', master_loud)
+def limiter_report():
+    # a steady tone with one 0.2 s stretch 1.6 dB louder at 5 s of the source (4 s of the mix); the ceiling sits 0.2 dB over the steady peak,
+    # so the limiter takes about 1.4 dB there and nothing elsewhere: the log must name that place (the suites allow 1 dB)
+    x = sine(12, 440, 0.1); e = np.ones(len(x)); e[s(5.0):s(5.2)] = 10 ** (1.6 / 20); LR = W('lr', x * e)
+    R = run(['LEVEL off', f'SRC c {LR}', 'MASTER -20 -19.1', 'CLIP c 1 9'], 'lim1')
+    m = re.search(r'limiter: at most ([\d.]+) dB', R.err); ev = re.findall(r'over 1 dB at ([\d.]+) s: ([\d.]+) dB', R.err)
+    ok = R.rc == 0 and m is not None and 1.0 < float(m.group(1)) < 2.0 and len(ev) == 1 and abs(float(ev[0][0]) - 4.1) < 0.15 and abs(float(ev[0][1]) - float(m.group(1))) < 0.01
+    return ok, f'{m.group(0) if m else "no limiter line"}; events {ev}'
+check('limiter events over 1 dB are listed', limiter_report)
 
 # ---------------------------------------------------------------- timeline truth, rate, pitch
 def bumps(sec):

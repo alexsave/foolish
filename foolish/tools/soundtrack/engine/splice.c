@@ -615,6 +615,7 @@ static void render_clip(Stmt *c) {
 }
 
 // ---------------------------------------------------------------- FX one-shots and the BUS filter
+#define LIMIT_REPORT_DB 1.0                              // the render log lists the ten worst places where the master limiter takes more than this (the suites allow 1 dB)
 #define FX_SEED 0x5f3759df2b1e4d6bULL                    // the one seed of every FX; FX number k draws from mix64(FX_SEED + k)
 static const long FX_FADE = SR / 200;                     // 5 ms guards at both ends of every effect
 static const double FX_ATTACK = 0.003, FX_COMMON = 0.84, FX_OWN = 0.54;   // cymbal attack; share of the noise both channels hold
@@ -792,13 +793,13 @@ int main(int argc, char **argv) {
         for (long i = 0; i < n; i++) {
             double x = fmax(fabs(g_oL[i]), fabs(g_oR[i])) * g; if (x < 1e-3) continue;
             double y = fmax(fabs(WL[i]), fabs(WR[i])), red = -a2db(y / x); if (red > worst) worst = red;
-            if (red > 2) { if (nr == cap) { cap = cap * 2 + 64; rd = xrealloc(rd, cap * sizeof(Red)); } rd[nr++] = (Red){i, red}; }
+            if (red > LIMIT_REPORT_DB) { if (nr == cap) { cap = cap * 2 + 64; rd = xrealloc(rd, cap * sizeof(Red)); } rd[nr++] = (Red){i, red}; }
         }
         fprintf(stderr, "limiter: at most %.2f dB of reduction\n", worst);
         for (int k = 0; k < 10; k++) {
             long bi = -1; for (long i = 0; i < nr; i++) if (rd[i].db > 0 && (bi < 0 || rd[i].db > rd[bi].db)) bi = i;
             if (bi < 0) break;
-            fprintf(stderr, "  over 2 dB at %.3f s: %.2f dB\n", (double)rd[bi].at / SR, rd[bi].db);
+            fprintf(stderr, "  over %g dB at %.3f s: %.2f dB\n", LIMIT_REPORT_DB, (double)rd[bi].at / SR, rd[bi].db);
             long at = rd[bi].at; for (long i = 0; i < nr; i++) if (labs(rd[i].at - at) < SR) rd[i].db = 0;
         }
         free(rd);
