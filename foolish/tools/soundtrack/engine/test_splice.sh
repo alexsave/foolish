@@ -375,8 +375,8 @@ def centroid(x, a, b):
     return float(np.sum(f * P) / np.sum(P))
 def fx_crash():
     R = fxrun(['FX CRASH OFF 2 LEN 3 DB -20'], tag='fxc'); h = band(R.y[:, 0], 3000, 'hp')
-    after = brms(h, 2.0, 2.2); before = brms(h, 1.8, 2.0); late = brms(h, 4.3, 4.5)
-    return R.rc == 0 and after - before > 40 and late - after < -30, f'after {after:.1f} dB, before {before:.1f} dB, at 0.8 LEN {late - after:.1f} dB under the start'
+    after = brms(h, 2.0, 2.2); before = brms(h, 1.8, 2.0); late = brms(h, 4.3, 4.5); low = brms(band(R.y[:, 0], 1000, 'lp'), 2.0, 2.2) - after
+    return R.rc == 0 and after - before > 40 and late - after < -30 and low < -30, f'after {after:.1f} dB, before {before:.1f} dB, at 0.8 LEN {late - after:.1f} dB under the start, under 1 kHz {low:.1f} dB under'
 check('FX CRASH starts at the anchor and decays', fx_crash)
 def fx_revcym():
     R = fxrun(['FX REVCYM OFF 2 LEN 3 DB -20'], src=LOWP, tag='fxr'); h = band(R.y[:, 0], 3000, 'hp')
@@ -417,7 +417,7 @@ def bus_case(typ, curve, band_f, kind):
     x = band(y, band_f, kind); mid = brms(x, 3.2, 3.8); pre = brms(x, 1.0, 1.8); post = brms(x, 5.5, 6.5)
     n = min(len(R0.y), len(R.y)); d = np.abs(R.y[:n, 0] / g1 - R0.y[:n, 0] / g0)
     out = np.concatenate([d[:s(1.99)], d[s(5.01):s(9.9)]])
-    return R.rc == 0 and pre - mid > 30 and post - mid > 30 and np.max(out) < 1e-4 and np.max(d[s(3.2):s(3.8)]) > 0.01, f'in the region {mid:.1f} dB, before {pre:.1f}, after {post:.1f}, outside differs by {np.max(out):.2e}'
+    return R.rc == 0 and pre - mid > 60 and post - mid > 60 and np.max(out) < 1e-4 and np.max(d[s(3.2):s(3.8)]) > 0.01, f'in the region {mid:.1f} dB, before {pre:.1f}, after {post:.1f}, outside differs by {np.max(out):.2e}'
 check('BUS LP closes the highs and leaves the rest', lambda: bus_case('LP', '0:20000,1:400,2:400,3:20000', 2000, 'hp'))
 check('BUS HP closes the lows and leaves the rest', lambda: bus_case('HP', '0:20,1:3000,2:3000,3:20', 500, 'lp'))
 def fx_all():
@@ -471,6 +471,20 @@ def fx_not_in_tables():
     return R.rc == 0 and len(R.rows) == 2 and len(R.seams) == 1 and 'CRASH' not in txt and 'ROLL' not in txt and 'FX' not in txt and R.err.count('FX ') == 2 and 'BUS LP' in R.err, f'{len(R.rows)} rows, {len(R.seams)} seam, log lines FX {R.err.count("FX ")}'
 check('FX and BUS stay out of the timeline and seams', fx_not_in_tables)
 
+def bus_fast():
+    cue = ['LEVEL off', 'MASTER -22 -1.5', f'SRC n {NA}', 'CLIP n 1 11 PRE 0']
+    R = run(cue + ['BUS LP OFF 2 CURVE 0:20000,0.04:300,1:300,1.04:20000'], 'bf'); x = band(R.y[:, 0], 2000, 'hp')
+    quick = brms(x, 2.06, 2.10); ref = brms(x, 1.0, 1.8)
+    return R.rc == 0 and ref - quick > 40, f'band above 2 kHz at 60-100 ms into a 40 ms close: {quick - ref:.1f} dB against the dry'
+check('BUS follows a fast curve', bus_fast)
+def fx_fades():
+    def ends(kind, at_end):
+        R = fxrun([f'FX {kind} OFF 2 LEN 2 DB -20'], tag='ff'); y = R.y[:, 0]; e = s(4.0) if at_end else s(2.0); h = s(0.0005)
+        a, b = (y[e - h:e], y[e - s(0.02):e - s(0.01)]) if at_end else (y[e:e + h], y[e + s(0.01):e + s(0.02)])
+        return float(np.sqrt(np.mean(a ** 2)) / np.sqrt(np.mean(b ** 2)))
+    r = {'RISER end': ends('RISER', True), 'REVCYM end': ends('REVCYM', True), 'DOWN start': ends('DOWN', False)}
+    return all(v < 0.2 for v in r.values()), ' '.join(f'{k} {v:.3f}' for k, v in r.items()) + ' (last or first 0.5 ms against 10-20 ms in)'
+check('FX start and end are faded', fx_fades)
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
 T="$T" D="$D" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"
