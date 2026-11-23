@@ -1,7 +1,7 @@
 #!/bin/bash
 # mix_city.sh: render one city song from its cue sheet and check it.
 #   mix_city.sh /path/<root>/cues/<Name>.cue.txt
-# Builds splice into <root>/work/bin when it is older than its sources, then writes
+# Builds splice and glue into <root>/work/bin when it is older than its sources, then writes
 #   <root>/wav/<Name>.wav  <root>/cues/<Name>.timeline.tsv  <root>/work/<Name>.seams.tsv  <root>/work/<Name>.render.log
 #   <root>/<Name>.m4a (AAC 256 kb/s)
 # and prints one line each for the wav and the decoded m4a: duration, LUFS, true peak.
@@ -33,6 +33,14 @@ stale=0
 for f in "$E/splice.c" "$E/mix.h" "$E/dsp.h" "$SHARED/rng.h"; do [ "$f" -nt "$BIN" ] && stale=1; done
 if [ "$stale" = 1 ]; then
     clang -O2 -Wall -o "$BIN" "$E/splice.c" -framework AudioToolbox -framework CoreFoundation || { echo "mix_city: build failed" >&2; exit 1; }
+fi
+
+# glue, the tiny synth for bridging passages (a score rendered to a wav that a cue then places like any source)
+GBIN="$ROOT/work/bin/glue"; gstale=0
+[ -x "$GBIN" ] || gstale=1
+for f in "$E/glue.c" "$E/mix.h" "$E/dsp.h" "$SHARED/rng.h"; do [ "$f" -nt "$GBIN" ] && gstale=1; done
+if [ "$gstale" = 1 ]; then
+    clang -O2 -Wall -o "$GBIN" "$E/glue.c" || { echo "mix_city: glue build failed" >&2; exit 1; }
 fi
 
 WAV="$ROOT/wav/$NAME.wav"; TL="$ROOT/cues/$NAME.timeline.tsv"; SEAMS="$ROOT/work/$NAME.seams.tsv"; M4A="$ROOT/$NAME.m4a"

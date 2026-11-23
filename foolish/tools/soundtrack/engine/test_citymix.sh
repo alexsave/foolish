@@ -79,6 +79,50 @@ case('drums_accent', drums(k, accent=10.0) + P)
 case('drums_shift', drums(np.concatenate((k[k < 10], 10.06 + 0.5 * np.arange(20)))) + P)
 case('drums_tempo', drums(np.concatenate((k[k < 10], 10.1 + 60 / 150 * np.arange(25)))) + P)
 
+# per-band levels: a steady bed of three sines in each of the six bands (stable levels, no noise to flag by chance)
+BEDHZ = {'sub': (30, 43, 55), 'bass': (80, 130, 200), 'lowmid': (300, 420, 530), 'mid': (800, 1300, 2000),
+         'presence': (3000, 4500, 6000), 'air': (10000, 13000, 16000)}
+pr = np.random.RandomState(SEED + 7)
+PH = {k: pr.uniform(0, 2 * np.pi, 3) for k in BEDHZ}
+def bed(gates=None):
+    tt = np.arange(int(20 * SR)) / SR
+    y = np.zeros_like(tt)
+    for k, hz in BEDHZ.items():
+        g = 1.0 if gates is None or k not in gates else gates[k]
+        for f, ph in zip(hz, PH[k]):
+            y += 0.01 * g * np.sin(2 * np.pi * f * tt + ph)
+    return tt, y + np.random.RandomState(SEED + 8).randn(len(tt)) * 3e-5
+def ramp(tt, a, b, w=0.02):        # 1 between a and b, raised-cosine edges of w seconds, 0 elsewhere
+    up = np.clip((tt - (a - w / 2)) / w, 0, 1); dn = np.clip(((b + w / 2) - tt) / w, 0, 1)
+    return 0.5 - 0.5 * np.cos(np.pi * np.minimum(up, dn))
+tt, y = bed(); case('band_clean', y)
+# two sources of a 100 Hz line summed over 1 s (9.5-10.5), one before and one after: the level is the same either side
+tt, y = bed(); one = 0.1 * np.sin(2 * np.pi * 100 * tt)
+case('band_bump', y + one * (ramp(tt, 0, 10.5, 0.05) + ramp(tt, 9.5, 20, 0.05)))
+# everything above 8 kHz disappears at the seam
+tt, y = bed(); tt, y0 = bed({'air': 0.0})
+case('band_air', y0 + (y - y0) * (1 - np.clip((tt - 9.98) / 0.04, 0, 1)))
+# a 600 ms silence of only the sub and bass lines (9.7-10.3)
+tt, y = bed()
+tt, ylow = bed({k: 0.0 for k in ('lowmid', 'mid', 'presence', 'air')})
+case('band_dip', y - ylow * ramp(tt, 9.7, 10.3, 0.02))
+
+# melody: a 1 s lead-in, then 4 bars of 2 s (beat 0.5 s): a bass sine, a triad of three sines (C major, then A minor) and a melody
+# sine that changes every half bar
+tt = np.arange(int(12 * SR)) / SR
+def tone(f, a, b, amp, ramp=0.005):
+    g = np.clip((tt - a) / ramp, 0, 1) * np.clip((b - tt) / ramp, 0, 1)
+    return amp * g * np.sin(2 * np.pi * f * tt)
+mel = np.zeros_like(tt)
+for bar, (bass, chord) in enumerate(((41.2, (130.81, 164.81, 196.0)),) * 2 + ((55.0, (110.0, 130.81, 164.81)),) * 2):
+    a, b = 1.0 + 2.0 * bar, 3.0 + 2.0 * bar
+    mel += tone(bass, a, b, 0.3)
+    for f in chord:
+        mel += tone(f, a, b, 0.1)
+for k, m in enumerate((74, 77, 71, 74, 79, 77, 83, 86)):
+    mel += tone(440.0 * 2 ** ((m - 69) / 12), 1.0 + k, 2.0 + k, 0.1)
+wav('melody', mel)
+
 # verify: two sources, an output built from them, a timeline that is true and one that is shifted by 30 ms
 def am(n, seed):
     r = np.random.RandomState(seed)
@@ -136,6 +180,34 @@ bpm=$(awk -F'\t' 'NR==1 { for (i = 1; i <= NF; i++) { if ($i == "bpm_a") a = i; 
 awk -v s="$bpm" 'BEGIN { split(s, v, " "); exit !(v[1] != "-" && v[2] != "-" && (v[2] / v[1] > 1.03 || v[2] / v[1] < 0.97)) }'
 check tempo_change_shows_in_bpm $? "bpm $bpm"
 
+bandflags() { # case, band -> flags of that band's row of the seam's _bands.tsv
+    awk -F'\t' -v b="$2" '$4 == b { print $10 }' "$T/out/$1_bands.tsv"
+}
+allbands() { for b in sub bass lowmid mid presence air; do printf '%s=%s ' "$b" "$(bandflags "$1" "$b")"; done; }
+onlyflag() { # case, band, flag: that band has exactly this flag and every other band has none
+    local b
+    [ "$(bandflags "$1" "$2")" = "$3" ] || return 1
+    for b in sub bass lowmid mid presence air; do [ "$b" = "$2" ] || [ "$(bandflags "$1" "$b")" = "-" ] || return 1; done
+}
+for n in band_clean band_bump band_air band_dip; do
+    runseams $n || { check "seams_runs_$n" 1 "$(tail -3 "$T/$n.err")"; }
+done
+onlyflag band_bump bass BUMP; check band_bump_two_sources_flags_bass_only $? "$(allbands band_bump)"
+onlyflag band_air air STEP; check band_air_step_flags_air_only $? "$(allbands band_air)"
+d_ok=1; for b in sub bass; do case "$(bandflags band_dip $b)" in *DIP*) d_ok=0 ;; esac; done
+for b in lowmid mid presence air; do [ "$(bandflags band_dip $b)" = "-" ] || d_ok=1; done
+check band_dip_below_250_flags_sub_or_bass_only $d_ok "$(allbands band_dip)"
+all_ok=0; for b in sub bass lowmid mid presence air; do [ "$(bandflags band_clean $b)" = "-" ] || all_ok=1; done
+grep -Eq '^BANDS 01 0:10\.0 \| sub -?[0-9]+>-?[0-9]+ \| bass .* \| air -?[0-9]+>-?[0-9]+ \| -$' "$T/band_clean.tab" || all_ok=1
+check band_clean_signal_flags_nothing $all_ok "$(allbands band_clean) / $(grep '^BANDS' "$T/band_clean.tab")"
+rows=$(awk -F'\t' 'NR > 1 && $1 == "01" { n++ } END { print n + 0 }' "$T/out/band_bump_bands.tsv")
+names=$(awk -F'\t' 'NR > 1 { print $4 }' "$T/out/band_bump_bands.tsv" | tr '\n' ' ')
+[ "$rows" = 6 ] && [ "$names" = "sub bass lowmid mid presence air " ]; check bands_tsv_six_rows_per_seam $? "$rows rows: $names"
+
+"$PYTHON" -I "$CM" melody "$T/melody.wav" 1.0 0.5 4 > "$T/melody.out" 2> "$T/melody.err"
+want=$(printf 'bar\tstart\tbass\ttriad\thalf1\thalf2\n1\t1.000\tE1\tC\tD5(74)\tF5(77)\n2\t3.000\tE1\tC\tB4(71)\tD5(74)\n3\t5.000\tA1\tAm\tG5(79)\tF5(77)\n4\t7.000\tA1\tAm\tB5(83)\tD6(86)\n')
+[ "$(cat "$T/melody.out")" = "$want" ]; check melody_reads_back_bass_triad_and_half_bar_pitches $? "$(cat "$T/melody.out" "$T/melody.err" | tail -8)"
+
 "$PYTHON" -I "$CM" verify "$T/vout.wav" "$T/true.timeline.tsv" > "$T/vt.txt" 2>&1; rc=$?
 check verify_passes_true_timeline $rc "$(cat "$T/vt.txt")"
 grep -q "1 hidden" "$T/vt.txt"; check verify_reports_short_row_hidden $? "$(cat "$T/vt.txt")"
@@ -159,9 +231,9 @@ check seam_png_sheet_table_exist $? "$(ls "$T/out" | head)"
 import sys
 from PIL import Image
 w, h = Image.open(sys.argv[1]).size
-sys.exit(0 if (w, h) == (1000, 520) else 1)
+sys.exit(0 if (w, h) == (1000, 740) else 1)
 PY
-check seam_png_is_1000x520 $? "size"
+check seam_png_is_1000x740_taller_than_before $? "size"
 
 if [ "$fails" = 0 ]; then echo "test_citymix: all checks passed"; else echo "test_citymix: $fails FAILED"; fi
 [ "$fails" = 0 ]

@@ -11,7 +11,11 @@
   seams wav seams.tsv timeline.tsv outdir name
         one picture per seam of a splice render (outdir/<name>_sNN.png), contact sheets of four
         (outdir/<name>_seamsheet_K.png) and a table of measures with a FLAGS column (outdir/<name>_seams.tsv, also
-        on stdout): click, hole, step (overall and by band), beat grid offset, key distance.
+        on stdout): click, hole, step (overall and by band), beat grid offset, key distance. After the table:
+        a table of six band levels per seam (outdir/<name>_bands.tsv) and one `BANDS ...` line per seam on stdout
+        (before>after in dB per band; FLAGS: STEP, BUMP = two sources doubled, DIP = a hole in one band).
+  melody wav t0 beat nbars [bpb=4]
+        a row per bar: bass note, triad guess, and the dominant melody pitch of each half bar (for writing glue).
   verify wav timeline.tsv
         proves the timeline: every row is found again in its source at the time the timeline says. Prints the
         rows that do not pass and one summary line; exit status 1 on any FAIL.
@@ -326,7 +330,20 @@ BEAT_SAME = 0.015      # two periods within this (after folding) share a grid
 BEAT_FOLDS = ((1, 1), (2, 1), (1, 2), (3, 2), (2, 3))   # period B : period A, as m:n
 ENV_RATE = 1000.0      # onset_env is one value a ms
 SEAM_PAD = 10.5        # s of audio read each side of a seam
-SEAM_PX = (10, 5.2)    # inches at 100 dpi: 1000 x 520
+SEAM_PX = (10, 7.4)    # inches at 100 dpi: 1000 x 740 (spectrogram, waveform, six band levels, zoom)
+# the six bands of the per-band seam levels: (name, short name for the compact line, low Hz, high Hz)
+BANDS = (('sub', 'sub', 20, 60), ('bass', 'bass', 60, 250), ('lowmid', 'lowmid', 250, 600),
+         ('mid', 'mid', 600, 2500), ('presence', 'pres', 2500, 7000), ('air', 'air', 7000, 20000))
+BAND_ORDER = 4         # Butterworth band-pass order, run zero-phase (sosfiltfilt)
+BAND_SIDE = (-3.0, -0.1, 0.1, 3.0)   # s from the seam: before = [t-3.0, t-0.1], after = [t+0.1, t+3.0]
+BAND_WIN = 0.5         # s: through-level window
+BAND_HOP = 0.125       # s: hop of the through-level windows
+BAND_THROUGH = 2.0     # s: through-level window centres lie within +-this of the seam
+BAND_STEP_DB = 6.0     # |after - before| over this: STEP
+BAND_BUMP_DB = 3.0     # max through over the louder side: BUMP (two sources doubled)
+BAND_DIP_DB = -9.0     # min through under the quieter side: DIP (a hole in that band)
+BAND_PIC_WIN = 0.2     # s: window and hop of the band levels in the picture
+BAND_PIC_HOP = 0.05
 SONG_ROW = 180.0
 STEM_CORR = 0.35       # rows of a stem (the timeline names the original)
 HP_CORR, HP_LAG_MS = 0.8, 1.0
@@ -481,6 +498,43 @@ def key_class(k):
     return ((pc + 3) % 12 if minor else pc) * 7 % 12
 
 
+def band_levels(m, sr):
+    """Cumulative power of the mono mix in each of the BANDS (zero-phase band-pass)."""
+    out = []
+    for _, _, lo, hi in BANDS:
+        hi = min(hi, 0.99 * sr / 2)
+        sos = signal.butter(BAND_ORDER, (lo, hi), 'bandpass', fs=sr, output='sos')
+        out.append(cum(signal.sosfiltfilt(sos, m) ** 2))
+    return out
+
+
+def band_seam(bc, sr, a0, t, n):
+    """Per band: before, after, step, bump, dip (dB) and the flags of one seam; bc is band_levels' result."""
+    def lev(c, u, v):
+        i, j = max(0, int(round((u - a0) * sr))), min(n, int(round((v - a0) * sr)))
+        return float(db((c[j] - c[i]) / (j - i))) if j - i >= 0.01 * sr else float('nan')
+    rows = []
+    centres = np.arange(-BAND_THROUGH, BAND_THROUGH + 1e-9, BAND_HOP)
+    for (name, _, _, _), c in zip(BANDS, bc):
+        b = lev(c, t + BAND_SIDE[0], t + BAND_SIDE[1])
+        a = lev(c, t + BAND_SIDE[2], t + BAND_SIDE[3])
+        th = [lev(c, t + k - BAND_WIN / 2, t + k + BAND_WIN / 2) for k in centres
+              if t + k - BAND_WIN / 2 >= a0 and t + k + BAND_WIN / 2 <= a0 + n / sr]
+        th = [v for v in th if v == v]
+        step = a - b
+        bump = max(th) - max(a, b) if th and a == a and b == b else float('nan')
+        dip = min(th) - min(a, b) if th and a == a and b == b else float('nan')
+        fl = []
+        if abs(step) > BAND_STEP_DB:
+            fl.append('STEP')
+        if bump > BAND_BUMP_DB:
+            fl.append('BUMP')
+        if dip < BAND_DIP_DB:
+            fl.append('DIP')
+        rows.append(dict(band=name, before=b, after=a, step=step, bump=bump, dip=dip, flags=fl))
+    return rows
+
+
 def seam_analysis(wav, info, row, nn):
     """Measure one seam; returns (table row dict, data for the picture)."""
     t, pe, st = float(row['time']), float(row['prev_end']), float(row['start'])
@@ -537,7 +591,9 @@ def seam_analysis(wav, info, row, nn):
         'bpm_a': f1(bpm_a), 'bpm_b': f1(bpm_b), 'beat_ms': f1(boff, '%+.1f'),
         'key_a': ka.split('/')[0] if ka[0] != '?' else '-', 'key_b': kb.split('/')[0] if kb[0] != '?' else '-',
         'fifths': f1(fif, '%d'), 'flags': ','.join(flags) or '-'}
-    return out, dict(x=x, sr=sr, a0=a0, m=m, ck=ck, bands=bands, t=t, pe=pe, st=st, dur=dur)
+    bc = band_levels(m, sr)
+    out['_bands'] = band_seam(bc, sr, a0, t, len(m))
+    return out, dict(x=x, sr=sr, a0=a0, m=m, ck=ck, bands=bands, bc=bc, bs=out['_bands'], t=t, pe=pe, st=st, dur=dur)
 
 
 SEAM_COLS = ['nn', 'time', 'mmss', 'role', 'join_in', 'click', 'click_at', 'hole_db', 'hole_ms', 'step3', 'step10',
@@ -547,8 +603,8 @@ SEAM_COLS = ['nn', 'time', 'mmss', 'role', 'join_in', 'click', 'click_at', 'hole
 def seam_picture(png, name, out, d):
     x, sr, a0, m, ck, t = d['x'], d['sr'], d['a0'], d['m'], d['ck'], d['t']
     fig = plt.figure(figsize=SEAM_PX, dpi=100)
-    gs = fig.add_gridspec(3, 1, height_ratios=[3, 1.3, 1.3], hspace=0.38, left=0.07, right=0.93, top=0.93, bottom=0.07)
-    A, B, C = fig.add_subplot(gs[0]), fig.add_subplot(gs[1]), fig.add_subplot(gs[2])
+    gs = fig.add_gridspec(4, 1, height_ratios=[3, 1.3, 1.7, 1.3], hspace=0.42, left=0.07, right=0.93, top=0.94, bottom=0.05)
+    A, B, D, C = fig.add_subplot(gs[0]), fig.add_subplot(gs[1]), fig.add_subplot(gs[2]), fig.add_subplot(gs[3])
     i0, i1 = max(0, int((t - 6 - a0) * sr)), min(len(m), int((t + 6 - a0) * sr))
     ts, edges, s = logspec(m[i0:i1], sr, hop=512)
     top = np.percentile(s, 99.9)
@@ -580,6 +636,23 @@ def seam_picture(png, name, out, d):
     B2.tick_params(labelsize=7)
     B2.set_ylabel('dB', fontsize=7)
     B2.legend(loc='lower left', fontsize=6, ncol=2, frameon=False)
+    # the six band levels
+    w, h = int(BAND_PIC_WIN * sr), int(BAND_PIC_HOP * sr)
+    st_ = np.arange(i0, i1 - w, h)
+    allv = []
+    for k, ((nm, _, lo, hi), c, r) in enumerate(zip(BANDS, d['bc'], d['bs'])):
+        v = np.maximum(db((c[st_ + w] - c[st_]) / w), -100)
+        allv.append(v)
+        D.plot(a0 + (st_ + w // 2) / sr, v, lw=0.9, color='C%d' % k,
+               label='%s %d-%d  %s dB' % (nm, lo, hi, '-' if r['step'] != r['step'] else '%+.1f' % r['step']))
+    if allv:
+        allv = np.concatenate(allv)
+        D.set_ylim(max(-100, allv.min() - 3), allv.max() + 3)
+    D.axvline(t, color='k', lw=0.6, ls='--')
+    D.set_xlim(t - 6, t + 6)
+    D.tick_params(labelsize=7)
+    D.set_ylabel('dB', fontsize=7)
+    D.legend(loc='lower left', fontsize=6, ncol=3, frameon=False)
     # zoom
     j0, j1 = max(0, int((t - 0.15 - a0) * sr)), min(len(m), int((t + 0.15 - a0) * sr))
     tz = a0 + np.arange(j0, j1) / sr
@@ -594,6 +667,10 @@ def seam_picture(png, name, out, d):
     C.tick_params(labelsize=7)
     fig.savefig(png, dpi=100)
     plt.close(fig)
+
+
+BAND_COLS = ['nn', 'time', 'role', 'band', 'before', 'after', 'step', 'bump', 'dip', 'flags']
+f1 = lambda v, fmt='%.1f': '-' if v is None or v != v else fmt % v
 
 
 def seams(wav, seams_tsv, timeline_tsv, outdir, name):
@@ -612,6 +689,18 @@ def seams(wav, seams_tsv, timeline_tsv, outdir, name):
     text = '\t'.join(SEAM_COLS) + '\n' + ''.join('\t'.join(r[c] for c in SEAM_COLS) + '\n' for r in table)
     open('%s/%s_seams.tsv' % (outdir, name), 'w').write(text)
     sys.stdout.write(text)
+    bt = '\t'.join(BAND_COLS) + '\n'
+    for r in table:
+        for b in r['_bands']:
+            bt += '\t'.join((r['nn'], r['time'], r['role'], b['band'], f1(b['before']), f1(b['after']), f1(b['step']),
+                             f1(b['bump']), f1(b['dip']), ','.join(b['flags']) or '-')) + '\n'
+    open('%s/%s_bands.tsv' % (outdir, name), 'w').write(bt)
+    for r in table:
+        cells = ['%s>%s' % ('-' if b['before'] != b['before'] else '%.0f' % b['before'],
+                            '-' if b['after'] != b['after'] else '%.0f' % b['after']) for b in r['_bands']]
+        fl = ','.join('%s:%s' % (b['band'], f) for b in r['_bands'] for f in b['flags']) or '-'
+        sys.stdout.write('BANDS %s %s | %s | %s\n' % (r['nn'], r['mmss'],
+                         ' | '.join('%s %s' % (b[1], c) for b, c in zip(BANDS, cells)), fl))
     for k in range(0, len(pngs), 4):
         ims = [Image.open(p).convert('RGB') for p in pngs[k:k + 4]]
         w, h = ims[0].size
@@ -619,6 +708,101 @@ def seams(wav, seams_tsv, timeline_tsv, outdir, name):
         for i, im in enumerate(ims):
             o.paste(im, ((i % 2) * w, (i // 2) * h))
         o.save('%s/%s_seamsheet_%d.png' % (outdir, name, k // 4 + 1))
+
+
+# ---------------------------------------------------------------- melody
+SHARPS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B']
+MEL_BASS_HZ = (30.0, 200.0)      # the bass note is read from the spectrum between these
+MEL_CHORD_HZ = (100.0, 2000.0)   # the triad is read from the chroma of this stretch
+MEL_BAND_HZ = (300.0, 2500.0)    # the melody is read from this band
+MEL_VOICED_MIN = 0.30            # a half bar with fewer voiced frames than this prints '-'
+MEL_SR = 16000                   # pyin runs at this rate
+MEL_HOP = 160                    # 10 ms
+
+
+def note_name(midi):
+    n = int(round(midi))
+    return '%s%d' % (SHARPS[n % 12], n // 12 - 1)
+
+
+def bar_spectrum(x, sr):
+    w = np.hanning(len(x))
+    mag = np.abs(np.fft.rfft(x * w))
+    return np.fft.rfftfreq(len(x), 1.0 / sr), mag
+
+
+def bass_note(x, sr):
+    """Strongest pitch class of the spectrum under 200 Hz, with the octave of its strongest bin."""
+    f, mag = bar_spectrum(x, sr)
+    k = (f >= MEL_BASS_HZ[0]) & (f <= MEL_BASS_HZ[1])
+    if not k.any() or mag[k].max() <= 0:
+        return '-'
+    f, mag = f[k], mag[k]
+    midi = np.round(69 + 12 * np.log2(f / 440.0)).astype(int)
+    cls = np.bincount(midi % 12, weights=mag ** 2, minlength=12)
+    c = int(np.argmax(cls))
+    sel = midi % 12 == c
+    return note_name(midi[sel][np.argmax(mag[sel])])
+
+
+def triad_guess(x, sr):
+    """The major or minor triad whose three pitch classes hold most of the chroma of the stretch."""
+    f, mag = bar_spectrum(x, sr)
+    k = (f >= MEL_CHORD_HZ[0]) & (f <= MEL_CHORD_HZ[1])
+    if not k.any() or mag[k].max() <= 0:
+        return '-'
+    midi = np.round(69 + 12 * np.log2(f[k] / 440.0)).astype(int)
+    chroma = np.bincount(midi % 12, weights=mag[k] ** 2, minlength=12)
+    best, name = -1.0, '-'
+    for r in range(12):
+        for third, suffix in ((4, ''), (3, 'm')):
+            sc = chroma[r] + chroma[(r + third) % 12] + chroma[(r + 7) % 12]
+            if sc > best * (1 + 1e-9):
+                best, name = sc, SHARPS[r] + suffix
+    return name
+
+
+def melody_track(x, sr):
+    """(times, f0 in Hz or nan, voiced) of the 300-2500 Hz band of x, by pyin."""
+    import librosa
+    sos = signal.butter(4, MEL_BAND_HZ, 'bandpass', fs=sr, output='sos')
+    y = signal.sosfiltfilt(sos, x)
+    y = signal.resample_poly(y, MEL_SR, sr).astype('float32')
+    f0, voiced, _ = librosa.pyin(y, fmin=MEL_BAND_HZ[0], fmax=MEL_BAND_HZ[1], sr=MEL_SR, frame_length=2048,
+                                 hop_length=MEL_HOP)
+    return np.arange(len(f0)) * MEL_HOP / MEL_SR, f0, voiced
+
+
+def melody_half(tr, a, b):
+    """Dominant pitch of the frames in [a, b) as 'A4(69)', or '-' when under 30 percent of them are voiced."""
+    t, f0, voiced = tr
+    k = (t >= a) & (t < b)
+    if not k.any() or voiced[k].mean() < MEL_VOICED_MIN:
+        return '-'
+    v = f0[k & voiced]
+    v = v[np.isfinite(v)]
+    if not len(v):
+        return '-'
+    m = 69 + 12 * np.log2(np.median(v) / 440.0)
+    return '%s(%d)' % (note_name(m), int(round(m)))
+
+
+def melody(wav, t0, beat, nbars, bpb=4):
+    t0, beat, nbars, bpb = float(t0), float(beat), int(nbars), int(bpb)
+    bar = beat * bpb
+    x, sr = load(wav, t0, t0 + nbars * bar)
+    m = x.mean(axis=1)
+    tr = melody_track(m, sr)
+    print('bar\tstart\tbass\ttriad\thalf1\thalf2')
+    for i in range(nbars):
+        a = int(round(i * bar * sr))
+        seg = m[a:int(round((i + 1) * bar * sr))]
+        if len(seg) < int(bar * sr * 0.5):
+            print('(the file ends in bar %d)' % (i + 1))
+            break
+        h1 = melody_half(tr, i * bar, i * bar + bar / 2)
+        h2 = melody_half(tr, i * bar + bar / 2, (i + 1) * bar)
+        print('%d\t%.3f\t%s\t%s\t%s\t%s' % (i + 1, t0 + i * bar, bass_note(seg, sr), triad_guess(seg, sr), h1, h2))
 
 
 # ---------------------------------------------------------------- verify
@@ -817,6 +1001,8 @@ if __name__ == '__main__':
         sheet(a[0], a[1:])
     elif cmd == 'seams' and len(a) == 5:
         seams(*a)
+    elif cmd == 'melody' and len(a) in (4, 5):
+        melody(*a)
     elif cmd == 'verify' and len(a) == 2:
         sys.exit(verify(*a))
     elif cmd == 'song' and len(a) == 4:

@@ -1,0 +1,121 @@
+#!/bin/bash
+# test_glue.sh: glue.c (the tiny synth for bridging passages) on its own scores, self-cleaning.
+# One PASS or FAIL line per check, non-zero exit if any check fails. Every check was mutation checked (the code it covers
+# broken, the named check seen to fail, the code restored).
+#   GLUE_C=/path/to/copy.c  test a (mutated) copy of glue.c instead of the real one
+#   PYTHON=/path/to/python  the python with numpy (default python3)
+#   ONLY=text                 run only the checks whose name contains the text
+PY="${PYTHON:-python3}"
+D="$(cd "$(dirname "$0")" && pwd)"
+T="$(mktemp -d)"; trap 'rm -rf "$T"' EXIT
+SRC_C="${GLUE_C:-$D/glue.c}"
+clang -O2 -Wall -Werror -I"$D" -o "$T/glue" "$SRC_C" 2> "$T/cc.log" || { cat "$T/cc.log"; echo "FAIL build"; exit 1; }
+[ -s "$T/cc.log" ] && { cat "$T/cc.log"; echo "FAIL build warnings"; exit 1; }
+cat > "$T/t.py" <<'PY'
+import numpy as np, subprocess, os
+SR = 48000
+T = os.environ['T']; BIN = T + '/glue'; ONLY = os.environ.get('ONLY', '')
+fails = []
+
+def run(lines, tag='g', raw=False):
+    sp = f'{T}/{tag}.score'; open(sp, 'w').write('\n'.join(lines) + '\n')
+    o = f'{T}/{tag}.wav'
+    if os.path.exists(o): os.remove(o)
+    r = subprocess.run([BIN, sp, o], capture_output=True, text=True)
+    class R: pass
+    R.rc, R.err, R.path = r.returncode, r.stderr, o
+    R.y = None
+    if os.path.exists(o):
+        R.bytes = open(o, 'rb').read()
+        d = subprocess.run(['ffmpeg', '-v', 'error', '-nostdin', '-i', o, '-f', 'f32le', '-ar', '48000', '-ac', '2', '-'], capture_output=True, check=True)
+        R.y = np.frombuffer(d.stdout, dtype='<f4').reshape(-1, 2).astype(np.float64)
+    return R
+def db(x): return 20 * np.log10(abs(x) + 1e-12)
+def rms(x): return float(np.sqrt(np.mean(np.square(x))))
+def seg(x, a, b): return x[int(round(a * SR)):int(round(b * SR))]
+def spec(x):
+    w = np.hanning(len(x)); return np.fft.rfftfreq(len(x), 1 / SR), np.abs(np.fft.rfft(x * w)) ** 2
+def check(name, fn):
+    if ONLY and ONLY not in name: return
+    try: ok, detail = fn()
+    except Exception as e: ok, detail = False, 'exception %r' % (e,)
+    if not ok: fails.append(name)
+    print(('PASS ' if ok else 'FAIL ') + name + (' - ' + detail if detail else '')); sys.stdout.flush()
+import sys
+
+DRY = 'REVERB -120'
+def pad_hz():
+    R = run(['TEMPO 60', 'LEN 6', DRY, 'PAD 0 6 57 -10'], 'p'); m = R.y.mean(axis=1)
+    f, P = spec(seg(m, 1.0, 5.0)); k = (f > 100) & (f < 500); peak = f[k][np.argmax(P[k])]
+    low = P[(f > 200) & (f < 240)].sum(); hi = P[f > 3600].sum()
+    return R.rc == 0 and abs(peak - 220) < 2.2 and 10 * np.log10(hi / low) < -30, f'peak {peak:.2f} Hz, above 3600 Hz {10 * np.log10(hi / low):.1f} dB under the 200-240 Hz band'
+check('PAD at midi 57 sits at 220 Hz with nothing above twice the cutoff', pad_hz)
+def pad_cut():
+    R = run(['TEMPO 60', 'LEN 6', DRY, 'CUTOFF 600', 'PAD 0 6 57 -10'], 'pc'); m = R.y.mean(axis=1)
+    f, P = spec(seg(m, 1.0, 5.0)); low = P[(f > 200) & (f < 240)].sum(); hi = P[f > 1200 * 1.15].sum()
+    return R.rc == 0 and 10 * np.log10(hi / low) < -30, f'above 1380 Hz with CUTOFF 600: {10 * np.log10(hi / low):.1f} dB under'
+check('CUTOFF moves the pad low-pass', pad_cut)
+def pad_attack():
+    R = run(['TEMPO 60', 'LEN 6', DRY, 'PAD 0 6 57 -10'], 'pa'); m = R.y.mean(axis=1)
+    a = db(rms(seg(m, 0.04, 0.06))); b = db(rms(seg(m, 0.55, 0.65)))
+    return R.rc == 0 and b - a > 12, f'50 ms is {b - a:.1f} dB under 600 ms'
+check('PAD attacks over 0.35 s', pad_attack)
+def keys_decay():
+    R = run(['TEMPO 60', 'LEN 5', DRY, 'KEYS 0 5 60 -10'], 'k'); m = R.y.mean(axis=1)
+    a = db(rms(seg(m, 0.05, 0.15))); b = db(rms(seg(m, 1.45, 1.55)))
+    return R.rc == 0 and a - b > 2.0, f'1.5 s is {a - b:.2f} dB under 0.1 s (exp(-1.4 / 2.2) is 5.5 dB, less the 2.3 dB the FM waveform gains in RMS as its index falls)'
+check('KEYS decays while held', keys_decay)
+def keys_tremolo():
+    R = run(['TEMPO 60', 'LEN 5', DRY, 'KEYS 0 5 60 -10'], 'kt'); x = R.y[:, 0]; y = R.y[:, 1]
+    w, h = int(0.02 * SR), int(0.01 * SR); st = np.arange(int(0.9 * SR), int(3.9 * SR) - w, h)
+    r = np.array([db(rms(x[i:i + w])) - db(rms(y[i:i + w])) for i in st]); r -= r.mean()
+    f = np.fft.rfftfreq(len(r), 0.01); pk = f[np.argmax(np.abs(np.fft.rfft(r))[1:]) + 1]; amp = (r.max() - r.min()) / 2
+    return R.rc == 0 and 4.0 < pk < 5.0 and 2.4 < amp < 3.6, f'L over R swings {amp:.2f} dB at {pk:.2f} Hz (+-1.5 dB opposite in the two is +-3 dB between them)'
+check('KEYS tremolo is opposite in L and R', keys_tremolo)
+def sub_note():
+    R = run(['TEMPO 60', 'LEN 3', DRY, 'SUB 0 3 33 -10'], 's'); L, Rr = R.y[:, 0], R.y[:, 1]
+    f, P = spec(seg(L, 0.5, 2.5)); k = (f > 20) & (f < 400); peak = f[k][np.argmax(P[k])]
+    d = float(np.max(np.abs(L - Rr)))
+    return R.rc == 0 and abs(peak - 55) < 1.0 and d < 1e-5, f'peak {peak:.2f} Hz, max |L - R| {d:.2e}'
+check('SUB at midi 33 peaks at 55 Hz and is mono', sub_note)
+def timing():
+    R = run(['TEMPO 120', 'LEN 8', DRY, 'KEYS 4 1 69 -10'], 'tm'); m = np.abs(R.y.mean(axis=1))
+    on = int(np.argmax(m > 0.01 * m.max())) / SR
+    return R.rc == 0 and abs(on - 2.0) < 0.005, f'starts at {on:.4f} s'
+check('a note at beat 4 of TEMPO 120 starts at 2.000 s', timing)
+def determinism():
+    sc = ['TEMPO 90', 'LEN 4', 'PAD 0 4 57,60,64 -10', 'KEYS 1 2 72 -12', 'SUB 0 4 33 -12']
+    a = run(sc, 'd1'); b = run(sc, 'd2'); c = run(sc + ['SEED 7'], 'd3')
+    return a.rc == 0 and a.bytes == b.bytes and c.bytes != a.bytes, f'same {a.bytes == b.bytes}, other seed differs {c.bytes != a.bytes}'
+check('two renders are byte-identical and SEED changes the bytes', determinism)
+def errors():
+    cases = {'no TEMPO': ['LEN 4', 'PAD 0 4 57 -10'], 'TEMPO not first': ['LEN 4', 'TEMPO 120'], 'unknown statement': ['TEMPO 120', 'WOBBLE 1'],
+             'bad number': ['TEMPO 120', 'PAD 0 x 57 -10'], 'trailing junk': ['TEMPO 120', 'KEYS 0 1x 60 -10'], 'nan': ['TEMPO nan'], 'midi out of range': ['TEMPO 120', 'KEYS 0 1 200 -10'],
+             'empty file': [], 'bad note list': ['TEMPO 120', 'PAD 0 1 57,,60 -10'], 'missing value': ['TEMPO 120', 'SUB 0 1 33']}
+    bad = []
+    for n, sc in cases.items():
+        R = run(sc, 'e')
+        if R.rc == 0: bad.append(n + ' exits 0')
+    R = run(['TEMPO 120', '# a comment', 'PAD 0 x 57 -10'], 'e'); line_ok = 'line 3' in R.err
+    R2 = run(['TEMPO 120', 'WOBBLE 1'], 'e'); line_ok2 = 'line 2' in R2.err
+    return not bad and line_ok and line_ok2, '; '.join(bad) or 'all exit non-zero, and name the line (3 and 2)'
+check('errors exit non-zero and name the line', errors)
+def peak_safe():
+    R = run(['TEMPO 120', 'LEN 4', 'PAD 0 4 57,60,64 0', 'KEYS 0 4 60,64,67 0', 'SUB 0 4 33 0', 'REVERB 0'], 'ps')
+    pk = db(np.abs(R.y).max())
+    return R.rc == 0 and pk <= -0.9 and pk >= -1.2 and 'scaled by' in R.err, f'peak {pk:.2f} dBFS; ' + R.err.strip().split('\n')[0]
+check('a hot sum is scaled to -1 dBFS and says so', peak_safe)
+def length():
+    R = run(['TEMPO 120', 'LEN 8', 'KEYS 0 1 60 -20'], 'ln')
+    n = len(R.y) / SR
+    return R.rc == 0 and abs(n - 8.0) < 0.01, f'{n:.3f} s (LEN 8 beats at 120 = 4 s, plus a 4 s tail)'
+check('LEN plus a 4 s reverb tail sets the length', length)
+def tail():
+    R = run(['TEMPO 120', 'LEN 4', 'REVERB -6', 'KEYS 0 4 60 -10'], 'tl'); m = R.y.mean(axis=1)
+    D0 = run(['TEMPO 120', 'LEN 4', DRY, 'KEYS 0 4 60 -10'], 'tl0'); m0 = D0.y.mean(axis=1)
+    a = db(rms(seg(m, 2.5, 3.5))); a0 = db(rms(seg(m0, 2.5, 3.5))); late = db(rms(seg(m, 5.5, 5.9)))
+    return R.rc == 0 and a > -65 and a0 < -90 and late < a - 20, f'tail {a:.1f} dBFS at 2.5-3.5 s (dry render {a0:.1f}), {late - a:.1f} dB from it at 5.5-5.9 s'
+check('the reverb rings on after the last note', tail)
+print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
+PY
+T="$T" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"
