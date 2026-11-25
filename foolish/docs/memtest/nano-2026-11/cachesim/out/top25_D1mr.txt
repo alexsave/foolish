@@ -1,0 +1,27 @@
+top 25 functions by play-only D1mr; moves=57994; per-move column = total/moves
+           total   per_move  share%  function
+       1,218,302      21.01   25.73  ???
+         851,118      14.68   17.98  flush_txn
+         473,133       8.16    9.99  __GI_memcpy
+         229,405       3.96    4.85  flusher
+         150,827       2.60    3.19  pub_deliver
+         128,687       2.22    2.72  trim
+         101,130       1.74    2.14  strcmp
+         100,551       1.73    2.12  match.isra.0
+          69,658       1.20    1.47  strcspn
+          50,525       0.87    1.07  cb_ws_send
+          49,551       0.85    1.05  _int_malloc
+          45,147       0.78    0.95  strcasecmp
+          41,779       0.72    0.88  _int_free
+          41,491       0.72    0.88  cb_rt_family_user
+          39,962       0.69    0.84  sqlite3_clear_bindings
+          36,168       0.62    0.76  pthread_mutex_lock@@GLIBC_2.17
+          33,932       0.59    0.72  malloc
+          31,652       0.55    0.67  cb_loop_run
+          31,625       0.55    0.67  ws_frames
+          31,393       0.54    0.66  cb_server_inline_done
+          29,735       0.51    0.63  on_message
+          29,492       0.51    0.62  room_find.isra.0
+          29,287       0.51    0.62  __vfprintf_internal
+          29,042       0.50    0.61  __strlen_asimd
+          26,850       0.46    0.57  cb_after_open

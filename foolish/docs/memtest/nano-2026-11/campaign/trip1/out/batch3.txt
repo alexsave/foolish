@@ -1,0 +1,94 @@
+[14:24:34] run irq1 prof=none irq=1 knob=auto IP=172.31.11.245 games=192
+Success	irqbalance: inactive
+irq 55 aff=1 eff=1
+irq 56 aff=1 eff=1
+irq 57 aff=1 eff=1
+knob auto env []
+start irq1 build D pid 36907 1 listening
+2026-11-14T14:24:35.179000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+	
+[14:25:43] run irq1 moves=1158010 t_go=1794666309.385227149 cpu_window_end=1794666334.405227 (window_s=25.02) play_moves=955842 play=[1794666311.402327,1794666332.402327]
+Success	VmHWM:	   31252 kB
+== E1 window
+box busy_pct=83.42 (idle+iowait excluded; 2 vCPUs)
+cpu label=irq1 window_s=25.020 proc_cpu_s=39.050 moves=1158010 cpu_us_per_move=33.72 cpu_busy_of_one_vcpu_pct=156.1
+thread tid=36907 comm=cbase_D last_cpu=0 cpu_s=18.712 cpu_us_per_move=16.16
+thread tid=36911 comm=req-0 last_cpu=1 cpu_s=3.627 cpu_us_per_move=3.13
+thread tid=36912 comm=job-0 last_cpu=1 cpu_s=6.162 cpu_us_per_move=5.32
+thread tid=36913 comm=cbase_D last_cpu=1 cpu_s=0.450 cpu_us_per_move=0.39
+thread tid=36914 comm=cbase_D last_cpu=1 cpu_s=10.066 cpu_us_per_move=8.69
+== play window
+box busy_pct=83.15 (idle+iowait excluded; 2 vCPUs)
+cpu label=irq1 window_s=21.000 proc_cpu_s=32.724 moves=955842 cpu_us_per_move=34.24 cpu_busy_of_one_vcpu_pct=155.8
+thread tid=36907 comm=cbase_D last_cpu=0 cpu_s=15.529 cpu_us_per_move=16.25
+thread tid=36911 comm=req-0 last_cpu=1 cpu_s=2.949 cpu_us_per_move=3.09
+thread tid=36912 comm=job-0 last_cpu=1 cpu_s=5.161 cpu_us_per_move=5.40
+thread tid=36913 comm=cbase_D last_cpu=1 cpu_s=0.390 cpu_us_per_move=0.41
+thread tid=36914 comm=cbase_D last_cpu=1 cpu_s=8.685 cpu_us_per_move=9.09
+report2 label=irq1 window_s=21.000 moves=955842
+sched tid=36907 comm=cbase_D oncpu_s=15.532 oncpu_us_per_move=16.249 runq_wait_s=0.441 runq_wait_us_per_move=0.462 slices_per_move=0.0359 vol_cs_per_move=0.0349 invol_cs_per_move=0.0010
+sched tid=36911 comm=req-0 oncpu_s=2.952 oncpu_us_per_move=3.088 runq_wait_s=6.852 runq_wait_us_per_move=7.168 slices_per_move=0.0394 vol_cs_per_move=0.0381 invol_cs_per_move=0.0013
+sched tid=36912 comm=job-0 oncpu_s=5.165 oncpu_us_per_move=5.403 runq_wait_s=6.324 runq_wait_us_per_move=6.616 slices_per_move=0.0214 vol_cs_per_move=0.0049 invol_cs_per_move=0.0165
+sched tid=36913 comm=cbase_D oncpu_s=0.395 oncpu_us_per_move=0.413 runq_wait_s=0.491 runq_wait_us_per_move=0.513 slices_per_move=0.0017 vol_cs_per_move=0.0013 invol_cs_per_move=0.0004
+sched tid=36914 comm=cbase_D oncpu_s=8.684 oncpu_us_per_move=9.085 runq_wait_s=5.921 runq_wait_us_per_move=6.194 slices_per_move=0.0201 vol_cs_per_move=0.0058 invol_cs_per_move=0.0143
+sched total oncpu_us_per_move=34.239 runq_wait_us_per_move=20.953
+srvcpu cpu0 busy_pct=76.8 user=40.0 nice=0.0 system=36.8 irq=0.0 softirq=0.0 steal=0.0 idle=23.1 iowait=0.1
+srvcpu cpu1 busy_pct=89.2 user=45.8 nice=0.0 system=9.4 irq=0.0 softirq=34.0 steal=0.0 idle=8.7 iowait=2.1
+srvcpu procs_running_mean=3.51 max=6 samples=102
+VmHWM:	   31252 kB
+VmRSS:	   28044 kB
+1794666324.210661 31088 31124 17796
+2026-11-14T14:25:43.916000+00:00 INFO  net: inline dispatch: 1166660 requests on the loop thread (1966 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:25:43.949000+00:00 INFO  journal: 1139138 record(s) in 1137129 batch(es), 1110069 write(s), 39673539 byte(s); 4514 flush(es) of 1139138 move(s); 168727 WAL frame(s) before the close's flush of 13486 move(s)
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         162         128           0         121         239
+	
+[14:25:47] run irq0 prof=none irq=0 knob=auto IP=172.31.11.245 games=192
+Success	irqbalance: inactive
+irq 55 aff=0 eff=0
+irq 56 aff=0 eff=0
+irq 57 aff=0 eff=0
+knob auto env []
+start irq0 build D pid 37775 1 listening
+2026-11-14T14:25:47.804000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+	
+[14:26:56] run irq0 moves=870603 t_go=1794666382.235287215 cpu_window_end=1794666407.255287 (window_s=25.02) play_moves=727077 play=[1794666384.251976,1794666405.251976]
+Success	VmHWM:	   30820 kB
+== E1 window
+box busy_pct=67.11 (idle+iowait excluded; 2 vCPUs)
+cpu label=irq0 window_s=25.020 proc_cpu_s=32.134 moves=870603 cpu_us_per_move=36.91 cpu_busy_of_one_vcpu_pct=128.4
+thread tid=37775 comm=cbase_D last_cpu=0 cpu_s=19.997 cpu_us_per_move=22.97
+thread tid=37779 comm=req-0 last_cpu=1 cpu_s=1.453 cpu_us_per_move=1.67
+thread tid=37780 comm=job-0 last_cpu=1 cpu_s=3.029 cpu_us_per_move=3.48
+thread tid=37781 comm=cbase_D last_cpu=1 cpu_s=0.220 cpu_us_per_move=0.25
+thread tid=37782 comm=cbase_D last_cpu=1 cpu_s=7.407 cpu_us_per_move=8.51
+== play window
+box busy_pct=67.32 (idle+iowait excluded; 2 vCPUs)
+cpu label=irq0 window_s=21.000 proc_cpu_s=27.037 moves=727077 cpu_us_per_move=37.19 cpu_busy_of_one_vcpu_pct=128.7
+thread tid=37775 comm=cbase_D last_cpu=0 cpu_s=16.701 cpu_us_per_move=22.97
+thread tid=37779 comm=req-0 last_cpu=1 cpu_s=1.203 cpu_us_per_move=1.65
+thread tid=37780 comm=job-0 last_cpu=1 cpu_s=2.573 cpu_us_per_move=3.54
+thread tid=37781 comm=cbase_D last_cpu=1 cpu_s=0.202 cpu_us_per_move=0.28
+thread tid=37782 comm=cbase_D last_cpu=1 cpu_s=6.360 cpu_us_per_move=8.75
+report2 label=irq0 window_s=21.000 moves=727077
+sched tid=37775 comm=cbase_D oncpu_s=16.706 oncpu_us_per_move=22.977 runq_wait_s=0.312 runq_wait_us_per_move=0.429 slices_per_move=0.0472 vol_cs_per_move=0.0403 invol_cs_per_move=0.0069
+sched tid=37779 comm=req-0 oncpu_s=1.197 oncpu_us_per_move=1.646 runq_wait_s=2.906 runq_wait_us_per_move=3.997 slices_per_move=0.0484 vol_cs_per_move=0.0477 invol_cs_per_move=0.0006
+sched tid=37780 comm=job-0 oncpu_s=2.582 oncpu_us_per_move=3.551 runq_wait_s=2.162 runq_wait_us_per_move=2.973 slices_per_move=0.0090 vol_cs_per_move=0.0077 invol_cs_per_move=0.0013
+sched tid=37781 comm=cbase_D oncpu_s=0.197 oncpu_us_per_move=0.271 runq_wait_s=0.165 runq_wait_us_per_move=0.227 slices_per_move=0.0014 vol_cs_per_move=0.0013 invol_cs_per_move=0.0001
+sched tid=37782 comm=cbase_D oncpu_s=6.361 oncpu_us_per_move=8.749 runq_wait_s=1.891 runq_wait_us_per_move=2.601 slices_per_move=0.0175 vol_cs_per_move=0.0100 invol_cs_per_move=0.0075
+sched total oncpu_us_per_move=37.193 runq_wait_us_per_move=10.227
+srvcpu cpu0 busy_pct=82.9 user=33.0 nice=0.0 system=27.1 irq=0.0 softirq=22.7 steal=0.0 idle=17.1 iowait=0.0
+srvcpu cpu1 busy_pct=51.6 user=43.9 nice=0.0 system=7.7 irq=0.0 softirq=0.0 steal=0.0 idle=46.3 iowait=2.1
+srvcpu procs_running_mean=2.96 max=6 samples=103
+VmHWM:	   30820 kB
+VmRSS:	   26372 kB
+1794666402.441621 30560 30692 17084
+2026-11-14T14:26:57.174000+00:00 INFO  net: inline dispatch: 877559 requests on the loop thread (1260 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:26:57.201000+00:00 INFO  journal: 857791 record(s) in 856448 batch(es), 835358 write(s), 29878061 byte(s); 5888 flush(es) of 857791 move(s); 139791 WAL frame(s) before the close's flush of 11104 move(s)
+0
+               total        used        free      shared  buff/cache   available
+Mem:             412         158         129           0         124         243
+	

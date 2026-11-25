@@ -1,0 +1,9 @@
+1
+server ip 172.18.0.2
+moves=930 window_s=0.94 moves_per_s=994.4 move_p50_ms=1.27 move_p99_ms=22.53 err_files=0
+1794432786.315765459
+1794432789.023932335
+      1 Bcgsx1: deadline waiting for game 4
+load done: 21:33:09
+server exit: 0 after 2s
+-rw-------  1 alex  staff  3813655 Nov 11 16:33 /Users/alex/Dev/foolish-bench-results/cachesim/out/cg_cgs.out

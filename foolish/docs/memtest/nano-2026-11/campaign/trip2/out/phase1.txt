@@ -1,0 +1,98 @@
+srv i-REDACTED07
+load i-REDACTED08
+SUF=9ef4ad90
+B=cbase-mem-test-9ef4ad90
+ROLE=cbase-mem-test-role-9ef4ad90
+SG=sg-REDACTED09
+AMI=ami-04bde3808fe5f70cf
+SRV=i-REDACTED07
+LOAD=i-REDACTED08
+15:48:45 srv[ aws: [ERROR]: An error occurred (InvalidInstanceId) when calling the SendCommand operation: Instances not in a valid state for account ] load[ aws: [ERROR]: An error occurred (InvalidInstanceId) when calling the SendCommand operation: Instances not in a valid state for account ]
+15:49:05 srv[Failed  failed to run commands: exit status 1 ] load[Failed  failed to run commands: exit status 1 ]
+15:49:24 srv[Failed  failed to run commands: exit status 1 ] load[Failed  failed to run commands: exit status 1 ]
+15:49:43 srv[Success RDY UDD   ] load[Success UDD   ]
+[15:49:44 +62s] check
+Success	6.18.62-127.179.amzn2023.aarch64
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         203           7           0         200         198
+chronyd active
+System time     : 0.000005407 seconds slow of NTP time
+Leap status     : Normal
+total 47424
+-rw-r--r--. 1 root root       0 Nov 14 15:49 READY
+-rw-r--r--. 1 root root       0 Nov 14 15:49 UD_DONE
+-rw-r--r--. 1 root root      24 Nov 14 15:48 bucket
+-rwxr-xr-x. 1 root root 8431976 Nov 14 15:48 cbase_ALL
+-rwxr-xr-x. 1 root root 8431976 Nov 14 15:48 cbase_D
+-rwxr-xr-x. 1 root root 8431976 Nov 14 15:48 cbase_N1
+-rwxr-xr-x. 1 root root 8431976 Nov 14 15:48 cbase_P1
+-rwxr-xr-x. 1 root root 8431976 Nov 14 15:48 cbase_P3
+-rwxr-xr-x. 1 root root    6848 Nov 14 15:48 cpu.sh
+-rwxr-xr-x. 1 root root    3158 Nov 14 15:48 irq.sh
+-rwxr-xr-x. 1 root root    8381 Nov 14 15:48 load.sh
+-rw-r--r--. 1 root root   23288 Nov 14 15:48 rematch.c
+-rw-r--r--. 1 root root 6124487 Nov 14 15:48 src.tgz
+-rwxr-xr-x. 1 root root    3962 Nov 14 15:48 srv.sh
+-rwxr-xr-x. 1 root root  203464 Nov 14 15:49 tlsres
+-rw-r--r--. 1 root root    3161 Nov 14 15:48 tlsres.c
+53e1cd472fa1d9945c8fd876634dea7cd5203ebf186240891123792ff9ed422b  /opt/mt/cbase_
+4eae8437fe5ba915682b752ecfd71cd9a40b77051807d186ad4a593ea96da0b7  /opt/mt/cbase_
+808af8ceccdbe2eefc5b3133c770258edd802a089e365063290f9acce29b68a9  /opt/mt/cbase_
+9ca3b791ebcfc586b2696bff031f8b7ac1edd9c4de8b5840f1e93677033bebbf  /opt/mt/cbase_
+2388945aa5e9f99bf057ed77d252fcb4d0a33673b7adfa5a6d2bfc4fed5dc497  /opt/mt/cbase_
+READY
+UD_DONE
+irqbalance active
+ 55:          6         64 ITS-PCI-MSIX-0000:00:05.0   0 Edge      ena-mgmnt@pci:0000:00:05.0
+ 56:       3129       4894 ITS-PCI-MSIX-0000:00:05.0   1 Edge      ens5-Tx-Rx-0
+ 57:       2282       3995 ITS-PCI-MSIX-0000:00:05.0   2 Edge      ens5-Tx-Rx-1
+package perf is not installed package bpftrace is not installed 
+	
+Success	13
+UD_DONE
+0
+BUILT
+8
+6.18.62-127.179.amzn2023.aarch64
+chronyd active
+	
+[15:49:50 +68s] run wA arm=A build=D irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:50:59 +137s] run wA moves=960745 play_moves=798339 play=[1794671428.337029,1794671449.337029]
+Success	== post wA
+irq mode=show irqbalance=inactive procs=0 ens5-Tx-Rx-0(irq 56) aff=1 eff=1 ens5-Tx-Rx-1(irq 57) aff=0 eff=0 ena-mgmnt(irq 55) aff=1 eff=1
+IRQ_OK
+irqdelta ena-mgmnt cpu0=0 cpu1=67
+irqdelta ens5-Tx-Rx-0 cpu0=0 cpu1=399846
+irqdelta ens5-Tx-Rx-1 cpu0=365827 cpu1=0
+irqpct queue_on_cpu0_pct=47.8 queue_total=765673
+VmHWM:	   30364 kB
+== play window
+box busy_pct=76.49 (idle+iowait excluded; 2 vCPUs)
+cpu label=wA window_s=21.000 proc_cpu_s=29.470 moves=798339 cpu_us_per_move=36.91 cpu_busy_of_one_vcpu_pct=140.3
+thread tid=2441 comm=cbase_D last_cpu=0 cpu_s=15.814 cpu_us_per_move=19.81
+thread tid=2445 comm=req-0 last_cpu=1 cpu_s=1.848 cpu_us_per_move=2.31
+thread tid=2446 comm=job-0 last_cpu=1 cpu_s=3.519 cpu_us_per_move=4.41
+thread tid=2447 comm=cbase_D last_cpu=1 cpu_s=0.270 cpu_us_per_move=0.34
+thread tid=2448 comm=cbase_D last_cpu=1 cpu_s=8.011 cpu_us_per_move=10.03
+report2 label=wA window_s=21.000 moves=798339
+sched tid=2441 comm=cbase_D oncpu_s=15.820 oncpu_us_per_move=19.816 runq_wait_s=0.338 runq_wait_us_per_move=0.424 slices_per_move=0.0458 vol_cs_per_move=0.0423 invol_cs_per_move=0.0035
+sched tid=2445 comm=req-0 oncpu_s=1.851 oncpu_us_per_move=2.318 runq_wait_s=4.790 runq_wait_us_per_move=6.000 slices_per_move=0.0459 vol_cs_per_move=0.0450 invol_cs_per_move=0.0010
+sched tid=2446 comm=job-0 oncpu_s=3.519 oncpu_us_per_move=4.408 runq_wait_s=3.228 runq_wait_us_per_move=4.043 slices_per_move=0.0124 vol_cs_per_move=0.0076 invol_cs_per_move=0.0048
+sched tid=2447 comm=cbase_D oncpu_s=0.277 oncpu_us_per_move=0.347 runq_wait_s=0.312 runq_wait_us_per_move=0.391 slices_per_move=0.0017 vol_cs_per_move=0.0015 invol_cs_per_move=0.0002
+sched tid=2448 comm=cbase_D oncpu_s=8.005 oncpu_us_per_move=10.026 runq_wait_s=3.153 runq_wait_us_per_move=3.949 slices_per_move=0.0221 vol_cs_per_move=0.0092 invol_cs_per_move=0.0129
+sched total oncpu_us_per_move=36.916 runq_wait_us_per_move=14.807
+srvcpu cpu0 busy_pct=78.9 user=34.3 nice=0.0 system=30.5 irq=0.0 softirq=14.2 steal=0.0 idle=21.1 iowait=0.0
+srvcpu cpu1 busy_pct=74.1 user=44.2 nice=0.0 system=7.2 irq=0.0 softirq=22.8 steal=0.0 idle=24.6 iowait=1.2
+srvcpu procs_running_mean=3.13 max=6 samples=102
+VmHWM:	   30364 kB
+VmRSS:	   28844 kB
+rssmax 1794671444.196738 30064 30064 17124
+2026-11-14T15:51:00.816000+00:00 INFO  net: inline dispatch: 967808 requests on the loop thread (1461 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T15:51:00.844000+00:00 INFO  journal: 947175 record(s) in 945125 batch(es), 922019 write(s), 32728223 byte(s); 6174 flush(es) of 947175 move(s); 152710 WAL frame(s) before the close's flush of 11756 move(s)
+warn_lines 1
+               total        used        free      shared  buff/cache   available
+Mem:             412         160         132           0         119         241
+== end post wA
+	
+PHASE1_DONE

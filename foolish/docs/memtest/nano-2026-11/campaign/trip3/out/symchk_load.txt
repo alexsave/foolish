@@ -1,0 +1,27 @@
+Success	moves=890930 window_s=30.01 moves_per_s=29688.1 move_p50_ms=0.27 move_p99_ms=0.69 err_files=0
+play moves=642931 window_s=21.00 moves_per_s=30615.8 move_p50_ms=0.27 move_p99_ms=0.60 epoch0=1794681157.078990 epoch1=1794681178.078990 mono0=172.670366 mono1=193.670366 move_p95_ms=0.38 move_max_ms=162.14
+1794681155.062660096
+1794681187.694068491
+epoch 1794681155.078990 mono 170.670366
+epoch 1794681187.710825 mono 203.302200
+full loadcpu all busy_pct_of_all_vcpus=18.9
+full loadcpu cpu0 busy_pct=19.8 user=7.5 nice=0.0 system=5.8 irq=0.0 softirq=6.5 steal=0.0 idle=80.2 iowait=0.0
+full loadcpu cpu1 busy_pct=20.2 user=7.5 nice=0.0 system=6.1 irq=0.0 softirq=6.6 steal=0.0 idle=79.8 iowait=0.0
+full loadcpu cpu2 busy_pct=17.9 user=8.3 nice=0.0 system=6.8 irq=0.0 softirq=2.8 steal=0.0 idle=80.8 iowait=1.3
+full loadcpu cpu3 busy_pct=17.9 user=7.7 nice=0.0 system=6.5 irq=0.0 softirq=3.7 steal=0.0 idle=82.1 iowait=0.0
+full loadcpu cpu4 busy_pct=18.4 user=7.5 nice=0.0 system=6.4 irq=0.0 softirq=4.5 steal=0.0 idle=81.5 iowait=0.0
+full loadcpu cpu5 busy_pct=17.8 user=7.5 nice=0.0 system=7.0 irq=0.0 softirq=3.4 steal=0.0 idle=82.2 iowait=0.0
+full loadcpu cpu6 busy_pct=18.7 user=8.3 nice=0.0 system=6.6 irq=0.0 softirq=3.7 steal=0.0 idle=81.3 iowait=0.0
+full loadcpu cpu7 busy_pct=20.2 user=7.7 nice=0.0 system=5.9 irq=0.0 softirq=6.5 steal=0.0 idle=79.8 iowait=0.0
+full loadcpu procs_running_mean=2.37 max=8 samples=162
+play loadcpu all busy_pct_of_all_vcpus=20.8
+play loadcpu cpu0 busy_pct=21.9 user=7.7 nice=0.0 system=6.5 irq=0.0 softirq=7.7 steal=0.0 idle=78.1 iowait=0.0
+play loadcpu cpu1 busy_pct=22.4 user=8.2 nice=0.0 system=6.7 irq=0.0 softirq=7.5 steal=0.0 idle=77.6 iowait=0.0
+play loadcpu cpu2 busy_pct=19.4 user=9.0 nice=0.0 system=7.2 irq=0.0 softirq=3.2 steal=0.0 idle=80.6 iowait=0.0
+play loadcpu cpu3 busy_pct=19.8 user=8.6 nice=0.0 system=7.0 irq=0.0 softirq=4.2 steal=0.0 idle=80.2 iowait=0.0
+play loadcpu cpu4 busy_pct=19.9 user=8.3 nice=0.0 system=6.5 irq=0.0 softirq=5.0 steal=0.0 idle=80.1 iowait=0.0
+play loadcpu cpu5 busy_pct=19.9 user=8.4 nice=0.0 system=7.7 irq=0.0 softirq=3.8 steal=0.0 idle=80.1 iowait=0.0
+play loadcpu cpu6 busy_pct=20.8 user=9.4 nice=0.0 system=7.2 irq=0.0 softirq=4.2 steal=0.0 idle=79.2 iowait=0.0
+play loadcpu cpu7 busy_pct=22.3 user=8.2 nice=0.0 system=6.9 irq=0.0 softirq=7.1 steal=0.0 idle=77.7 iowait=0.0
+play loadcpu procs_running_mean=2.60 max=8 samples=104
+	

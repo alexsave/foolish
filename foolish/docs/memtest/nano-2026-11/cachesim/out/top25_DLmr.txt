@@ -1,0 +1,27 @@
+top 25 functions by play-only DLmr; moves=57994; per-move column = total/moves
+           total   per_move  share%  function
+          72,818       1.26   39.63  ???
+          52,607       0.91   28.63  flush_txn
+          13,771       0.24    7.49  __GI_memcpy
+           8,058       0.14    4.39  _int_malloc
+           3,768       0.06    2.05  _int_free
+           3,725       0.06    2.03  sqlite3_clear_bindings
+           3,004       0.05    1.63  malloc
+           1,918       0.03    1.04  match.isra.0
+           1,737       0.03    0.95  bcmp
+           1,536       0.03    0.84  free
+           1,309       0.02    0.71  take_or_peek.part.0
+           1,218       0.02    0.66  flusher
+           1,188       0.02    0.65  strcmp
+           1,073       0.02    0.58  sqlite3_reset
+           1,036       0.02    0.56  __vfprintf_internal
+           1,013       0.02    0.55  unlink_chunk.constprop.0
+             882       0.02    0.48  EVP_EncryptUpdate
+             812       0.01    0.44  buffered_vfprintf
+             712       0.01    0.39  calloc
+             648       0.01    0.35  j_game_list
+             566       0.01    0.31  cb_game_row_free
+             497       0.01    0.27  __GI_memmove
+             455       0.01    0.25  pub_deliver
+             454       0.01    0.25  moves_for_flush
+             435       0.01    0.24  _int_realloc

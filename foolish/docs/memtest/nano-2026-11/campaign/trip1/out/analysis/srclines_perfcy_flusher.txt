@@ -1,0 +1,34 @@
+base interval [0xffff83fffffd, 0xffff84000000]
+['flush_txn'] self on 32997: 1.387 us/move, base 0xffff84000000
+0.567  40.9%  ov_evict@journal.c:1620 <- flush_txn@journal.c:1669
+0.313  22.6%  flush_due@journal.c:1472 <- snapshot_take@journal.c:1514 <- flush_txn@journal.c:1643
+0.128   9.2%  ov_evict@journal.c:1629 <- flush_txn@journal.c:1669
+0.116   8.3%  flush_due@journal.c:1472 <- snapshot_take@journal.c:1521 <- flush_txn@journal.c:1643
+0.089   6.4%  snapshot_take@journal.c:1514 <- flush_txn@journal.c:1643
+0.061   4.4%  snapshot_take@journal.c:1520 <- flush_txn@journal.c:1643
+0.032   2.3%  ratings_evict@journal.c:465 <- ov_evict@journal.c:1617 <- flush_txn@journal.c:1669
+0.026   1.9%  ov_evict@journal.c:1619 <- flush_txn@journal.c:1669
+0.011   0.8%  ov_evict@journal.c:1628 <- flush_txn@journal.c:1669
+0.009   0.7%  ov_evict@journal.c:1618 <- flush_txn@journal.c:1669
+0.008   0.6%  ratings_evict@journal.c:463 <- ov_evict@journal.c:1617 <- flush_txn@journal.c:1669
+0.007   0.5%  ov_evict@journal.c:1621 <- flush_txn@journal.c:1669
+0.007   0.5%  snapshot_take@journal.c:1519 <- flush_txn@journal.c:1643
+0.004   0.3%  game_full@journal.c:785 <- flush_due@journal.c:1472 <- snapshot_take@journal.c:1514
+0.003   0.2%  snapshot_take@journal.c:1513 <- flush_txn@journal.c:1643
+base interval [0xffff83fffffd, 0xffff84000000]
+['cycle', 'sift', 'touched_cmp', 'trinkle'] self on 32997: 1.952 us/move, base 0xffff84000000
+0.416  21.3%  touched_cmp@journal.c:1606
+0.355  18.2%  touched_cmp@journal.c:1607
+0.201  10.3%  sift@qsort.c:114
+0.091   4.6%  sift@qsort.c:111
+0.081   4.1%  cycle@qsort.c:60
+0.079   4.1%  cycle@qsort.c:65
+0.068   3.5%  trinkle@qsort.c:145
+0.061   3.1%  sift@qsort.c:115
+0.043   2.2%  sift@qsort.c:120
+0.041   2.1%  trinkle@qsort.c:147
+0.041   2.1%  cycle@qsort.c:57
+0.036   1.9%  trinkle@qsort.c:153
+0.032   1.7%  sift@qsort.c:109
+0.032   1.6%  sift@qsort.c:124
+0.029   1.5%  cycle@qsort.c:61

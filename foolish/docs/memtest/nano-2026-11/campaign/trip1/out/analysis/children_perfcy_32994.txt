@@ -1,0 +1,4 @@
+job_run inclusive 2.117 us/move; callees: cb_handle 1.927, job_run_frame 0.147, cb_router_cors 0.037
+cb_table_run inclusive 0.801 us/move; callees: cb_section_commit 0.442, finalize_pending 0.112, cb_random_bytes 0.109, cb_journal_game_acquire 0.051, table_ready 0.031, lock_entry 0.011
+h_action inclusive 0.144 us/move; callees: cb_table_run 0.144
+finalize_pending inclusive 0.112 us/move; callees: finalize_game 0.101

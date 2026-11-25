@@ -1,0 +1,7 @@
+MODEL of the instruction stream (not a hardware measurement). Inputs: cachegrind N1 play per move (cg_n1 minus cg_n1_setup, 57,994 moves).
+Ir per move 47,687; L1 misses per move 512.2 (I1 370.2, D1 read 81.6, D1 write 60.4); L1-miss-LL-hit (L2 in the real chip) 502.6; LL misses (to L3 in the real chip) 9.6; mispredicts 588.5
+Ir at 0.17 ns (low)    base   8.11 us + L2 hits  3.02 + L3  0.32 + mispredict  1.77 + div 0.53 + atomic 0.06 = total  13.79 us per move
+Ir at 0.40 ns (high)   base  19.07 us + L2 hits  3.02 + L3  0.32 + mispredict  1.77 + div 0.53 + atomic 0.06 = total  24.76 us per move
+if the 9.6 LL misses went to RAM (110 ns) instead of L3, add 0.74 us
+measured on the nano: 24,113 moves/s with one loop thread busy -> 41.5 us per move (sat2 s4_D)
+nano perf cycles per move, an upper bound from the earlier run (46.66e9 cycles / 574,666 moves over 32 s): 81.2k cycles, about 32.5 us at 2.5 GHz

@@ -1,0 +1,9 @@
+srv i-REDACTED10
+load i-REDACTED11
+SUF=1fd5f193
+B=cbase-mem-test-1fd5f193
+ROLE=cbase-mem-test-role-1fd5f193
+SG=sg-REDACTED12
+AMI=ami-04bde3808fe5f70cf
+SRV=i-REDACTED10
+LOAD=i-REDACTED11

@@ -1,0 +1,79 @@
+Wed Nov 11 20:49:30 UTC 2026
+Linux ip-172-31-4-207.ec2.internal 6.18.56-126.188.amzn2023.aarch64 #2 SMP Tue Nov  3 13:25:04 UTC 2026 aarch64 aarch64 aarch64 GNU/Linux
+
+Architecture:                            aarch64
+CPU op-mode(s):                          32-bit, 64-bit
+Byte Order:                              Little Endian
+CPU(s):                                  2
+On-line CPU(s) list:                     0,1
+Vendor ID:                               ARM
+BIOS Vendor ID:                          AWS
+Model name:                              Neoverse-N1
+BIOS Model name:                         AWS Graviton2
+Model:                                   1
+Thread(s) per core:                      1
+Core(s) per socket:                      2
+Socket(s):                               1
+Stepping:                                r3p1
+BogoMIPS:                                243.75
+Flags:                                   fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+L1d cache:                               128 KiB (2 instances)
+L1i cache:                               128 KiB (2 instances)
+L2 cache:                                2 MiB (2 instances)
+L3 cache:                                32 MiB (1 instance)
+NUMA node(s):                            1
+NUMA node0 CPU(s):                       0,1
+Vulnerability Gather data sampling:      Not affected
+Vulnerability Ghostwrite:                Not affected
+Vulnerability Indirect target selection: Not affected
+Vulnerability Itlb multihit:             Not affected
+Vulnerability L1tf:                      Not affected
+Vulnerability Mds:                       Not affected
+Vulnerability Meltdown:                  Not affected
+Vulnerability Mmio stale data:           Not affected
+Vulnerability Old microcode:             Not affected
+Vulnerability Reg file data sampling:    Not affected
+Vulnerability Retbleed:                  Not affected
+Vulnerability Spec rstack overflow:      Not affected
+Vulnerability Spec store bypass:         Mitigation; Speculative Store Bypass disabled via prctl
+Vulnerability Spectre v1:                Mitigation; __user pointer sanitization
+Vulnerability Spectre v2:                Mitigation; CSV2, BHB
+Vulnerability Srbds:                     Not affected
+Vulnerability Tsa:                       Not affected
+Vulnerability Tsx async abort:           Not affected
+Vulnerability Vmscape:                   Not affected
+
+processor	: 0
+BogoMIPS	: 243.75
+Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer	: 0x41
+CPU architecture: 8
+CPU variant	: 0x3
+CPU part	: 0xd0c
+CPU revision	: 1
+
+processor	: 1
+BogoMIPS	: 243.75
+Features	: fp asimd evtstrm aes pmull sha1 sha2 crc32 atomics fphp asimdhp cpuid asimdrdm lrcpc dcpop asimddp
+CPU implementer	: 0x41
+CPU architecture: 8
+CPU variant	: 0x3
+CPU part	: 0xd0c
+CPU revision	: 1
+
+
+/sys/devices/system/cpu/cpu0/cache/index0 level=1 type=Data size=64K line=64 ways=4 sets=256 shared=0
+/sys/devices/system/cpu/cpu0/cache/index1 level=1 type=Instruction size=64K line=64 ways=4 sets=256 shared=0
+/sys/devices/system/cpu/cpu0/cache/index2 level=2 type=Unified size=1024K line=64 ways=8 sets=2048 shared=0
+/sys/devices/system/cpu/cpu0/cache/index3 level=3 type=Unified size=32768K line=64 ways=16 sets=32768 shared=0-1
+always madvise [never]
+arch_sys_counter
+               total        used        free      shared  buff/cache   available
+Mem:             412         126          78           0         208         276
+Swap:            411          31         380
+armv8_pmuv3_0
+breakpoint
+kprobe
+software
+tracepoint
+uprobe

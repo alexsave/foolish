@@ -1,0 +1,7 @@
+base1    span  67.2 s; ena-mgmnt cpu0 30 cpu1 38; ens5-Tx-Rx-0 cpu0 0 cpu1 363549; ens5-Tx-Rx-1 cpu0 136039 cpu1 213806;  | softirq NET_RX cpu0 136039 cpu1 534506 NET_TX cpu0 0 cpu1 0
+perfcy   span  74.6 s; ena-mgmnt cpu0 54 cpu1 20; ens5-Tx-Rx-0 cpu0 311291 cpu1 51670; ens5-Tx-Rx-1 cpu0 1699 cpu1 347114;  | softirq NET_RX cpu0 312982 cpu1 387503 NET_TX cpu0 0 cpu1 0
+perfclk  span  74.9 s; ena-mgmnt cpu0 39 cpu1 36; ens5-Tx-Rx-0 cpu0 1353 cpu1 382779; ens5-Tx-Rx-1 cpu0 359210 cpu1 4662;  | softirq NET_RX cpu0 360562 cpu1 386814 NET_TX cpu0 0 cpu1 0
+bpf1     span  71.4 s; ena-mgmnt cpu0 25 cpu1 46; ens5-Tx-Rx-0 cpu0 0 cpu1 346219; ens5-Tx-Rx-1 cpu0 346223 cpu1 0;  | softirq NET_RX cpu0 346224 cpu1 346221 NET_TX cpu0 0 cpu1 0
+base2    span  67.9 s; ena-mgmnt cpu0 38 cpu1 30; ens5-Tx-Rx-0 cpu0 0 cpu1 378455; ens5-Tx-Rx-1 cpu0 381563 cpu1 0;  | softirq NET_RX cpu0 381567 cpu1 378457 NET_TX cpu0 0 cpu1 0
+irq1     span  67.5 s; ena-mgmnt cpu0 0 cpu1 67; ens5-Tx-Rx-0 cpu0 0 cpu1 383759; ens5-Tx-Rx-1 cpu0 0 cpu1 376128;  | softirq NET_RX cpu0 0 cpu1 685171 NET_TX cpu0 0 cpu1 0
+irq0     span  68.1 s; ena-mgmnt cpu0 68 cpu1 0; ens5-Tx-Rx-0 cpu0 392315 cpu1 0; ens5-Tx-Rx-1 cpu0 388924 cpu1 0;  | softirq NET_RX cpu0 717231 cpu1 0 NET_TX cpu0 0 cpu1 0

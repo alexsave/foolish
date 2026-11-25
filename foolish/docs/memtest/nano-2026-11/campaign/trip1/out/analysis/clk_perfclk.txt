@@ -1,0 +1,34 @@
+# cpu-clock perfclk: share of each CPU's sampled wall time in the play window (server mono [552.884,573.884]), source raw/proc/perfclk/cc_perfclk.txt.gz
+cpu0 sampled 21.000 s of 21.0 s
+   loop                   user      33.19%
+   loop                   kernel    29.63%
+   idle-task              idle      20.54%
+   loop                   softirq   11.97%
+   idle-task              softirq    2.71%
+   other:bash             user       0.87%
+   other:bash             kernel     0.46%
+   other:sleep            kernel     0.26%
+   idle-task leaf symbols (pure idle): default_idle_call 19.87%, finish_task_switch.isra.0 0.62%, do_idle 0.03%, schedule_idle 0.01%, cpu_startup_entry 0.00%
+cpu1 sampled 21.000 s of 21.0 s
+   cbase_D:34056          user      27.57%
+   idle-task              idle      23.44%
+   idle-task              softirq   13.53%
+   job-0:34054            user      12.19%
+   req-0:34053            user       4.71%
+   cbase_D:34056          softirq    3.96%
+   cbase_D:34056          kernel     3.68%
+   job-0:34054            softirq    3.31%
+   req-0:34053            softirq    1.61%
+   req-0:34053            kernel     1.48%
+   job-0:34054            kernel     1.22%
+   cbase_D:34055          kernel     0.74%
+   other:bash             user       0.43%
+   other:bash             kernel     0.41%
+   other:sleep            kernel     0.32%
+   cbase_D:34055          softirq    0.23%
+   other:bash             softirq    0.19%
+   cbase_D:34055          user       0.13%
+   other:sleep            user       0.13%
+   other:sleep            softirq    0.12%
+   job-0:34054            hardirq    0.10%
+   idle-task leaf symbols (pure idle): default_idle_call 23.02%, finish_task_switch.isra.0 0.39%, tick_nohz_idle_enter 0.01%, __schedule 0.01%, tick_nohz_idle_got_tick 0.00%

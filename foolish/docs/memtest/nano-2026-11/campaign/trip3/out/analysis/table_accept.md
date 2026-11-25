@@ -1,0 +1,7 @@
+| comparison | moves/s up or neutral | CPU per move not worse | p99 not worse | pushes over 100 ms not worse | RSS max not worse |
+|---|---|---|---|---|---|
+| M1 vs D (PR 496 on merged code) | pass (better, outside the spread); +11,545.67 | pass (better, outside the spread); -6.79 | pass (better, outside the spread); -5.95 | pass (worse within the spread: neutral); +0.33 | pass (better or equal, within the spread); -510.67 |
+| M2 vs M1 (PR 497) | pass (better or equal, within the spread); +1,865.30 | pass (better or equal, within the spread); -1.22 | pass (better or equal, within the spread); -0.19 | pass (worse within the spread: neutral); +0.67 | pass (worse within the spread: neutral); +625.33 |
+| M3 vs M2 (PR 498) | pass (better or equal, within the spread); +351.30 | pass (worse within the spread: neutral); +0.31 | pass (worse within the spread: neutral); +0.16 | pass (worse within the spread: neutral); +0.33 | pass (worse within the spread: neutral); +42.67 |
+| M4 vs M3 (PR 500) | pass (better or equal, within the spread); +446.50 | pass (better or equal, within the spread); -0.46 | pass (better or equal, within the spread); -0.33 | pass (better or equal, within the spread); -2.00 | pass (better or equal, within the spread); -260.00 |
+| M3 vs D (everything merged) | pass (better, outside the spread); +13,762.27 | pass (better, outside the spread); -7.70 | pass (better, outside the spread); -5.98 | pass (worse within the spread: neutral); +1.33 | pass (worse within the spread: neutral); +157.33 |

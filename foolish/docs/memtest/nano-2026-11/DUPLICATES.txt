@@ -1,0 +1,27 @@
+# Left out because the same bytes are already here: <path as it was> <where to read it>
+cachesim/scripts/load.sh ../harness/grav/pkg/load.sh
+campaign/trip1/pkg/rematch.c ../harness/grav/pkg/rematch.c
+campaign/trip1/pkg/tlsres.c ../harness/grav/pkg/tlsres.c
+campaign/trip2/pkg/cpu.sh campaign/trip1/pkg/cpu.sh
+campaign/trip2/pkg/rematch.c ../harness/grav/pkg/rematch.c
+campaign/trip2/pkg/srv.sh campaign/trip1/pkg/srv.sh
+campaign/trip2/pkg/tlsres.c ../harness/grav/pkg/tlsres.c
+campaign/trip2/scripts/waitready.sh campaign/trip1/scripts/waitready.sh
+campaign/trip3/pkg/cpu.sh campaign/trip1/pkg/cpu.sh
+campaign/trip3/pkg/irq.sh campaign/trip2/pkg/irq.sh
+campaign/trip3/pkg/rematch.c ../harness/grav/pkg/rematch.c
+campaign/trip3/pkg/srv.sh campaign/trip1/pkg/srv.sh
+campaign/trip3/pkg/tlsres.c ../harness/grav/pkg/tlsres.c
+campaign/trip3/pkg/trip.bt campaign/trip1/pkg/trip.bt
+campaign/trip3/scripts/pushlat.py campaign/trip2/scripts/pushlat.py
+campaign/trip3/scripts/waitready.sh campaign/trip1/scripts/waitready.sh
+grav/analyze.py ../harness/grav/analyze.py
+grav/pkg/load.sh ../harness/grav/pkg/load.sh
+grav/pkg/rematch.c ../harness/grav/pkg/rematch.c
+grav/pkg/srv.sh ../harness/grav/pkg/srv.sh
+grav/pkg/tlsres.c ../harness/grav/pkg/tlsres.c
+grav/pkg2/load.sh ../harness/grav/pkg/load.sh
+grav/pkg2/rematch.c ../harness/grav/pkg/rematch.c
+grav/pkg2/srv.sh campaign/trip1/pkg/srv.sh
+grav/pkg2/tlsres.c ../harness/grav/pkg/tlsres.c
+grav/ssm.sh ../harness/grav/ssm.sh

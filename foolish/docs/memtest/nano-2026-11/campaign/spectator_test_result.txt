@@ -1,0 +1,3 @@
+2026-11-14T17:54:19Z RED on 59c115054: spectator /v1/wait with no socket in the game's room answered 25325 ms after the move (its deadline); control with the spectator's socket in the room answered 1 ms. Pre-existing by code reading (the spectators'-cast skip on cb_rt_room_heard dates from e88ba0e5b, 2026-10-20, before PR 498); confirming on 05cf2501a next.
+2026-11-14T17:56:58Z CONFIRMED pre-existing: same test RED on 05cf2501a (before PR 498), answered 25319 ms after the move; control 1 ms. Fix in progress.
+2026-11-14T18:06:37Z PR open (not merged): https://github.com/alexsave/foolish/pull/500 head 11b34d054. 05cf2501a: RED 25319 ms (pre-existing); 59c115054: RED 25325 ms; with fix GREEN 1 ms. Lanes green: make test 633 tests, smoke 6/6 programs, test-asan 633 tests.

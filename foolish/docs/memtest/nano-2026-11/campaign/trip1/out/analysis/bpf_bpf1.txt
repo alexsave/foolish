@@ -1,0 +1,83 @@
+# bpf bpf1: ticks 20 in window, span 19.000 s (server mono 634.709..653.709), moves in span 581014 (from ev M lines), source raw/srv/bpf_bpf1.txt
+
+## syscalls per move by thread and syscall (count/move, us inside per move, us per call)
+loop(main)       clock_gettime    1.9671/move     1.352 us/move       0.69 us/call
+loop(main)       sendto           1.8431/move     6.816 us/move       3.70 us/call
+loop(main)       recvfrom         1.0564/move     1.798 us/move       1.70 us/call
+loop(main)       futex            0.1166/move     5.004 us/move      42.90 us/call
+loop(main)       epoll_ctl        0.1127/move     0.163 us/move       1.44 us/call
+loop(main)       epoll_pwait      0.0161/move     2.397 us/move     148.68 us/call
+loop(main)       mmap             0.0081/move     0.077 us/move       9.47 us/call
+loop(main)       munmap           0.0072/move     0.080 us/move      11.12 us/call
+loop(main)       read             0.0065/move     0.013 us/move       2.04 us/call
+req-0:35064      fcntl            0.0838/move     0.101 us/move       1.21 us/call
+req-0:35064      287              0.0837/move     1.608 us/move      19.20 us/call
+req-0:35064      futex            0.0605/move    28.148 us/move     465.21 us/call
+req-0:35064      getpid           0.0325/move     0.018 us/move       0.54 us/call
+req-0:35064      write            0.0064/move     0.016 us/move       2.53 us/call
+req-0:35064      mmap             0.0018/move     0.018 us/move       9.76 us/call
+req-0:35064      munmap           0.0014/move     0.017 us/move      12.13 us/call
+job-0:35065      287              0.1009/move     1.382 us/move      13.69 us/call
+job-0:35065      fcntl            0.0562/move     0.069 us/move       1.23 us/call
+job-0:35065      writev           0.0158/move     0.099 us/move       6.28 us/call
+job-0:35065      futex            0.0138/move    25.700 us/move    1866.76 us/call
+job-0:35065      getpid           0.0079/move     0.005 us/move       0.64 us/call
+cbase_D:35066    pread64          0.0361/move     0.091 us/move       2.53 us/call
+cbase_D:35066    287              0.0361/move     0.080 us/move       2.22 us/call
+cbase_D:35067    287              0.1216/move     1.970 us/move      16.21 us/call
+cbase_D:35067    futex            0.0458/move    22.568 us/move     492.29 us/call
+cbase_D:35067    fcntl            0.0293/move     0.044 us/move       1.52 us/call
+cbase_D:35067    munmap           0.0187/move     0.219 us/move      11.70 us/call
+cbase_D:35067    mmap             0.0182/move     0.125 us/move       6.87 us/call
+
+## syscalls per move per thread total: loop(main) 5.134, req-0:35064 0.271, cbase_D:35067 0.234, job-0:35065 0.196, cbase_D:35066 0.074; all 5.908
+
+## sched_switch-outs per move by thread and prev_state (0 runnable or yield, 1 S sleep, 2 D, 256+ preempted)
+req-0:35064      state     1 0.0416/move (24165 in span)
+loop(main)       state     1 0.0361/move (21002 in span)
+job-0:35065      state     0 0.0086/move (5022 in span)
+cbase_D:35067    state     0 0.0074/move (4303 in span)
+cbase_D:35067    state     1 0.0074/move (4291 in span)
+job-0:35065      state     1 0.0063/move (3665 in span)
+loop(main)       state     0 0.0041/move (2393 in span)
+cbase_D:35067    state     2 0.0029/move (1705 in span)
+req-0:35064      state     2 0.0024/move (1396 in span)
+job-0:35065      state     2 0.0020/move (1157 in span)
+cbase_D:35066    state     2 0.0011/move (639 in span)
+req-0:35064      state     0 0.0010/move (597 in span)
+job-0:35065      state   256 0.0003/move (150 in span)
+cbase_D:35067    state   256 0.0002/move (135 in span)
+cbase_D:35066    state     1 0.0002/move (122 in span)
+cbase_D:35066    state     0 0.0002/move (109 in span)
+cbase_D:35066    state   256 0.0001/move (57 in span)
+loop(main)       state   256 0.0000/move (20 in span)
+loop(main)       state     2 0.0000/move (20 in span)
+req-0:35064      state   256 0.0000/move (13 in span)
+
+## loop thread off-CPU time by (prev_state, syscall it was inside): ms in span, share of span, count, us per off
+state    1 in futex                  2583.46 ms  13.60% n=18153    142.3 us/off
+state    1 in epoll_pwait            1017.94 ms   5.36% n=2850    357.2 us/off
+state    0 in (no syscall: preempted in user/kernel)    104.83 ms   0.55% n=2390     43.9 us/off
+state  256 in (no syscall: preempted in user/kernel)      4.53 ms   0.02% n=14    323.5 us/off
+state    2 in (no syscall: preempted in user/kernel)      1.62 ms   0.01% n=14    115.4 us/off
+state    2 in sendto                    0.31 ms   0.00% n=1    307.0 us/off
+state    2 in mmap                      0.12 ms   0.00% n=5     23.9 us/off
+state  256 in munmap                    0.07 ms   0.00% n=6     11.9 us/off
+state    0 in futex                     0.02 ms   0.00% n=3      6.9 us/off
+loop wakeups 21035, run-queue wait after wakeup 220.11 ms (0.379 us/move), after preemption 109.44 ms
+
+## histograms (window difference): key, bucket low edge: count; mean from bucket midpoints (approximate)
+@ep_ev[loop(main)] n=9368 (0.0161/move) mean~22.9: 1:2661 2:1222 3:638 4:404 5:218 6:118 7:88 8:78 9:59 10:61 11:59 12:50 13:47 14:61 15:54 16:44 17:54 18:48 19:49 20:61 21:50 22:34 23:35 24:44 25:39 26:22 27:17 28:24 29:20 30:9 31:11 32:9 33:14 34:15 35:10 36:9 37:9 38:10 39:13 40:12 41:4 42:10 43:15 44:11 45:9 46:7 47:12 48:12 49:6 50:5 51:6 52:6 53:6 54:9 55:9 56:12 57:3 58:4 59:6 60:7 61:7 62:11 63:9 64:2702
+@send_b[loop(main)] n=1071084 (1.8435/move) mean~140.0: 8:546 16:22817 64:879829 128:130156 256:28267 1K:6 2K:9463
+@recv_b[loop(main)] n=613781 (1.0564/move) mean~60.7: 16:546 32:589999 256:23236
+@futex_ns[cbase_D:35066] n=140 (0.0002/move) mean~129270999.8: 1K:7 2K:1 4K:24 8K:3 16K:3 64K:1 128K:3 256K:1 512K:1 1M:1 8M:4 16M:3 32M:7 64M:11 128M:58 256M:12
+@futex_ns[job-0:35065] n=7998 (0.0138/move) mean~2045649.5: 256:1760 512:800 1K:447 2K:613 4K:600 8K:196 16K:76 32K:83 64K:80 128K:260 256K:226 512K:464 1M:524 2M:681 4M:721 8M:348 16M:99 32M:15 64M:3 128M:2
+@futex_ns[cbase_D:35067] n=26636 (0.0458/move) mean~531821.7: 256:3171 512:667 1K:1015 2K:6330 4K:9097 8K:1937 16K:558 32K:247 64K:137 128K:195 256K:323 512K:516 1M:793 2M:864 4M:548 8M:160 16M:52 32M:14 64M:6 128M:5 256M:1
+@futex_ns[req-0:35064] n=35155 (0.0605/move) mean~507542.8: 256:3798 512:3166 1K:671 2K:1234 4K:2250 8K:2468 16K:7223 32K:5815 64K:1496 128K:1183 256K:880 512K:1037 1M:1468 2M:1360 4M:974 8M:72 16M:50 32M:6 64M:2 128M:2
+@futex_ns[loop(main)] n=67766 (0.1166/move) mean~49577.9: 256:15640 512:5895 1K:1690 2K:7096 4K:15419 8K:4003 16K:3409 32K:6198 64K:3980 128K:3229 256K:68 512K:140 1M:962 2M:37
+@wr_b[cbase_D:35067 write] n=4 (0.0000/move) mean~12.0: 8:4
+@wr_b[req-0:35064 writev] n=152 (0.0003/move) mean~48.8: 1:76 64:76
+@wr_b[req-0:35064 write] n=3747 (0.0064/move) mean~12.0: 8:3747
+@wr_b[job-0:35065 writev] n=9172 (0.0158/move) mean~48.8: 1:4586 64:4586
+@lo_rq_wake[] n=21025 (0.0362/move) mean~11664.9: 1K:8761 2K:8145 4K:1955 8K:1648 16K:301 32K:46 64K:19 128K:33 256K:10 512K:50 1M:42 2M:15
+@lo_rq_pre[] n=2414 (0.0042/move) mean~48433.0: 2K:17 4K:1573 8K:454 16K:231 32K:50 64K:13 128K:17 256K:14 512K:14 1M:16 2M:15

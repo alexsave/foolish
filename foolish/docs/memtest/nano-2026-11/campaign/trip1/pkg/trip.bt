@@ -1,0 +1,52 @@
+// trip.bt PID: trip 1 syscall and scheduling counts for the server process PID (its main thread, tid == PID, is the loop).
+// Every map is cumulative from attach and printed every second after a "TICK <nsecs>" line (nsecs = CLOCK_MONOTONIC ns),
+// so any window is (value at the last tick inside it) - (value at the first tick inside it).
+// aarch64 syscall numbers: 22 epoll_pwait, 441 epoll_pwait2, 206 sendto, 207 recvfrom, 98 futex, 63 read, 64 write,
+// 66 writev, 67 pread64, 68 pwrite64, 69 preadv, 70 pwritev, 82 fsync, 83 fdatasync, 211 sendmsg, 212 recvmsg.
+// @sc[tid, nr] count, @sct[tid, nr] ns inside the syscall (enter to exit, blocking included);
+// @ep_ev[tid] events returned per epoll wake; @send_b/@recv_b/@wr_b bytes returned; @futex_ns[tid] ns per futex call;
+// @sw[tid, prev_state] sched_switch-outs per thread of the process by state (0 runnable/preempted, 1 S, 2 D, 256 preempt bit);
+// loop thread: @lo_off[state, nr] off-CPU ns by (state at switch-out, syscall it was inside or -1), @lo_offn the counts,
+// @lo_rq_wake ns from sched_wakeup to switch-in, @lo_rq_pre ns off-CPU after a preemption (all of it is run-queue wait).
+BEGIN { printf("BT_BEGIN %lld\n", nsecs); }
+tracepoint:raw_syscalls:sys_enter /pid == $1/ {
+  @sc[tid, args->id] = count();
+  @st[tid] = nsecs; @sid[tid] = args->id;
+}
+tracepoint:raw_syscalls:sys_exit /pid == $1 && @st[tid] != 0/ {
+  $d = nsecs - @st[tid]; $id = @sid[tid]; $r = args->ret;
+  @sct[tid, $id] = sum($d);
+  if ($id == 22 || $id == 441) { @ep_ev[tid] = lhist($r, 0, 64, 1); }
+  if ($id == 206) { @send_b[tid] = hist($r); }
+  if ($id == 207) { @recv_b[tid] = hist($r); }
+  if ($id == 98) { @futex_ns[tid] = hist($d); }
+  if ($id == 64 || $id == 66 || $id == 68 || $id == 70 || $id == 211) { @wr_b[tid, $id] = hist($r); }
+  @st[tid] = 0;
+}
+tracepoint:sched:sched_switch /pid == $1/ {
+  $ps = args->prev_state; @sw[tid, $ps] = count();
+  @comm[tid] = comm;
+}
+tracepoint:sched:sched_switch /args->prev_pid == $1/ {
+  $ps = args->prev_state; @lo_t = nsecs; @lo_s = $ps;
+  @lo_sc = @st[$1] != 0 ? @sid[$1] : -1;
+}
+tracepoint:sched:sched_switch /args->next_pid == $1 && @lo_t != 0/ {
+  $d = nsecs - @lo_t;
+  @lo_off[@lo_s, @lo_sc] = sum($d); @lo_offn[@lo_s, @lo_sc] = count();
+  if (@lo_wk != 0) { $w = (int64)nsecs - @lo_wk; @lo_rq_wake = hist($w); @lo_rq_wake_ns = sum($w); @lo_wk = 0; }
+  else { if ((@lo_s & 255) == 0) { @lo_rq_pre = hist($d); @lo_rq_pre_ns = sum($d); } }
+  @lo_t = 0;
+}
+tracepoint:sched:sched_wakeup /args->pid == $1/ { @lo_wk = nsecs; @lo_wakes = count(); }
+interval:s:1 {
+  printf("TICK %lld\n", nsecs);
+  print(@sc); print(@sct); print(@sw); print(@lo_off); print(@lo_offn); print(@lo_rq_wake_ns); print(@lo_rq_pre_ns); print(@lo_wakes);
+  print(@ep_ev); print(@send_b); print(@recv_b); print(@futex_ns); print(@wr_b); print(@lo_rq_wake); print(@lo_rq_pre);
+  printf("ENDTICK\n");
+}
+END {
+  printf("BT_END %lld\n", nsecs);
+  print(@comm);
+  clear(@st); clear(@sid); clear(@lo_t); clear(@lo_s); clear(@lo_sc); clear(@lo_wk);
+}

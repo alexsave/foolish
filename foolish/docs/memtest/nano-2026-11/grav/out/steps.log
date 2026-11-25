@@ -1,0 +1,87 @@
+[20:42:49] check
+Success	6.18.56-126.188.amzn2023.aarch64
+2
+always madvise [never]
+always defer defer+madvise madvise [never]
+MemTotal:         422188 kB
+MemAvailable:     271952 kB
+total 14464
+-rw-r--r--. 1 root root       0 Nov 11 20:39 READY
+-rw-r--r--. 1 root root       0 Nov 11 20:39 UD_DONE
+-rw-r--r--. 1 root root      24 Nov 11 20:39 bucket
+-rwxr-xr-x. 1 root root 8431976 Nov 11 20:38 cbase_D
+-rwxr-xr-x. 1 root root    6045 Nov 11 20:38 load.sh
+-rw-r--r--. 1 root root   23288 Nov 11 20:38 rematch.c
+-rw-r--r--. 1 root root 6124487 Nov 11 20:38 src.tgz
+-rwxr-xr-x. 1 root root    3582 Nov 11 20:38 srv.sh
+-rwxr-xr-x. 1 root root  203464 Nov 11 20:39 tlsres
+-rw-r--r--. 1 root root    3161 Nov 11 20:38 tlsres.c
+READY
+	
+Success	total 13568
+-rw-r--r--. 1 root root       0 Nov 11 20:39 UD_DONE
+-rw-r--r--. 1 root root      24 Nov 11 20:39 bucket
+-rwxr-xr-x. 1 root root    6045 Nov 11 20:38 load.sh
+-rwxr-xr-x. 1 root root 3881944 Nov 11 20:39 p3load
+-rwxr-xr-x. 1 root root 3883232 Nov 11 20:39 rematch
+-rw-r--r--. 1 root root   23288 Nov 11 20:38 rematch.c
+-rw-r--r--. 1 root root 6124487 Nov 11 20:38 src.tgz
+-rwxr-xr-x. 1 root root    3582 Nov 11 20:38 srv.sh
+-rwxr-xr-x. 1 root root  203464 Nov 11 20:39 tlsres
+-rw-r--r--. 1 root root    3161 Nov 11 20:38 tlsres.c
+-rwxr-xr-x. 1 root root 3881944 Nov 11 20:39 /opt/mt/p3load
+-rwxr-xr-x. 1 root root 3883232 Nov 11 20:39 /opt/mt/rematch
+-rwxr-xr-x. 1 root root  203464 Nov 11 20:39 /opt/mt/tlsres
+BUILT
+8
+	
+[20:42:51] sat2 s1_D build D
+Success	start s1_D build D pid 2479 1 listening
+	
+Success	moves=605436 window_s=25.00 moves_per_s=24215.8 move_p50_ms=0.19 move_p99_ms=0.51 err_files=0
+1794429777.547112904
+1794429805.245459905
+	
+Success	VmHWM:	   28384 kB
+VmRSS: 21436 kB RssAnon: 14680 kB RssFile: 6756 kB 
+	
+[20:43:36] sat2 s2_D build D
+Success	start s2_D build D pid 2806 1 listening
+	
+Success	moves=600516 window_s=25.00 moves_per_s=24019.6 move_p50_ms=0.19 move_p99_ms=0.54 err_files=0
+1794429822.913510101
+1794429850.597005353
+	
+Success	VmHWM:	   28320 kB
+VmRSS: 21224 kB RssAnon: 14660 kB RssFile: 6564 kB 
+	
+[20:44:18] sat2 s3_D build D
+Success	start s3_D build D pid 3136 1 listening
+	
+Success	moves=601319 window_s=25.01 moves_per_s=24044.3 move_p50_ms=0.19 move_p99_ms=0.49 err_files=0
+1794429863.923265278
+1794429891.610168131
+	
+Success	VmHWM:	   28316 kB
+VmRSS: 21412 kB RssAnon: 14720 kB RssFile: 6692 kB 
+	
+[20:44:59] sat2 s4_D build D
+Success	start s4_D build D pid 3406 1 listening
+	
+Success	moves=603051 window_s=25.01 moves_per_s=24113.0 move_p50_ms=0.19 move_p99_ms=0.50 err_files=0
+1794429904.807751094
+1794429932.503454371
+	
+Success	VmHWM:	   28444 kB
+VmRSS: 21368 kB RssAnon: 14676 kB RssFile: 6692 kB 
+	
+[20:45:59] push
+Success	pushed
+	
+Success	pushed
+	
+[21:01:12] push
+Success	pushed
+	
+Success	pushed
+	

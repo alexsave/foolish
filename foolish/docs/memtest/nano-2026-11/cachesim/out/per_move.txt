@@ -1,0 +1,41 @@
+skip N1_instr [Errno 2] No such file or directory: '/Users/alex/Dev/foolish-bench-results/cachesim/out/cg_n1i.out'
+== N1: play moves 57994 (full 60077, setup 2083)
+  Ir     per move        47687.4   play total    2,765,584,946
+  I1mr   per move          370.2   play total       21,469,201
+  ILmr   per move            2.6   play total          149,909
+  Dr     per move        11461.1   play total      664,676,417
+  D1mr   per move           81.6   play total        4,734,072
+  DLmr   per move            3.2   play total          183,752
+  Dw     per move         8038.1   play total      466,162,487
+  D1mw   per move           60.4   play total        3,502,427
+  DLmw   per move            3.8   play total          222,201
+  Bc     per move         7171.0   play total      415,873,062
+  Bcm    per move          588.5   play total       34,130,432
+  Bi     per move          416.0   play total       24,125,375
+  Bim    per move           29.8   play total        1,727,143
+  D1_miss_rate_rd      0.712 %
+  DLmr_rate            0.028 %
+  D1_miss_rate_all     0.728 %
+  LL_miss_rate_all     0.036 %
+  I1_miss_rate         0.776 %
+  Mispred_rate         8.207 %
+== M1: play moves 39213 (full 40553, setup 1340)
+  Ir     per move        47633.0   play total    1,867,833,433
+  I1mr   per move          365.6   play total       14,336,821
+  ILmr   per move            0.0   play total               44
+  Dr     per move        11429.0   play total      448,166,911
+  D1mr   per move           26.9   play total        1,056,476
+  DLmr   per move            0.0   play total              103
+  Dw     per move         8035.5   play total      315,095,014
+  D1mw   per move           13.2   play total          517,919
+  DLmw   per move            0.6   play total           23,445
+  Bc     per move         7176.4   play total      281,409,896
+  Bcm    per move          579.3   play total       22,714,986
+  Bi     per move          413.6   play total       16,219,553
+  Bim    per move           29.7   play total        1,165,004
+  D1_miss_rate_rd      0.236 %
+  DLmr_rate            0.000 %
+  D1_miss_rate_all     0.206 %
+  LL_miss_rate_all     0.003 %
+  I1_miss_rate         0.768 %
+  Mispred_rate         8.072 %

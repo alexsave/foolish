@@ -1,0 +1,13 @@
+total 7532
+-rwxr-xr-x 1 root root 3828320 Nov 11 21:14 cbase_dyn
+-rwxr-xr-x 1 root root 3882080 Nov 11 21:14 p3load
+/out/bin/cbase_dyn: ELF 64-bit LSB executable, ARM aarch64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-aarch64.so.1, BuildID[sha1]=b473cc7eb40aebb976a5f010f9c84c82b139c809, for GN
+	linux-vdso.so.1 (0x0000ffff8a925000)
+	libsqlite3.so.0 => /lib64/libsqlite3.so.0 (0x0000ffff8a75b000)
+	libssl.so.3 => /lib64/libssl.so.3 (0x0000ffff8a647000)
+	libcrypto.so.3 => /lib64/libcrypto.so.3 (0x0000ffff8a151000)
+	libm.so.6 => /lib64/libm.so.6 (0x0000ffff8a0a0000)
+	libc.so.6 => /lib64/libc.so.6 (0x0000ffff89ed2000)
+	libz.so.1 => /lib64/libz.so.1 (0x0000ffff89e91000)
+	/lib/ld-linux-aarch64.so.1 (0x0000ffff8a8d0000)
+BUILD_OK

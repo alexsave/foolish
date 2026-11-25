@@ -1,0 +1,9 @@
+1
+server ip 172.18.0.2
+moves=60077 window_s=24.94 moves_per_s=2408.8 move_p50_ms=0.54 move_p99_ms=6.02 err_files=0
+1794431902.998418925
+1794431929.745416215
+load done: 21:18:50
+server exit: 0 after 2s
+-rw-------  1 alex  staff  359552 Nov 11 16:18 /Users/alex/Dev/foolish-bench-results/cachesim/out/cg_n1.out
+FINISHED

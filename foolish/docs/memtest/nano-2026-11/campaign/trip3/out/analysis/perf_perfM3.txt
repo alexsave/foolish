@@ -1,0 +1,1022 @@
+# perf perfM3: play window load epoch [1794682527.903,1794682548.903], server mono [1544.522,1565.522], moves 1038864, server pid 48241
+# source: raw/proc/perfM3/cc_perfM3.txt.gz (perf script with callchains), us = sum(period)/2.5e9/moves*1e6 (cycles at 2.5 GHz; for cpu-clock period is ns, so the unit is ns of wall time)
+samples in window 38810, first 1544.522 last 1565.522; server threads [(48241, 'cbase_M3'), (48245, 'req-0'), (48246, 'job-0'), (48247, 'cbase_M3'), (48248, 'cbase_M3')]
+
+## total per move: 30.53 us (user 13.75, kernel 16.79)
+
+## by CPU (us per move)
+cpu0 user 7.45 kernel 10.60 total 18.05
+cpu1 user 6.30 kernel 6.19 total 12.48
+
+## by thread (us per move): user, kernel, total, and per CPU
+loop(main)                   user    7.33 kernel   10.14 total   17.47  cpu0=17.47
+job-0:48246                  user    2.84 kernel    1.48 total    4.32  cpu1=4.32
+cbase_M3:48248               user    2.16 kernel    1.52 total    3.68  cpu1=3.68
+req-0:48245                  user    1.10 kernel    0.89 total    1.99  cpu1=1.99
+idle(swapper)                user    0.00 kernel    1.93 total    1.93  cpu0=0.29 cpu1=1.64
+other:bash                   user    0.25 kernel    0.27 total    0.52  cpu0=0.19 cpu1=0.33
+cbase_M3:48247               user    0.03 kernel    0.30 total    0.33  cpu1=0.33
+other:sleep                  user    0.03 kernel    0.14 total    0.18  cpu0=0.06 cpu1=0.12
+other:kworker/0:1-eve        user    0.00 kernel    0.03 total    0.03  cpu0=0.03
+other:ksoftirqd/1            user    0.00 kernel    0.02 total    0.02  cpu1=0.02
+other:kworker/1:0-eve        user    0.00 kernel    0.01 total    0.01  cpu1=0.01
+other:kswapd0                user    0.00 kernel    0.01 total    0.01  cpu1=0.01
+
+## context per thread (us per move): user, syscall, softirq, hardirq, kernel-other, idle-task*
+loop(main)                   user=7.33 syscall=5.54 softirq=4.26 kernel-other=0.33 hardirq=0.01
+job-0:48246                  user=2.84 softirq=1.17 syscall=0.24 hardirq=0.04 kernel-other=0.02
+cbase_M3:48248               user=2.16 softirq=0.92 syscall=0.44 kernel-other=0.14 hardirq=0.01
+req-0:48245                  user=1.10 softirq=0.55 syscall=0.28 kernel-other=0.05 hardirq=0.00
+idle(swapper)                idle-task+softirq=1.60 idle-task=0.33
+other:bash                   user=0.25 syscall=0.12 softirq=0.11 kernel-other=0.04 hardirq=0.00
+cbase_M3:48247               syscall=0.20 softirq=0.10 user=0.03 kernel-other=0.01
+other:sleep                  syscall=0.08 softirq=0.04 user=0.03 kernel-other=0.02
+other:kworker/0:1-eve        kernel-other=0.02 softirq=0.01
+other:ksoftirqd/1            softirq=0.02 kernel-other=0.00
+other:kworker/1:0-eve        kernel-other=0.01 softirq=0.00
+other:kswapd0                kernel-other=0.01 softirq=0.00
+
+## context per CPU (us per move)
+cpu0 user=7.45 syscall=5.63 softirq=4.29 kernel-other=0.39 idle-task+softirq=0.16 idle-task=0.13 hardirq=0.01
+cpu1 user=6.30 softirq=2.90 idle-task+softirq=1.44 syscall=1.28 kernel-other=0.30 idle-task=0.20 hardirq=0.06
+
+## syscalls: inclusive us per move per thread, top kernel leaf symbols and the frame under __arm64_sys_*
+loop(main)               sendto             5.35 | callees: __sys_sendto 5.30, fdget 0.02, import_ubuf 0.01, fput 0.01 | leaves: handle_softirqs 0.48, ena_start_xmit 0.29, ena_com_prepare_tx 0.18, sch_direct_xmit 0.17, tcp_sendmsg_locked 0.13, __tcp_transmit_skb 0.12
+loop(main)               recvfrom           1.31 | callees: __sys_recvfrom 1.27, __pi_memset_generic 0.01, import_ubuf 0.01, el1h_64_irq 0.00 | leaves: handle_softirqs 0.11, selinux_socket_recvmsg 0.10, __arch_copy_to_user 0.09, fdget 0.09, tcp_recvmsg_locked 0.08, __sys_recvfrom 0.06
+loop(main)               epoll_pwait        0.53 | callees: do_epoll_pwait.part.0 0.53 | leaves: sock_poll 0.10, handle_softirqs 0.08, tcp_poll 0.05, ep_item_poll.isra.0 0.04, __list_del_entry_valid_or_report 0.04, epi_fget.isra.0 0.04
+loop(main)               futex              0.22 | callees: do_futex 0.21, el1h_64_irq 0.00 | leaves: try_to_wake_up 0.05, handle_softirqs 0.03, finish_task_switch.isra.0 0.02, futex_wake 0.01, get_futex_key 0.01, __arm64_sys_futex 0.01
+loop(main)               epoll_ctl          0.11 | callees: do_epoll_ctl 0.09, mutex_lock 0.00, __arch_copy_from_user 0.00, mutex_unlock 0.00 | leaves: do_epoll_ctl 0.04, handle_softirqs 0.01, sock_poll 0.01, fdget 0.01, fput 0.00, tcp_poll 0.00
+job-0:48246              pwritev2           0.18 | callees: do_pwritev 0.18, fdget 0.00 | leaves: handle_softirqs 0.03, __arch_copy_from_user 0.02, __folio_mark_dirty 0.01, filemap_get_entry 0.01, xfs_file_buffered_write 0.01, xas_load 0.00
+job-0:48246              writev             0.06 | callees: do_writev 0.06 | leaves: handle_softirqs 0.01, xfs_bmbt_to_iomap 0.00, copy_folio_from_iter_atomic 0.00, xfs_buffered_write_iomap_begin 0.00, fault_in_readable 0.00, __filemap_get_folio 0.00
+cbase_M3:48248           pwritev2           0.23 | callees: do_pwritev 0.23 | leaves: __arch_copy_from_user 0.03, handle_softirqs 0.03, filemap_get_entry 0.01, __folio_mark_dirty 0.01, fdget 0.01, xfs_file_write_iter 0.00
+cbase_M3:48248           munmap             0.15 | callees: __vm_munmap 0.15 | leaves: tlb_flush 0.03, handle_softirqs 0.03, mas_wr_node_store 0.00, ena_clean_tx_irq 0.00, percpu_ref_get_many 0.00, unmap_page_range 0.00
+cbase_M3:48248           futex              0.10 | callees: do_futex 0.09, ktime_get 0.00, el1h_64_irq 0.00 | leaves: finish_task_switch.isra.0 0.02, try_to_wake_up 0.02, handle_softirqs 0.01, hrtimer_start_range_ns 0.01, __arm64_sys_futex 0.00, futex_wake 0.00
+cbase_M3:48248           mmap               0.09 | callees: ksys_mmap_pgoff 0.09, vm_mmap_pgoff 0.00 | leaves: handle_softirqs 0.01, mas_rev_awalk 0.00, unmapped_area_topdown 0.00, __mmap_region 0.00, __anon_vma_interval_tree_remove 0.00, mas_wr_slot_store 0.00
+req-0:48245              futex              0.18 | callees: do_futex 0.17, futex_wait 0.00, ktime_get 0.00, uaccess_ttbr0_disable 0.00 | leaves: finish_task_switch.isra.0 0.06, handle_softirqs 0.03, try_to_wake_up 0.02, hrtimer_start_range_ns 0.01, __pi_memcpy_generic 0.01, hrtimer_try_to_cancel.part.0 0.00
+req-0:48245              pwritev2           0.15 | callees: do_pwritev 0.15, vfs_writev 0.00 | leaves: __arch_copy_from_user 0.02, handle_softirqs 0.01, __folio_mark_dirty 0.01, iomap_iter 0.00, filemap_get_entry 0.00, xfs_buffered_write_iomap_begin 0.00
+req-0:48245              fcntl              0.05 | callees: do_fcntl 0.04, security_file_fcntl 0.01, fdget_raw 0.00, _inline_copy_from_user 0.00 | leaves: handle_softirqs 0.01, kmem_cache_free 0.00, avc_lookup 0.00, posix_lock_inode 0.00, fcntl_setlk 0.00, fdget_raw 0.00
+cbase_M3:48247           fsync              0.12 | callees: vfs_fsync_range 0.12, fput 0.00 | leaves: __folio_start_writeback 0.01, handle_softirqs 0.01, filemap_get_folios_tag 0.01, iomap_writeback_folio 0.01, folio_unlock 0.00, percpu_counter_add_batch 0.00
+cbase_M3:48247           pwritev2           0.09 | callees: do_pwritev 0.08, el1h_64_irq 0.00 | leaves: __arch_copy_from_user 0.02, handle_softirqs 0.01, filemap_get_entry 0.00, vfs_writev 0.00, xas_load 0.00, __filemap_add_folio 0.00
+cbase_M3:48247           pread64            0.07 | callees: vfs_read 0.07, fdget 0.00, xfs_file_read_iter 0.00 | leaves: __arch_copy_to_user 0.03, handle_softirqs 0.01, filemap_read 0.00, filemap_get_read_batch 0.00, xas_load 0.00, _copy_to_iter 0.00
+
+## softirq (handle_softirqs/__do_softirq/net_rx_action on the chain) by thread, syscall it interrupted, CPU (us per move)
+loop(main)               cpu0 (not in a syscall)   2.26
+idle(swapper)            cpu1 (not in a syscall)   1.44
+loop(main)               cpu0 sendto               1.38
+job-0:48246              cpu1 (not in a syscall)   1.07
+cbase_M3:48248           cpu1 (not in a syscall)   0.74
+req-0:48245              cpu1 (not in a syscall)   0.43
+loop(main)               cpu0 recvfrom             0.29
+loop(main)               cpu0 epoll_pwait          0.21
+idle(swapper)            cpu0 (not in a syscall)   0.16
+loop(main)               cpu0 futex                0.09
+cbase_M3:48248           cpu1 pwritev2             0.07
+other:bash               cpu1 (not in a syscall)   0.07
+req-0:48245              cpu1 futex                0.06
+job-0:48246              cpu1 pwritev2             0.06
+cbase_M3:48248           cpu1 munmap               0.05
+req-0:48245              cpu1 pwritev2             0.04
+cbase_M3:48248           cpu1 futex                0.04
+cbase_M3:48247           cpu1 fsync                0.03
+cbase_M3:48247           cpu1 pwritev2             0.03
+loop(main)               cpu0 epoll_ctl            0.03
+cbase_M3:48248           cpu1 mmap                 0.02
+
+## top 30 self symbols: loop(main) user (us per move, share of the thread user)
+  0.564   7.7%  strcmp
+  0.553   7.5%  memcpy
+  0.404   5.5%  user_conns.constprop.0
+  0.228   3.1%  strlen
+  0.150   2.1%  memset
+  0.125   1.7%  __pthread_mutex_unlock
+  0.125   1.7%  pub_deliver
+  0.123   1.7%  memchr
+  0.117   1.6%  __pthread_mutex_lock
+  0.115   1.6%  [unknown]
+  0.113   1.5%  room_find
+  0.107   1.5%  local_user_heard
+  0.105   1.4%  ov_apply
+  0.093   1.3%  sccp
+  0.091   1.2%  cb_section_commit
+  0.089   1.2%  cb_ws_send
+  0.089   1.2%  conn_io
+  0.086   1.2%  table_commit_products_flags
+  0.074   1.0%  cb_loop_set
+  0.073   1.0%  ws_frames
+  0.072   1.0%  nw_frame_encode
+  0.069   0.9%  pump
+  0.069   0.9%  unpack_v2
+  0.067   0.9%  strcspn
+  0.065   0.9%  __aarch64_ldadd8_relax
+  0.064   0.9%  cb_strlcpy
+  0.063   0.9%  evwire_walk
+  0.062   0.8%  job_run_frame
+  0.059   0.8%  local_deliver
+  0.058   0.8%  on_message
+
+## top 30 self symbols: loop(main) kernel (us per move, share of the thread kernel)
+  1.865  18.4%  handle_softirqs
+  0.293   2.9%  ena_start_xmit
+  0.233   2.3%  el0_svc
+  0.217   2.1%  fdget
+  0.185   1.8%  __pi_memcpy_generic
+  0.180   1.8%  ena_com_prepare_tx
+  0.168   1.7%  sch_direct_xmit
+  0.135   1.3%  arch_local_irq_restore
+  0.134   1.3%  tcp_sendmsg_locked
+  0.130   1.3%  __slab_free
+  0.123   1.2%  __wake_up_sync_key
+  0.121   1.2%  __tcp_transmit_skb
+  0.115   1.1%  __dev_xmit_skb
+  0.113   1.1%  sock_poll
+  0.111   1.1%  __mod_timer
+  0.108   1.1%  arch_counter_get_cntvct
+  0.104   1.0%  selinux_socket_recvmsg
+  0.094   0.9%  tcp_write_xmit
+  0.092   0.9%  __arch_copy_to_user
+  0.088   0.9%  sock_has_perm
+  0.087   0.9%  __arch_copy_from_user
+  0.082   0.8%  ip_finish_output2
+  0.080   0.8%  tcp_clean_rtx_queue
+  0.079   0.8%  tcp_recvmsg_locked
+  0.077   0.8%  tcp_established_options
+  0.077   0.8%  __inet_lookup_established
+  0.077   0.8%  ena_clean_tx_irq
+  0.076   0.7%  tcp_v4_rcv
+  0.076   0.7%  check_heap_object
+  0.073   0.7%  __list_del_entry_valid_or_report
+
+## top 30 self symbols: job-0:48246 user (us per move, share of the thread user)
+  0.649  22.8%  sorted_known.constprop.0
+  0.458  16.1%  replay_extras_encode_parts
+  0.424  14.9%  replay_extras_decode
+  0.294  10.3%  run_replay_v6.constprop.0
+  0.115   4.1%  coder_code
+  0.073   2.6%  move_list_next
+  0.070   2.5%  can_cover
+  0.066   2.3%  atom_attack.constprop.0.isra.0
+  0.061   2.2%  draw_for.constprop.0
+  0.041   1.4%  coder_finish.isra.0
+  0.037   1.3%  sqlite3VdbeExec
+  0.033   1.2%  apply_pickup.constprop.0
+  0.029   1.0%  walChecksumBytes
+  0.029   1.0%  sqlite3BtreeIndexMoveto
+  0.022   0.8%  list_gap
+  0.020   0.7%  game_rep_position
+  0.016   0.6%  coder_uniform
+  0.016   0.6%  table_replay_code_list
+  0.016   0.6%  move_list_check
+  0.014   0.5%  pcache1Fetch
+  0.014   0.5%  pcache1TruncateUnsafe
+  0.012   0.4%  __pthread_mutex_unlock
+  0.012   0.4%  decode_impl
+  0.012   0.4%  printf_core
+  0.012   0.4%  memcpy
+  0.009   0.3%  memmove
+  0.009   0.3%  __pthread_mutex_lock
+  0.008   0.3%  atom_pass.constprop.0.isra.0
+  0.008   0.3%  strcmp
+  0.007   0.2%  refill.constprop.0
+
+## top 30 self symbols: job-0:48246 kernel (us per move, share of the thread kernel)
+  0.526  35.6%  handle_softirqs
+  0.046   3.1%  ena_clean_tx_irq
+  0.041   2.8%  __pi_memcpy_generic
+  0.036   2.4%  __slab_free
+  0.035   2.4%  skb_release_data
+  0.033   2.3%  exit_to_user_mode_loop
+  0.031   2.1%  __inet_lookup_established
+  0.029   2.0%  finish_task_switch.isra.0
+  0.027   1.8%  __wake_up_sync_key
+  0.027   1.8%  __arch_copy_from_user
+  0.021   1.4%  tcp_clean_rtx_queue
+  0.018   1.2%  tcp_wfree
+  0.018   1.2%  ena_clean_rx_irq
+  0.016   1.1%  kfree_skbmem
+  0.015   1.0%  skb_defer_free_flush
+  0.015   1.0%  el0_svc
+  0.014   1.0%  tcp_v4_rcv
+  0.013   0.9%  kfree
+  0.012   0.8%  tcp_ack
+  0.011   0.7%  kmem_cache_free
+  0.011   0.7%  tcp_rcv_established
+  0.010   0.7%  arch_counter_get_cntvct
+  0.010   0.7%  __folio_mark_dirty
+  0.010   0.7%  tcp_check_space
+  0.008   0.5%  sk_filter_trim_cap
+  0.008   0.5%  __mod_timer
+  0.007   0.5%  selinux_socket_sock_rcv_skb
+  0.007   0.5%  xfs_bmbt_to_iomap
+  0.007   0.5%  __netif_receive_skb_core.constprop.0
+  0.007   0.5%  try_to_wake_up
+
+## top 30 self symbols: cbase_M3:48248 user (us per move, share of the thread user)
+  0.544  25.2%  sqlite3VdbeExec
+  0.125   5.8%  __pthread_mutex_unlock
+  0.121   5.6%  sqlite3BtreeIndexMoveto
+  0.117   5.4%  memcpy
+  0.078   3.6%  __pthread_mutex_trylock_owner
+  0.065   3.0%  pcache1Fetch
+  0.051   2.4%  sqlite3BtreeInsert
+  0.050   2.3%  memcmp
+  0.049   2.3%  flush_txn
+  0.049   2.3%  sqlite3BtreeTableMoveto
+  0.047   2.2%  vdbeRecordCompareString
+  0.040   1.9%  releaseMemArray.part.0
+  0.037   1.7%  walChecksumBytes
+  0.032   1.5%  sqlite3VdbeSerialGet
+  0.032   1.5%  trim
+  0.030   1.4%  sqlite3DbMallocRawNN
+  0.028   1.3%  getAndInitPage
+  0.026   1.2%  sqlite3VdbeHalt
+  0.026   1.2%  sqlite3VdbeMemGrow
+  0.025   1.2%  sqlite3VdbeFreeCursorNN
+  0.024   1.1%  pcache1TruncateUnsafe
+  0.021   1.0%  getPageNormal
+  0.019   0.9%  allocateCursor
+  0.019   0.9%  moveToRoot
+  0.019   0.9%  pcache1Unpin
+  0.018   0.8%  memmove
+  0.018   0.8%  freeSpace
+  0.015   0.7%  applyAffinity
+  0.014   0.6%  sqlite3GetVarint
+  0.013   0.6%  sqlite3PcacheRelease
+
+## top 30 self symbols: cbase_M3:48248 kernel (us per move, share of the thread kernel)
+  0.399  26.3%  handle_softirqs
+  0.041   2.7%  ena_clean_tx_irq
+  0.035   2.3%  finish_task_switch.isra.0
+  0.034   2.2%  tlb_flush
+  0.033   2.2%  __slab_free
+  0.032   2.1%  skb_release_data
+  0.031   2.1%  __arch_copy_from_user
+  0.021   1.4%  __pi_memcpy_generic
+  0.019   1.3%  __wake_up_sync_key
+  0.019   1.2%  el0_svc
+  0.017   1.1%  kfree_skbmem
+  0.016   1.1%  try_to_wake_up
+  0.015   1.0%  skb_defer_free_flush
+  0.015   1.0%  __inet_lookup_established
+  0.014   0.9%  tcp_v4_rcv
+  0.014   0.9%  __pi_clear_page
+  0.014   0.9%  tcp_wfree
+  0.013   0.9%  tcp_ack
+  0.011   0.7%  tcp_clean_rtx_queue
+  0.011   0.7%  __list_del_entry_valid_or_report
+  0.010   0.7%  filemap_get_entry
+  0.010   0.7%  tcp_check_space
+  0.010   0.7%  exit_to_user_mode_loop
+  0.009   0.6%  kmem_cache_free
+  0.009   0.6%  ena_com_cdesc_rx_pkt_get
+  0.008   0.6%  __folio_mark_dirty
+  0.008   0.5%  tcp_rtt_estimator
+  0.008   0.5%  kfree
+  0.007   0.5%  hrtimer_start_range_ns
+  0.007   0.5%  tcp_data_queue
+
+## top 30 self symbols: req-0:48245 user (us per move, share of the thread user)
+  0.052   4.8%  __pthread_mutex_lock
+  0.041   3.7%  memcpy
+  0.040   3.6%  sqlite3VdbeExec
+  0.037   3.4%  strcmp
+  0.036   3.3%  __pthread_mutex_unlock
+  0.032   2.9%  b64_decode
+  0.032   2.9%  sqlite3BtreeIndexMoveto
+  0.028   2.5%  walChecksumBytes
+  0.025   2.3%  memcmp
+  0.019   1.8%  strlen
+  0.016   1.4%  __pthread_cond_timedwait
+  0.016   1.4%  __libc_malloc_impl
+  0.016   1.4%  state_put_rules
+  0.014   1.3%  sink_packed
+  0.012   1.1%  memset
+  0.012   1.1%  cb_jwt_verify
+  0.012   1.1%  strcasecmp
+  0.012   1.1%  pcache1Fetch
+  0.011   1.0%  memmove
+  0.010   0.9%  [unknown]
+  0.010   0.9%  __lock
+  0.010   0.9%  alloc_slot
+  0.009   0.8%  cb_journal_seat_ratings
+  0.009   0.8%  roster_id_pack
+  0.009   0.8%  start_game_dealt
+  0.008   0.8%  evp_cipher_init_internal
+  0.008   0.7%  cb_section_commit
+  0.008   0.7%  printf_core
+  0.008   0.7%  walIndexAppend
+  0.007   0.7%  roster_validate
+
+## top 30 self symbols: req-0:48245 kernel (us per move, share of the thread kernel)
+  0.211  23.7%  handle_softirqs
+  0.061   6.9%  finish_task_switch.isra.0
+  0.029   3.2%  el0_svc
+  0.025   2.8%  __pi_memcpy_generic
+  0.024   2.6%  __arch_copy_from_user
+  0.023   2.6%  ena_clean_tx_irq
+  0.018   2.0%  __inet_lookup_established
+  0.016   1.8%  __slab_free
+  0.015   1.7%  try_to_wake_up
+  0.015   1.7%  tcp_clean_rtx_queue
+  0.015   1.7%  __wake_up_sync_key
+  0.012   1.4%  kmem_cache_free
+  0.011   1.2%  skb_release_data
+  0.008   0.9%  arch_local_irq_restore
+  0.008   0.9%  kfree_skbmem
+  0.008   0.9%  tcp_rtt_estimator
+  0.007   0.8%  hrtimer_start_range_ns
+  0.007   0.8%  __folio_mark_dirty
+  0.007   0.8%  tcp_rcv_established
+  0.006   0.7%  tcp_check_space
+  0.006   0.6%  kfree
+  0.006   0.6%  ena_clean_rx_irq
+  0.006   0.6%  tcp_wfree
+  0.006   0.6%  skb_defer_free_flush
+  0.006   0.6%  tcp_v4_rcv
+  0.005   0.6%  __task_pid_nr_ns
+  0.005   0.6%  kmem_cache_alloc_node_noprof
+  0.005   0.6%  __netif_receive_skb_core.constprop.0
+  0.005   0.6%  fib_table_lookup
+  0.005   0.6%  ena_com_cdesc_rx_pkt_get
+
+## top 30 self symbols: idle(swapper) kernel (us per move, share of the thread kernel)
+  0.208  10.8%  handle_softirqs
+  0.167   8.7%  finish_task_switch.isra.0
+  0.139   7.2%  default_idle_call
+  0.099   5.1%  ena_clean_tx_irq
+  0.092   4.8%  __pi_memcpy_generic
+  0.086   4.4%  __slab_free
+  0.069   3.5%  __inet_lookup_established
+  0.059   3.1%  skb_release_data
+  0.051   2.7%  __wake_up_sync_key
+  0.036   1.9%  kfree_skbmem
+  0.034   1.7%  tcp_ack
+  0.033   1.7%  tcp_clean_rtx_queue
+  0.033   1.7%  arch_counter_get_cntvct
+  0.030   1.6%  tcp_wfree
+  0.028   1.4%  tcp_v4_rcv
+  0.026   1.3%  skb_defer_free_flush
+  0.025   1.3%  tcp_rcv_established
+  0.025   1.3%  ena_clean_rx_irq
+  0.021   1.1%  kfree
+  0.021   1.1%  tcp_rtt_estimator
+  0.020   1.0%  ena_com_cdesc_rx_pkt_get
+  0.020   1.0%  __netif_receive_skb_core.constprop.0
+  0.020   1.0%  arch_local_irq_restore
+  0.019   1.0%  tcp_check_space
+  0.017   0.9%  __mod_timer
+  0.016   0.8%  inet_gro_receive
+  0.015   0.8%  kmem_cache_free
+  0.015   0.8%  sk_filter_trim_cap
+  0.014   0.7%  fib_table_lookup
+  0.013   0.7%  selinux_socket_sock_rcv_skb
+
+## top 30 self symbols: other:bash user (us per move, share of the thread user)
+  0.092  37.4%  [unknown]
+  0.018   7.5%  __wcslen
+  0.013   5.5%  __GI___wmemchr
+  0.012   4.9%  malloc
+  0.009   3.6%  __GI___memcpy_simd
+  0.007   2.8%  _int_free
+  0.007   2.6%  __GI___strlen_asimd
+  0.006   2.5%  cfree@GLIBC_2.17
+  0.006   2.5%  hash_search
+  0.005   1.9%  _int_malloc
+  0.005   1.9%  read_builtin
+  0.004   1.6%  execute_command_internal
+  0.004   1.6%  strcpy
+  0.004   1.5%  mbschr
+  0.003   1.4%  check_read_timeout
+  0.003   1.0%  dequote_string
+  0.003   1.0%  mbsmbchar
+  0.002   0.9%  wait_for
+  0.002   0.9%  strchr
+  0.002   0.9%  malloc@plt
+  0.002   0.7%  sigaddset@plt
+  0.002   0.7%  unquoted_glob_pattern_p
+  0.002   0.6%  strcpy@plt
+  0.002   0.6%  list_string
+  0.001   0.6%  __vfprintf_internal
+  0.001   0.6%  memcpy@plt
+  0.001   0.5%  wcslen@plt
+  0.001   0.5%  _IO_old_init
+  0.001   0.4%  bind_variable
+  0.001   0.4%  fmtulong
+
+## top 30 self symbols: other:bash kernel (us per move, share of the thread kernel)
+  0.052  18.9%  handle_softirqs
+  0.009   3.4%  __ptep_set_access_flags
+  0.009   3.3%  __pi_memcpy_generic
+  0.004   1.6%  skb_release_data
+  0.004   1.6%  num_to_str
+  0.004   1.4%  el0_svc
+  0.004   1.3%  __slab_free
+  0.003   1.3%  __memcg_slab_post_alloc_hook
+  0.003   1.1%  ptep_clear_flush
+  0.003   1.1%  zap_pte_range
+  0.003   1.1%  kmem_cache_alloc_node_noprof
+  0.003   1.1%  mt_find
+  0.003   1.1%  ena_clean_tx_irq
+  0.003   1.1%  el0_da
+  0.003   1.0%  tcp_wfree
+  0.003   0.9%  __memcg_slab_free_hook
+  0.003   0.9%  seq_read_iter
+  0.003   0.9%  seq_put_decimal_ull_width
+  0.002   0.9%  __d_lookup_rcu
+  0.002   0.9%  kfree
+  0.002   0.9%  __vma_start_write
+  0.002   0.8%  dup_mmap
+  0.002   0.8%  mas_walk
+  0.002   0.8%  tcp_v4_rcv
+  0.002   0.8%  lookup_fast
+  0.002   0.8%  selinux_inode_permission
+  0.002   0.8%  seq_write
+  0.002   0.7%  kmem_cache_alloc_noprof
+  0.002   0.7%  finish_task_switch.isra.0
+  0.002   0.6%  dev_gro_receive
+
+## top 30 self symbols: cbase_M3:48247 kernel (us per move, share of the thread kernel)
+  0.040  13.2%  handle_softirqs
+  0.033  10.9%  __arch_copy_to_user
+  0.017   5.6%  __arch_copy_from_user
+  0.014   4.6%  __folio_start_writeback
+  0.009   2.8%  filemap_get_folios_tag
+  0.008   2.5%  el0_svc
+  0.005   1.8%  iomap_writeback_folio
+  0.005   1.8%  xas_load
+  0.005   1.6%  filemap_get_entry
+  0.005   1.6%  folio_unlock
+  0.005   1.6%  ena_clean_tx_irq
+  0.005   1.5%  percpu_counter_add_batch
+  0.004   1.3%  vfs_writev
+  0.004   1.2%  __pi_memcpy_generic
+  0.003   1.1%  folio_clear_dirty_for_io
+  0.003   1.1%  folios_put_refs
+  0.003   1.0%  iomap_add_to_ioend
+  0.003   1.0%  finish_task_switch.isra.0
+  0.003   1.0%  mod_zone_state
+  0.003   1.0%  kfree_skbmem
+  0.003   1.0%  filemap_read
+  0.003   0.9%  skb_release_data
+  0.003   0.9%  __filemap_add_folio
+  0.003   0.8%  bio_associate_blkg_from_css
+  0.002   0.8%  xfs_bmbt_to_iomap
+  0.002   0.8%  filemap_get_read_batch
+  0.002   0.8%  up_write
+  0.002   0.8%  invoke_syscall
+  0.002   0.8%  _copy_to_iter
+  0.002   0.8%  __slab_free
+
+## top 30 self symbols: other:sleep kernel (us per move, share of the thread kernel)
+  0.020  13.8%  handle_softirqs
+  0.008   5.5%  zap_present_ptes
+  0.007   4.7%  next_uptodate_folio
+  0.005   3.4%  __d_lookup_rcu
+  0.005   3.4%  kmem_cache_free
+  0.003   2.2%  __pi_memset_generic
+  0.003   1.8%  obj_cgroup_charge_pages
+  0.002   1.7%  mas_next_slot
+  0.002   1.7%  __pi_clear_page
+  0.002   1.6%  selinux_inode_permission
+  0.002   1.6%  kmem_cache_alloc_noprof
+  0.002   1.6%  percpu_counter_add_batch
+  0.002   1.5%  __fput
+  0.002   1.3%  __memcg_slab_free_hook
+  0.002   1.2%  filemap_fault
+  0.002   1.2%  ena_io_poll
+  0.002   1.1%  __mmap_region
+  0.002   1.1%  vma_interval_tree_remove
+  0.002   1.1%  sk_filter_trim_cap
+  0.002   1.1%  el0_svc
+  0.002   1.1%  ptep_clear_flush
+  0.002   1.1%  tcp_wfree
+  0.002   1.1%  ena_clean_tx_irq
+  0.002   1.1%  tcp_clean_rtx_queue
+  0.001   1.0%  __arch_copy_to_user
+  0.001   1.0%  skb_release_data
+  0.001   0.9%  tcp_v4_rcv
+  0.001   0.7%  __tlb_remove_folio_pages_size.constprop.0
+  0.001   0.6%  xfs_file_release
+  0.001   0.6%  mas_leaf_max_gap
+
+## top 60 inclusive symbols: loop(main) (us per move)
+ 17.473  cb_process_main
+ 17.473  libc_start_main_stage2
+ 17.473  [unknown]
+ 17.470  cb_loop_run
+ 12.069  ws_frames
+  8.509  pump
+  7.969  el0t_64_sync_handler
+  7.969  el0t_64_sync
+  7.934  el0_svc
+  7.879  job_run_frame
+  7.738  sccp
+  7.688  h_action
+  7.631  do_el0_svc
+  7.613  el0_svc_common.constprop.0
+  7.571  invoke_syscall
+  7.103  cb_table_run
+  5.771  flush_now
+  5.720  sendto
+  5.347  __arm64_sys_sendto
+  5.302  __sys_sendto
+  5.061  cb_section_commit
+  5.045  __sock_sendmsg
+  4.757  inet6_sendmsg
+  4.729  tcp_sendmsg
+  4.524  tcp_sendmsg_locked
+  4.261  handle_softirqs
+  4.261  __do_softirq
+  4.261  ____do_softirq
+  4.261  call_on_irq_stack
+  4.261  do_softirq_own_stack
+  3.973  __irq_exit_rcu
+  3.973  irq_exit_rcu
+  3.191  tcp_push
+  3.170  __tcp_push_pending_frames
+  3.145  tcp_write_xmit
+  2.704  flush_dirty
+  2.480  __tcp_transmit_skb
+  2.384  net_rx_action
+  2.363  __napi_poll
+  2.346  ena_io_poll
+  2.170  el0_interrupt
+  2.170  __el0_irq_handler_common
+  2.170  el0t_64_irq_handler
+  2.170  el0t_64_irq
+  1.987  ip_queue_xmit
+  1.946  __ip_queue_xmit
+  1.810  el1_interrupt
+  1.810  el1h_64_irq_handler
+  1.810  el1h_64_irq
+  1.764  ip_output
+  1.703  ip_finish_output
+  1.630  __ip_finish_output
+  1.629  ip_finish_output2
+  1.623  cb_fanout_publish
+  1.613  conn_io
+  1.573  rt_publish_cast
+  1.521  publish.part.0
+  1.521  neigh_hh_output
+  1.515  netif_receive_skb_list_internal
+  1.487  __dev_queue_xmit
+
+## top 60 inclusive symbols: job-0:48246 (us per move)
+  4.322  worker
+  4.322  start
+  4.322  __clone
+  4.291  job_run
+  4.290  cb_core_job
+  4.288  cb_table_finalize_job
+  4.278  finalize_pending
+  4.242  finalize_game
+  1.864  run_replay_v6.constprop.0
+  1.431  table_replay_code_list
+  1.241  decode_impl
+  1.237  cb_table_snap_summary
+  1.167  handle_softirqs
+  1.167  __do_softirq
+  1.167  ____do_softirq
+  1.167  call_on_irq_stack
+  1.167  do_softirq_own_stack
+  1.166  __irq_exit_rcu
+  1.166  irq_exit_rcu
+  1.104  el0_interrupt
+  1.104  __el0_irq_handler_common
+  1.104  el0t_64_irq_handler
+  1.104  el0t_64_irq
+  0.894  sorted_known.constprop.0
+  0.742  replay_encode_v6_from_atoms
+  0.741  encode_v6_for_game
+  0.733  table_replay_extras_list
+  0.694  replay_extras_encode_parts
+  0.635  net_rx_action
+  0.634  replay_summary_v6
+  0.633  replay_decode_atoms_v6
+  0.602  cb_table_extras_read
+  0.599  replay_extras_decode
+  0.598  __napi_poll
+  0.595  ena_io_poll
+  0.594  sqlite3_step
+  0.582  sqlite3VdbeExec
+  0.575  cb_sql_write
+  0.375  el0t_64_sync_handler
+  0.375  el0t_64_sync
+  0.373  el0_svc
+  0.357  netif_receive_skb_list_internal
+  0.350  el0_svc_common.constprop.0
+  0.350  do_el0_svc
+  0.348  __netif_receive_skb_list_core
+  0.348  invoke_syscall
+  0.337  ip_list_rcv
+  0.331  ip_sublist_rcv
+  0.319  sqlite3VdbeHalt
+  0.306  atom_attack.constprop.0.isra.0
+  0.297  ip_sublist_rcv_finish
+  0.296  ip_local_deliver_finish
+  0.296  ip_local_deliver
+  0.294  ip_protocol_deliver_rcu
+  0.287  tcp_v4_rcv
+  0.280  napi_complete_done
+  0.256  sqlite3BtreeCommitPhaseOne.part.0
+  0.255  sqlite3PagerCommitPhaseOne.part.0
+  0.254  pagerWalFrames
+  0.241  walWriteOneFrame.isra.0
+
+## top 60 inclusive symbols: cbase_M3:48248 (us per move)
+  3.675  start
+  3.675  __clone
+  3.675  flusher
+  3.596  flush_pass
+  3.582  flush_txn
+  3.292  cb_rows_sql_flush
+  3.289  cb_sql_write
+  2.928  sqlite3_step
+  2.852  sqlite3VdbeExec
+  2.819  flush_step
+  2.481  cb_sql_run
+  0.923  handle_softirqs
+  0.923  __do_softirq
+  0.923  ____do_softirq
+  0.923  call_on_irq_stack
+  0.923  do_softirq_own_stack
+  0.922  __irq_exit_rcu
+  0.922  irq_exit_rcu
+  0.822  el0t_64_sync_handler
+  0.822  el0t_64_sync
+  0.740  sqlite3VdbeHalt
+  0.693  el0_interrupt
+  0.693  __el0_irq_handler_common
+  0.693  el0t_64_irq_handler
+  0.693  el0t_64_irq
+  0.680  el0_svc
+  0.634  do_el0_svc
+  0.634  el0_svc_common.constprop.0
+  0.628  invoke_syscall
+  0.583  rate_rows
+  0.519  net_rx_action
+  0.478  __napi_poll
+  0.475  ena_io_poll
+  0.396  sqlite3BtreeIndexMoveto
+  0.333  sqlite3BtreeCommitPhaseOne.part.0
+  0.331  sqlite3PagerCommitPhaseOne.part.0
+  0.327  pagerWalFrames
+  0.323  sqlite3BtreeInsert
+  0.317  sccp
+  0.309  walWriteOneFrame.isra.0
+  0.290  netif_receive_skb_list_internal
+  0.282  __netif_receive_skb_list_core
+  0.270  ip_list_rcv
+  0.265  subjournalPageIfRequired
+  0.261  ip_sublist_rcv
+  0.261  memjrnlWrite
+  0.254  unixWrite
+  0.253  seekAndWriteFd
+  0.253  pwrite
+  0.246  el1_interrupt
+  0.246  el1h_64_irq_handler
+  0.246  el1h_64_irq
+  0.244  list_write.part.0
+  0.243  napi_complete_done
+  0.233  do_pwritev
+  0.233  ip_sublist_rcv_finish
+  0.232  ip_local_deliver_finish
+  0.232  ip_local_deliver
+  0.232  __arm64_sys_pwritev2
+  0.229  ip_protocol_deliver_rcu
+
+## top 60 inclusive symbols: req-0:48245 (us per move)
+  1.991  worker
+  1.991  start
+  1.991  __clone
+  1.939  job_run
+  1.818  cb_handle
+  1.005  h_meta
+  0.792  h_create
+  0.772  cb_table_run
+  0.637  cb_table_create
+  0.568  sqlite3_step
+  0.565  sqlite3VdbeExec
+  0.554  __do_softirq
+  0.554  ____do_softirq
+  0.554  call_on_irq_stack
+  0.554  do_softirq_own_stack
+  0.552  handle_softirqs
+  0.551  __irq_exit_rcu
+  0.551  irq_exit_rcu
+  0.486  el0t_64_sync_handler
+  0.486  el0t_64_sync
+  0.478  cb_section_commit
+  0.478  el0_svc
+  0.464  cb_sql_write
+  0.460  sql_game_create
+  0.421  do_el0_svc
+  0.419  el0_svc_common.constprop.0
+  0.416  invoke_syscall
+  0.405  el0_interrupt
+  0.405  __el0_irq_handler_common
+  0.405  el0t_64_irq_handler
+  0.405  el0t_64_irq
+  0.342  net_rx_action
+  0.337  sccp
+  0.327  __napi_poll
+  0.326  ena_io_poll
+  0.281  sqlite3VdbeHalt
+  0.226  sqlite3BtreeCommitPhaseOne.part.0
+  0.225  sqlite3PagerCommitPhaseOne.part.0
+  0.220  pagerWalFrames
+  0.208  walWriteOneFrame.isra.0
+  0.200  netif_receive_skb_list_internal
+  0.194  verified
+  0.192  __netif_receive_skb_list_core
+  0.191  account_lives
+  0.190  sq_user_get
+  0.185  cb_auth_verify_token
+  0.185  ip_list_rcv
+  0.184  one_step
+  0.180  ip_sublist_rcv
+  0.179  __arm64_sys_futex
+  0.177  __pthread_cond_timedwait
+  0.170  do_futex
+  0.169  j_game_commit
+  0.166  seekAndWriteFd
+  0.166  unixWrite
+  0.165  pwrite
+  0.161  cb_jwt_verify
+  0.161  cb_sql_run
+  0.160  napi_complete_done
+  0.159  ip_local_deliver
+
+## top 60 inclusive symbols: idle(swapper) (us per move)
+  1.929  cpu_startup_entry
+  1.925  do_idle
+  1.656  cpuidle_idle_call
+  1.655  default_idle_call
+  1.641  secondary_start_kernel
+  1.641  __secondary_switched
+  1.601  __do_softirq
+  1.601  ____do_softirq
+  1.601  call_on_irq_stack
+  1.601  do_softirq_own_stack
+  1.601  __irq_exit_rcu
+  1.601  irq_exit_rcu
+  1.601  el1_interrupt
+  1.601  el1h_64_irq_handler
+  1.601  el1h_64_irq
+  1.599  handle_softirqs
+  1.385  net_rx_action
+  1.314  __napi_poll
+  1.310  ena_io_poll
+  0.805  netif_receive_skb_list_internal
+  0.779  __netif_receive_skb_list_core
+  0.753  ip_list_rcv
+  0.738  ip_sublist_rcv
+  0.667  ip_sublist_rcv_finish
+  0.659  ip_local_deliver
+  0.655  ip_local_deliver_finish
+  0.652  ip_protocol_deliver_rcu
+  0.634  tcp_v4_rcv
+  0.597  napi_complete_done
+  0.519  tcp_v4_do_rcv
+  0.508  tcp_rcv_established
+  0.498  ena_clean_rx_irq
+  0.290  rest_init
+  0.290  start_kernel
+  0.290  __primary_switched
+  0.278  tcp_ack
+  0.266  gro_receive_skb
+  0.251  schedule_idle
+  0.250  __schedule
+  0.246  finish_task_switch.isra.0
+  0.221  tcp_clean_rtx_queue
+  0.192  ena_clean_tx_irq
+  0.169  __kfree_skb
+  0.167  ena_rx_skb
+  0.140  skb_release_data
+  0.122  napi_consume_skb
+  0.110  __slab_free
+  0.109  kfree_skbmem
+  0.092  __pi_memcpy_generic
+  0.077  skb_free_head
+  0.075  kfree
+  0.072  kmem_cache_free
+  0.071  ena_rx_skb_copybreak
+  0.070  __inet_lookup_established
+  0.068  ip_rcv_finish_core
+  0.065  ena_alloc_skb
+  0.064  napi_alloc_skb
+  0.063  sock_def_readable
+  0.062  skb_defer_free_flush
+  0.062  tcp_data_ready
+
+## top 60 inclusive symbols: other:bash (us per move)
+  0.491  [unknown]
+  0.491  execute_command_internal
+  0.491  execute_command
+  0.491  main
+  0.491  __libc_start_call_main
+  0.491  __libc_start_main@@GLIBC_2.34
+  0.491  _start
+  0.347  reader_loop
+  0.214  el0t_64_sync_handler
+  0.214  el0t_64_sync
+  0.181  el0_svc
+  0.166  do_el0_svc
+  0.165  el0_svc_common.constprop.0
+  0.165  invoke_syscall
+  0.152  expand_string_assignment
+  0.144  parse_and_execute
+  0.107  handle_softirqs
+  0.107  __do_softirq
+  0.107  ____do_softirq
+  0.107  call_on_irq_stack
+  0.107  do_softirq_own_stack
+  0.107  __irq_exit_rcu
+  0.107  irq_exit_rcu
+  0.065  read_builtin
+  0.058  make_child
+  0.057  el0_interrupt
+  0.057  __el0_irq_handler_common
+  0.057  el0t_64_irq_handler
+  0.057  el0t_64_irq
+  0.054  net_rx_action
+  0.053  ena_io_poll
+  0.053  __napi_poll
+  0.052  el1_interrupt
+  0.052  el1h_64_irq_handler
+  0.052  el1h_64_irq
+  0.050  __libc_fork
+  0.047  do_redirections
+  0.044  _Fork
+  0.040  kernel_clone
+  0.040  __do_sys_clone
+  0.040  __arm64_sys_clone
+  0.040  do_execveat_common.isra.0
+  0.040  __arm64_sys_execve
+  0.040  __GI___execve
+  0.039  copy_process
+  0.034  bprm_execve.part.0
+  0.034  bprm_execve
+  0.033  proc_single_show
+  0.032  do_page_fault
+  0.032  do_mem_abort
+  0.031  exec_binprm
+  0.030  dup_mm.constprop.0
+  0.030  load_elf_binary
+  0.030  proc_pid_status
+  0.029  netif_receive_skb_list_internal
+  0.029  dup_mmap
+  0.029  begin_new_exec
+  0.029  __netif_receive_skb_list_core
+  0.029  llseek@GLIBC_2.17
+  0.029  el0_da
+
+## top 60 inclusive symbols: cbase_M3:48247 (us per move)
+  0.332  sqlite3WalCheckpoint
+  0.332  sqlite3Checkpoint
+  0.332  sqlite3_wal_checkpoint_v2
+  0.332  ck_main
+  0.332  start
+  0.332  __clone
+  0.290  el0_svc
+  0.290  el0t_64_sync_handler
+  0.290  el0t_64_sync
+  0.287  sccp
+  0.278  do_el0_svc
+  0.277  el0_svc_common.constprop.0
+  0.276  invoke_syscall
+  0.117  __arm64_sys_fsync
+  0.117  fsync
+  0.117  unixSync
+  0.116  xfs_file_fsync
+  0.116  vfs_fsync_range
+  0.111  file_write_and_wait_range
+  0.109  xfs_vm_writepages
+  0.109  do_writepages
+  0.109  filemap_fdatawrite_wbc
+  0.109  __filemap_fdatawrite_range
+  0.103  iomap_writepages
+  0.096  pwrite
+  0.096  seekAndWriteFd
+  0.096  unixWrite
+  0.096  handle_softirqs
+  0.096  __do_softirq
+  0.096  ____do_softirq
+  0.096  call_on_irq_stack
+  0.096  do_softirq_own_stack
+  0.096  __irq_exit_rcu
+  0.096  irq_exit_rcu
+  0.086  __arm64_sys_pwritev2
+  0.084  do_pwritev
+  0.084  vfs_writev
+  0.083  el1_interrupt
+  0.083  el1h_64_irq_handler
+  0.083  el1h_64_irq
+  0.078  xfs_file_write_iter
+  0.078  do_iter_readv_writev
+  0.076  xfs_file_buffered_write
+  0.074  pread
+  0.074  unixRead
+  0.068  iomap_writeback_folio
+  0.068  __arm64_sys_pread64
+  0.067  vfs_read
+  0.066  iomap_file_buffered_write
+  0.063  xfs_file_read_iter
+  0.063  xfs_file_buffered_read
+  0.061  filemap_read
+  0.061  generic_file_read_iter
+  0.056  iomap_write_iter
+  0.056  net_rx_action
+  0.053  ena_io_poll
+  0.053  __napi_poll
+  0.047  copy_page_to_iter
+  0.044  __arch_copy_to_user
+  0.036  xfs_writeback_range
+
+## named inclusive symbols per thread (us per move), for the leads
+-- loop(main)
+    12.069  ws_frames
+     7.879  job_run_frame
+     7.688  h_action
+     7.103  cb_table_run
+     5.061  cb_section_commit
+     1.613  conn_io
+     0.993  j_game_commit
+     0.989  pub_deliver
+     0.739  loop_write
+     0.726  memcpy
+     0.532  epoll_pwait
+     0.325  conn_try_parse
+     0.199  __pthread_mutex_unlock
+     0.188  memset
+     0.166  __pthread_mutex_lock
+     0.155  __clock_gettime
+     0.148  futex_wake
+     0.124  epoll_ctl
+     0.086  __pthread_mutex_timedlock
+     0.076  __aarch64_ldadd8_relax
+     0.065  __timedwait
+     0.064  __timedwait_cp
+     0.063  __aarch64_ldadd8_acq_rel
+     0.058  futex_wait
+     0.049  __lock
+     0.037  futex_do_wait
+     0.021  crc32c_hw
+-- job-0:48246
+     4.291  job_run
+     4.278  finalize_pending
+     4.242  finalize_game
+     1.864  run_replay_v6.constprop.0
+     0.594  sqlite3_step
+     0.582  sqlite3VdbeExec
+     0.156  coder_code
+     0.067  sqlite3BtreeInsert
+     0.056  coder_finish.isra.0
+     0.035  __pthread_mutex_unlock
+     0.030  __timedwait_cp
+     0.025  futex_wait
+     0.025  coder_uniform
+     0.024  futex_do_wait
+-- cbase_M3:48248
+     3.675  flusher
+     3.582  flush_txn
+     2.928  sqlite3_step
+     2.852  sqlite3VdbeExec
+     0.323  sqlite3BtreeInsert
+     0.244  list_write.part.0
+     0.217  __pthread_mutex_unlock
+     0.198  memcpy
+     0.122  __pthread_mutex_timedlock
+     0.101  __pthread_mutex_trylock_owner
+     0.055  __timedwait_cp
+     0.046  futex_wake
+     0.045  futex_wait
+     0.039  futex_do_wait
+-- req-0:48245
+     1.939  job_run
+     0.772  cb_table_run
+     0.568  sqlite3_step
+     0.565  sqlite3VdbeExec
+     0.478  cb_section_commit
+     0.169  j_game_commit
+     0.158  __timedwait_cp
+     0.130  futex_wait
+     0.096  futex_do_wait
+     0.078  __pthread_mutex_unlock
+     0.076  job_run_frame
+     0.075  h_action
+     0.066  __pthread_mutex_lock
+     0.060  sqlite3BtreeInsert
+     0.058  memcpy
+     0.038  futex_wake
+     0.033  finalize_pending
+     0.032  finalize_game
+     0.030  __pthread_mutex_timedlock
+-- other:bash
+     0.021  malloc
+
+## sqlite inclusive (samples with any sqlite3* frame) and atomics/crc32c self, per thread (us per move)
+cbase_M3:48247           sqlite_incl 0.332 atomics_self 0.000 crc32c_self 0.000
+cbase_M3:48248           sqlite_incl 3.156 atomics_self 0.005 crc32c_self 0.000
+job-0:48246              sqlite_incl 0.632 atomics_self 0.001 crc32c_self 0.000
+loop(main)               sqlite_incl 0.000 atomics_self 0.117 crc32c_self 0.025
+req-0:48245              sqlite_incl 0.625 atomics_self 0.006 crc32c_self 0.000

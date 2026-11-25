@@ -1,0 +1,221 @@
+[14:18:37] run perfcy prof=cy irq=default knob=auto IP=172.31.11.245 games=192
+Success	knob auto env []
+start perfcy build D pid 32990 1 listening
+2026-11-14T14:18:38.130000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+perf cycles running
+	
+[14:19:48] run perfcy moves=889786 t_go=1794665955.918893930 cpu_window_end=1794665980.938894 (window_s=25.02) play_moves=736858 play=[1794665957.936030,1794665978.936030]
+Success	[ perf record: Woken up 68 times to write data ]
+[ perf record: Captured and wrote 16.869 MB /var/tmp/mtperf/perf_perfcy.data (78701 samples) ]
+-rw-------. 1 root root 17704048 Nov 14 14:19 /var/tmp/mtperf/perf_perfcy.data
+pushed perf perfcy
+VmHWM:	   30764 kB
+== E1 window
+box busy_pct=72.80 (idle+iowait excluded; 2 vCPUs)
+cpu label=perfcy window_s=25.020 proc_cpu_s=32.900 moves=889786 cpu_us_per_move=36.98 cpu_busy_of_one_vcpu_pct=131.5
+thread tid=32990 comm=cbase_D last_cpu=0 cpu_s=18.054 cpu_us_per_move=20.29
+thread tid=32994 comm=req-0 last_cpu=1 cpu_s=2.388 cpu_us_per_move=2.68
+thread tid=32995 comm=job-0 last_cpu=1 cpu_s=4.151 cpu_us_per_move=4.66
+thread tid=32996 comm=cbase_D last_cpu=1 cpu_s=0.275 cpu_us_per_move=0.31
+thread tid=32997 comm=cbase_D last_cpu=1 cpu_s=7.983 cpu_us_per_move=8.97
+== play window
+box busy_pct=72.93 (idle+iowait excluded; 2 vCPUs)
+cpu label=perfcy window_s=21.000 proc_cpu_s=27.689 moves=736858 cpu_us_per_move=37.58 cpu_busy_of_one_vcpu_pct=131.9
+thread tid=32990 comm=cbase_D last_cpu=0 cpu_s=15.328 cpu_us_per_move=20.80
+thread tid=32994 comm=req-0 last_cpu=1 cpu_s=1.921 cpu_us_per_move=2.61
+thread tid=32995 comm=job-0 last_cpu=1 cpu_s=3.457 cpu_us_per_move=4.69
+thread tid=32996 comm=cbase_D last_cpu=1 cpu_s=0.240 cpu_us_per_move=0.33
+thread tid=32997 comm=cbase_D last_cpu=1 cpu_s=6.746 cpu_us_per_move=9.15
+report2 label=perfcy window_s=21.000 moves=736858
+sched tid=32990 comm=cbase_D oncpu_s=15.331 oncpu_us_per_move=20.806 runq_wait_s=0.399 runq_wait_us_per_move=0.542 slices_per_move=0.0439 vol_cs_per_move=0.0402 invol_cs_per_move=0.0036
+sched tid=32994 comm=req-0 oncpu_s=1.920 oncpu_us_per_move=2.606 runq_wait_s=4.516 runq_wait_us_per_move=6.129 slices_per_move=0.0435 vol_cs_per_move=0.0424 invol_cs_per_move=0.0011
+sched tid=32995 comm=job-0 oncpu_s=3.450 oncpu_us_per_move=4.681 runq_wait_s=3.388 runq_wait_us_per_move=4.598 slices_per_move=0.0188 vol_cs_per_move=0.0074 invol_cs_per_move=0.0114
+sched tid=32996 comm=cbase_D oncpu_s=0.242 oncpu_us_per_move=0.328 runq_wait_s=0.239 runq_wait_us_per_move=0.324 slices_per_move=0.0015 vol_cs_per_move=0.0012 invol_cs_per_move=0.0003
+sched tid=32997 comm=cbase_D oncpu_s=6.742 oncpu_us_per_move=9.150 runq_wait_s=2.848 runq_wait_us_per_move=3.866 slices_per_move=0.0199 vol_cs_per_move=0.0094 invol_cs_per_move=0.0104
+sched total oncpu_us_per_move=37.571 runq_wait_us_per_move=15.459
+srvcpu cpu0 busy_pct=77.0 user=33.1 nice=0.0 system=29.7 irq=0.0 softirq=14.2 steal=0.0 idle=22.7 iowait=0.2
+srvcpu cpu1 busy_pct=69.0 user=39.4 nice=0.0 system=6.9 irq=0.0 softirq=22.7 steal=0.0 idle=21.9 iowait=9.0
+srvcpu procs_running_mean=2.97 max=7 samples=102
+VmHWM:	   30764 kB
+VmRSS:	   21284 kB
+1794665975.529989 30684 30684 17840
+2026-11-14T14:19:53.975000+00:00 INFO  net: inline dispatch: 896444 requests on the loop thread (1274 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:19:54.170000+00:00 INFO  journal: 875871 record(s) in 874355 batch(es), 854334 write(s), 30692071 byte(s); 4112 flush(es) of 875871 move(s); 130407 WAL frame(s) before the close's flush of 11494 move(s)
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         181          85           0         145         220
+	
+[14:19:57] proc perfcy
+Success	dso (/opt/mt/cbase_D) share=0.7117 unknown_within=0.0000
+dso ([kernel.kallsyms]) share=0.2501 unknown_within=0.0000
+dso ([ena]) share=0.0185 unknown_within=0.0000
+dso (/usr/bin/bash) share=0.0084 unknown_within=0.6612
+dso (/usr/lib64/libc.so.6) share=0.0054 unknown_within=0.0000
+dso ([vdso]) share=0.0031 unknown_within=1.0000
+dso (/usr/lib/ld-linux-aarch64.so.1) share=0.0013 unknown_within=0.0000
+total 30512
+-rw-r--r--. 1 root root     1232 Nov 14 14:20 buildids_perfcy.txt
+-rw-r--r--. 1 root root  5938462 Nov 14 14:20 cc_perfcy.txt.gz
+-rw-r--r--. 1 root root  1731751 Nov 14 14:20 flat_perfcy.txt.gz
+-rw-r--r--. 1 root root     3161 Nov 14 14:20 header_perfcy.txt
+-rw-r--r--. 1 root root  5583103 Nov 14 14:19 kallsyms_perfcy.txt
+-rw-r--r--. 1 root root      858 Nov 14 14:19 modules_perfcy.txt
+-rw-r--r--. 1 root root 17704048 Nov 14 14:19 perf_perfcy.data
+-rw-r--r--. 1 root root   200093 Nov 14 14:20 rep_children_perfcy.txt.gz
+-rw-r--r--. 1 root root    59682 Nov 14 14:20 rep_self_perfcy.txt.gz
+-rw-r--r--. 1 root root      400 Nov 14 14:20 resolve_perfcy.txt
+-rw-r--r--. 1 root root        0 Nov 14 14:20 script_cc_perfcy.err
+-rw-r--r--. 1 root root        0 Nov 14 14:20 script_flat_perfcy.err
+pushed proc perfcy
+	
+[14:20:31] run perfclk prof=clk irq=default knob=auto IP=172.31.11.245 games=192
+Success	knob auto env []
+start perfclk build D pid 34049 1 listening
+2026-11-14T14:20:32.347000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+perf cpu-clock running
+	
+[14:21:42] run perfclk moves=933563 t_go=1794666069.235740165 cpu_window_end=1794666094.235740 (window_s=25.00) play_moves=773561 play=[1794666071.252563,1794666092.252563]
+Success	[ perf record: Woken up 94 times to write data ]
+[ perf record: Captured and wrote 23.516 MB /var/tmp/mtperf/perf_perfclk.data (139405 samples) ]
+-rw-------. 1 root root 24673208 Nov 14 14:21 /var/tmp/mtperf/perf_perfclk.data
+pushed perf perfclk
+VmHWM:	   29508 kB
+== E1 window
+box busy_pct=75.81 (idle+iowait excluded; 2 vCPUs)
+cpu label=perfclk window_s=25.000 proc_cpu_s=34.387 moves=933563 cpu_us_per_move=36.83 cpu_busy_of_one_vcpu_pct=137.5
+thread tid=34049 comm=cbase_D last_cpu=0 cpu_s=18.974 cpu_us_per_move=20.32
+thread tid=34053 comm=req-0 last_cpu=1 cpu_s=2.281 cpu_us_per_move=2.44
+thread tid=34054 comm=job-0 last_cpu=1 cpu_s=4.113 cpu_us_per_move=4.41
+thread tid=34055 comm=cbase_D last_cpu=1 cpu_s=0.300 cpu_us_per_move=0.32
+thread tid=34056 comm=cbase_D last_cpu=1 cpu_s=8.713 cpu_us_per_move=9.33
+== play window
+box busy_pct=75.76 (idle+iowait excluded; 2 vCPUs)
+cpu label=perfclk window_s=21.000 proc_cpu_s=28.892 moves=773561 cpu_us_per_move=37.35 cpu_busy_of_one_vcpu_pct=137.6
+thread tid=34049 comm=cbase_D last_cpu=0 cpu_s=15.835 cpu_us_per_move=20.47
+thread tid=34053 comm=req-0 last_cpu=1 cpu_s=1.883 cpu_us_per_move=2.43
+thread tid=34054 comm=job-0 last_cpu=1 cpu_s=3.485 cpu_us_per_move=4.50
+thread tid=34055 comm=cbase_D last_cpu=1 cpu_s=0.250 cpu_us_per_move=0.32
+thread tid=34056 comm=cbase_D last_cpu=1 cpu_s=7.431 cpu_us_per_move=9.61
+report2 label=perfclk window_s=21.000 moves=773561
+sched tid=34049 comm=cbase_D oncpu_s=15.840 oncpu_us_per_move=20.477 runq_wait_s=0.356 runq_wait_us_per_move=0.461 slices_per_move=0.0439 vol_cs_per_move=0.0404 invol_cs_per_move=0.0035
+sched tid=34053 comm=req-0 oncpu_s=1.886 oncpu_us_per_move=2.438 runq_wait_s=4.870 runq_wait_us_per_move=6.295 slices_per_move=0.0472 vol_cs_per_move=0.0462 invol_cs_per_move=0.0010
+sched tid=34054 comm=job-0 oncpu_s=3.480 oncpu_us_per_move=4.498 runq_wait_s=3.344 runq_wait_us_per_move=4.323 slices_per_move=0.0149 vol_cs_per_move=0.0074 invol_cs_per_move=0.0074
+sched tid=34055 comm=cbase_D oncpu_s=0.260 oncpu_us_per_move=0.336 runq_wait_s=0.296 runq_wait_us_per_move=0.382 slices_per_move=0.0016 vol_cs_per_move=0.0013 invol_cs_per_move=0.0003
+sched tid=34056 comm=cbase_D oncpu_s=7.429 oncpu_us_per_move=9.604 runq_wait_s=3.063 runq_wait_us_per_move=3.959 slices_per_move=0.0209 vol_cs_per_move=0.0092 invol_cs_per_move=0.0117
+sched total oncpu_us_per_move=37.353 runq_wait_us_per_move=15.420
+srvcpu cpu0 busy_pct=79.3 user=35.7 nice=0.0 system=29.7 irq=0.0 softirq=13.9 steal=0.0 idle=20.6 iowait=0.1
+srvcpu cpu1 busy_pct=72.5 user=42.1 nice=0.0 system=7.0 irq=0.0 softirq=23.4 steal=0.0 idle=23.4 iowait=4.1
+srvcpu procs_running_mean=3.04 max=6 samples=102
+VmHWM:	   29508 kB
+VmRSS:	   20944 kB
+1794666086.245326  29508 17328
+2026-11-14T14:21:48.494000+00:00 INFO  net: inline dispatch: 940360 requests on the loop thread (1552 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:21:48.615000+00:00 INFO  journal: 919885 record(s) in 917815 batch(es), 895629 write(s), 32299535 byte(s); 5494 flush(es) of 919885 move(s); 145430 WAL frame(s) before the close's flush of 11635 move(s)
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         173          90           0         148         228
+	
+[14:21:51] run bpf1 prof=bpf irq=default knob=auto IP=172.31.11.245 games=192
+Success	knob auto env []
+start bpf1 build D pid 35060 1 listening
+2026-11-14T14:21:52.499000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+               total        used        free      shared  buff/cache   available
+Mem:             412         155          99           0         157         246
+Swap:           1179          20        1159
+bpftrace attached (arrow syntax) after 1 s
+Attaching 9 probes...
+BT_BEGIN 596704976450
+               total        used        free      shared  buff/cache   available
+Mem:             412         212          16           0         183         189
+	
+[14:23:02] run bpf1 moves=717310 t_go=1794666149.147568074 cpu_window_end=1794666174.147568 (window_s=25.00) play_moves=609586 play=[1794666151.164459,1794666172.164459]
+Success	bpf lines 21630
+68
+               total        used        free      shared  buff/cache   available
+Mem:             412         167         113           0         130         234
+Swap:           1179          19        1160
+[  169.634753] [  pid  ]   uid  tgid total_vm      rss rss_anon rss_file rss_shmem pgtables_bytes swapents oom_score_adj name
+[  169.662922] oom-kill:constraint=CONSTRAINT_NONE,nodemask=(null),cpuset=/,mems_allowed=0,global_oom,task_memcg=/system.slice/chronyd.service,task=chronyd,pid=2023,uid=995
+[  169.664970] Out of memory: Killed process 2023 (chronyd) total-vm:88180kB, anon-rss:32kB, file-rss:4kB, shmem-rss:0kB, UID:995 pgtables:64kB oom_score_adj:0
+VmHWM:	   27604 kB
+== E1 window
+box busy_pct=66.85 (idle+iowait excluded; 2 vCPUs)
+cpu label=bpf1 window_s=25.000 proc_cpu_s=29.790 moves=717310 cpu_us_per_move=41.53 cpu_busy_of_one_vcpu_pct=119.2
+thread tid=35060 comm=cbase_D last_cpu=0 cpu_s=18.737 cpu_us_per_move=26.12
+thread tid=35064 comm=req-0 last_cpu=1 cpu_s=1.975 cpu_us_per_move=2.75
+thread tid=35065 comm=job-0 last_cpu=1 cpu_s=3.141 cpu_us_per_move=4.38
+thread tid=35066 comm=cbase_D last_cpu=1 cpu_s=0.240 cpu_us_per_move=0.33
+thread tid=35067 comm=cbase_D last_cpu=1 cpu_s=5.682 cpu_us_per_move=7.92
+== play window
+box busy_pct=67.59 (idle+iowait excluded; 2 vCPUs)
+cpu label=bpf1 window_s=21.000 proc_cpu_s=25.310 moves=609586 cpu_us_per_move=41.52 cpu_busy_of_one_vcpu_pct=120.5
+thread tid=35060 comm=cbase_D last_cpu=0 cpu_s=15.977 cpu_us_per_move=26.21
+thread tid=35064 comm=req-0 last_cpu=1 cpu_s=1.675 cpu_us_per_move=2.75
+thread tid=35065 comm=job-0 last_cpu=1 cpu_s=2.731 cpu_us_per_move=4.48
+thread tid=35066 comm=cbase_D last_cpu=1 cpu_s=0.210 cpu_us_per_move=0.34
+thread tid=35067 comm=cbase_D last_cpu=1 cpu_s=4.702 cpu_us_per_move=7.71
+report2 label=bpf1 window_s=21.000 moves=609586
+sched tid=35060 comm=cbase_D oncpu_s=15.979 oncpu_us_per_move=26.213 runq_wait_s=0.288 runq_wait_us_per_move=0.473 slices_per_move=0.0424 vol_cs_per_move=0.0383 invol_cs_per_move=0.0041
+sched tid=35064 comm=req-0 oncpu_s=1.680 oncpu_us_per_move=2.756 runq_wait_s=3.080 runq_wait_us_per_move=5.053 slices_per_move=0.0473 vol_cs_per_move=0.0460 invol_cs_per_move=0.0013
+sched tid=35065 comm=job-0 oncpu_s=2.732 oncpu_us_per_move=4.482 runq_wait_s=2.426 runq_wait_us_per_move=3.980 slices_per_move=0.0185 vol_cs_per_move=0.0095 invol_cs_per_move=0.0090
+sched tid=35066 comm=cbase_D oncpu_s=0.214 oncpu_us_per_move=0.351 runq_wait_s=0.232 runq_wait_us_per_move=0.380 slices_per_move=0.0016 vol_cs_per_move=0.0013 invol_cs_per_move=0.0003
+sched tid=35067 comm=cbase_D oncpu_s=4.705 oncpu_us_per_move=7.719 runq_wait_s=1.997 runq_wait_us_per_move=3.276 slices_per_move=0.0181 vol_cs_per_move=0.0107 invol_cs_per_move=0.0074
+sched total oncpu_us_per_move=41.521 runq_wait_us_per_move=13.161
+srvcpu cpu0 busy_pct=78.8 user=28.1 nice=0.0 system=37.5 irq=0.0 softirq=13.2 steal=0.0 idle=21.2 iowait=0.0
+srvcpu cpu1 busy_pct=57.3 user=29.8 nice=0.0 system=8.1 irq=0.0 softirq=19.3 steal=0.0 idle=27.0 iowait=15.7
+srvcpu procs_running_mean=2.78 max=6 samples=102
+VmHWM:	   27604 kB
+VmRSS:	   25328 kB
+1794666164.557937 27520 27520 16696
+2026-11-14T14:23:05.211000+00:00 INFO  net: inline dispatch: 722625 requests on the loop thread (824 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:23:05.455000+00:00 INFO  journal: 706731 record(s) in 705563 batch(es), 689141 write(s), 24631084 byte(s); 3760 flush(es) of 706731 move(s); 108447 WAL frame(s) before the close's flush of 11499 move(s)
+0
+               total        used        free      shared  buff/cache   available
+Mem:             412         157         133           0         121         244
+	
+[14:23:06] run base2 prof=none irq=default knob=auto IP=172.31.11.245 games=192
+Success	knob auto env []
+start base2 build D pid 36033 1 listening
+2026-11-14T14:23:07.768000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+Cpus_allowed_list:	0
+	
+[14:24:16] run base2 moves=943020 t_go=1794666222.151630209 cpu_window_end=1794666247.171630 (window_s=25.02) play_moves=786732 play=[1794666224.168466,1794666245.168466]
+Success	VmHWM:	   30096 kB
+== E1 window
+box busy_pct=75.83 (idle+iowait excluded; 2 vCPUs)
+cpu label=base2 window_s=25.020 proc_cpu_s=34.624 moves=943020 cpu_us_per_move=36.72 cpu_busy_of_one_vcpu_pct=138.4
+thread tid=36033 comm=cbase_D last_cpu=0 cpu_s=19.157 cpu_us_per_move=20.32
+thread tid=36037 comm=req-0 last_cpu=1 cpu_s=2.168 cpu_us_per_move=2.30
+thread tid=36038 comm=job-0 last_cpu=1 cpu_s=4.030 cpu_us_per_move=4.27
+thread tid=36039 comm=cbase_D last_cpu=1 cpu_s=0.290 cpu_us_per_move=0.31
+thread tid=36040 comm=cbase_D last_cpu=1 cpu_s=8.945 cpu_us_per_move=9.49
+== play window
+box busy_pct=76.01 (idle+iowait excluded; 2 vCPUs)
+cpu label=base2 window_s=21.000 proc_cpu_s=29.179 moves=786732 cpu_us_per_move=37.09 cpu_busy_of_one_vcpu_pct=138.9
+thread tid=36033 comm=cbase_D last_cpu=0 cpu_s=16.005 cpu_us_per_move=20.34
+thread tid=36037 comm=req-0 last_cpu=1 cpu_s=1.793 cpu_us_per_move=2.28
+thread tid=36038 comm=job-0 last_cpu=1 cpu_s=3.427 cpu_us_per_move=4.36
+thread tid=36039 comm=cbase_D last_cpu=1 cpu_s=0.260 cpu_us_per_move=0.33
+thread tid=36040 comm=cbase_D last_cpu=1 cpu_s=7.701 cpu_us_per_move=9.79
+report2 label=base2 window_s=21.000 moves=786732
+sched tid=36033 comm=cbase_D oncpu_s=15.996 oncpu_us_per_move=20.332 runq_wait_s=0.354 runq_wait_us_per_move=0.450 slices_per_move=0.0443 vol_cs_per_move=0.0407 invol_cs_per_move=0.0036
+sched tid=36037 comm=req-0 oncpu_s=1.798 oncpu_us_per_move=2.286 runq_wait_s=4.656 runq_wait_us_per_move=5.918 slices_per_move=0.0440 vol_cs_per_move=0.0430 invol_cs_per_move=0.0010
+sched tid=36038 comm=job-0 oncpu_s=3.426 oncpu_us_per_move=4.354 runq_wait_s=3.125 runq_wait_us_per_move=3.972 slices_per_move=0.0122 vol_cs_per_move=0.0070 invol_cs_per_move=0.0052
+sched tid=36039 comm=cbase_D oncpu_s=0.261 oncpu_us_per_move=0.332 runq_wait_s=0.290 runq_wait_us_per_move=0.369 slices_per_move=0.0015 vol_cs_per_move=0.0013 invol_cs_per_move=0.0002
+sched tid=36040 comm=cbase_D oncpu_s=7.702 oncpu_us_per_move=9.789 runq_wait_s=2.943 runq_wait_us_per_move=3.741 slices_per_move=0.0200 vol_cs_per_move=0.0091 invol_cs_per_move=0.0108
+sched total oncpu_us_per_move=37.093 runq_wait_us_per_move=14.450
+srvcpu cpu0 busy_pct=80.0 user=34.8 nice=0.0 system=29.0 irq=0.0 softirq=16.2 steal=0.0 idle=19.8 iowait=0.2
+srvcpu cpu1 busy_pct=72.3 user=44.0 nice=0.0 system=7.9 irq=0.0 softirq=20.3 steal=0.0 idle=25.5 iowait=2.3
+srvcpu procs_running_mean=3.17 max=6 samples=102
+VmHWM:	   30096 kB
+VmRSS:	   28128 kB
+1794666240.452748 30008 30008 17316
+2026-11-14T14:24:16.943000+00:00 INFO  net: inline dispatch: 950225 requests on the loop thread (1498 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T14:24:16.972000+00:00 INFO  journal: 929682 record(s) in 927911 batch(es), 905451 write(s), 32410490 byte(s); 5819 flush(es) of 929682 move(s); 147248 WAL frame(s) before the close's flush of 11311 move(s)
+1
+               total        used        free      shared  buff/cache   available
+Mem:             412         162         122           0         128         239
+	
