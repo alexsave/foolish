@@ -171,6 +171,41 @@ def piano_nodir():
     R = run(['TEMPO 60', 'SAMPLES /nonexistent', 'PIANO 0 1 60 90'], 'pn')
     return R.rc != 0 and '/nonexistent' in R.err and 'line 3' in R.err, f'rc {R.rc}, ' + R.err.strip()
 check('SAMPLES /nonexistent is fatal and names the path and the line', piano_nodir)
+# ---- INST / MANIFESTS / SAMPLEROOT ----
+MAN = '/Users/alex/Dev/foolish-wt-city-mixes/foolish/tools/soundtrack/samples/manifests'
+HAVE_INST = os.path.exists(MAN + '/lyria_haegeum.txt') and os.path.exists('/Users/alex/Dev/soundtrack-samples/lyria/haegeum/haegeum_A4_69.wav')
+def inst_chk(name, fn):
+    if ONLY and ONLY not in name: return
+    if not HAVE_INST: print('SKIP ' + name + ' - no manifest/samples'); sys.stdout.flush(); return
+    check(name, fn)
+def inst_pitch():
+    out = []; ok = True
+    for midi, want in ((69, 440.0), (70, 466.1638)):
+        R = run(['TEMPO 60', 'LEN 3', DRY, f'INST 0 2.5 {midi} 100 lyria_haegeum'], 'ip')
+        m = R.y.mean(axis=1); h = pk_hz(m, 0.3, 2.0, 200, 1000)
+        ok = ok and R.rc == 0 and abs(h - want) / want < 0.02; out.append(f'midi {midi}: {h:.1f} Hz (want {want:.1f})')
+    return ok, '; '.join(out)
+inst_chk('INST lyria_haegeum plays at 440 Hz (midi 69) and 466.2 Hz (midi 70 resampled)', inst_pitch)
+def inst_vel():
+    A = run(['TEMPO 60', 'LEN 2', DRY, 'INST 0 1.5 69 40 lyria_haegeum'], 'iv1')
+    B = run(['TEMPO 60', 'LEN 2', DRY, 'INST 0 1.5 69 110 lyria_haegeum'], 'iv2')
+    d = db(rms(seg(B.y.mean(axis=1), 0.2, 1.2))) - db(rms(seg(A.y.mean(axis=1), 0.2, 1.2)))
+    return A.rc == 0 and B.rc == 0 and 12 < d < 20, f'vel 110 is {d:.1f} dB above vel 40 (want 16.5 dB)'
+inst_chk('INST velocity scales dynamics cleanly', inst_vel)
+def inst_loop():
+    R = run(['TEMPO 60', 'LEN 8', DRY, 'INST 0 6 69 100 lyria_haegeum'], 'il'); m = R.y.mean(axis=1)
+    mid = db(rms(seg(m, 0.5, 1.0))); late = db(rms(seg(m, 4.5, 5.5))); off = db(rms(seg(m, 6.6, 7.0)))
+    return R.rc == 0 and mid - late < 12 and mid - off > 30, f'4.5-5.5 s is {mid - late:.1f} dB under 0.5-1.0 s (looping); 6.6-7.0 s is {mid - off:.1f} dB under (released)'
+inst_chk('INST loops sustained samples past their length and releases after dur', inst_loop)
+def inst_det():
+    sc = ['TEMPO 90', 'LEN 4', 'INST 0 2 69,72 95 lyria_haegeum', 'INST 2 2 67 90 lyria_haegeum']
+    a = run(sc, 'id1'); b = run(sc, 'id2')
+    return a.rc == 0 and a.bytes == b.bytes, f'same {a.bytes == b.bytes}'
+inst_chk('two INST renders are byte-identical', inst_det)
+def inst_noman():
+    R = run(['TEMPO 60', 'INST 0 1 60 90 nonexistent_manifest_xyz'], 'inm')
+    return R.rc != 0 and 'nonexistent_manifest_xyz' in R.err and 'line 2' in R.err, f'rc {R.rc}, ' + R.err.strip()
+check('INST with missing manifest is fatal and names the path and the line', inst_noman)
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
 T="$T" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"

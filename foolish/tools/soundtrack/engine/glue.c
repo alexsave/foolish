@@ -31,6 +31,13 @@
 //                              at its own end but rings with its natural decay until the span's end, then releases over 0.30 s
 //   SAMPLES /abs/dir           the Salamander directory (default PIANO_SAMPLES_DEFAULT below); a missing directory or sample file is
 //                              fatal and names the path and the line. Samples are read once, only those a score needs.
+//   MANIFESTS /abs/dir         directory of sampler manifests (default MANIFESTS_DEFAULT below)
+//   SAMPLEROOT /abs/dir        root directory for re-rooting ".../soundtrack/samples/" manifest paths (default $SAMPLES or SAMPLEROOT_DEFAULT)
+//   INST beat dur midi[,midi...] vel manifest   a sampled instrument from a manifest ("root_midi layer rr path" lines, as sampler.h):
+//                              manifest is either a name in MANIFESTS (with or without .txt) or an absolute path. Picks nearest root,
+//                              velocity layer (vel 1..127, same gain curve as PIANO), and a round-robin from SEED. Sustained samples
+//                              (whose late RMS is at least 15 percent of their body RMS) crossfade-loop 50-90% when held past their length;
+//                              releases over 0.25 s with a raised cosine. Missing manifest or sample is fatal and names path and line.
 // beat and dur are in beats at TEMPO and may be fractional anywhere (TEMPO 60 makes a beat a second, so a score can be written in
 // seconds: PIANO 1.5 0.25 60 80 is a quarter of a second at 1.5 s), midi may be fractional, db is the peak level of that statement
 // in dBFS before the reverb. Output: 48 kHz stereo 24 bit, scaled as a whole when its peak would pass -1 dBFS (the scale is printed on stderr).
@@ -71,17 +78,23 @@
 #define SUB_RELEASE_S 0.08
 #define REVERB_RT 2.4
 #define PIANO_SAMPLES_DEFAULT "/Users/alex/Dev/soundtrack-samples/salamander/SalamanderGrandPianoV3_48khz24bit/48khz24bit"
+#define MANIFESTS_DEFAULT "/Users/alex/Dev/foolish-wt-city-mixes/foolish/tools/soundtrack/samples/manifests"
+#define SAMPLEROOT_DEFAULT "/Users/alex/Dev/soundtrack-samples"
 #define PIANO_ROOT0 21               // A0; roots every 3 semitones up to C8 (108)
 #define PIANO_NROOTS 30
 #define PIANO_MAXLAYERS 16
 #define PIANO_RELEASE_S 0.30
+#define INST_ATTACK_S 0.008
+#define INST_RELEASE_S 0.25
+#define INST_MAXSETS 32
+#define INST_MAXSMP 2048
 #define PIANO_DB_RANGE 30.0
 #define PIANO_TRIM_KEEP_S 0.0015
 #define PIANO_TRIM_THRESH 0.003
 #define MAX_PATH_LEN 1024
 
-typedef enum { PAD, KEYS, SUBV, PIANO } Kind;
-typedef struct { Kind kind; int line; double beat, dur, db, vel; int n; double midi[MAX_NOTES]; } Stmt;
+typedef enum { PAD, KEYS, SUBV, PIANO, INST } Kind;
+typedef struct { Kind kind; int line; double beat, dur, db, vel; int n; double midi[MAX_NOTES]; char inst[128]; } Stmt;
 typedef struct { double beat, dur; } Span;
 
 static void die(int line, const char *fmt, ...) __attribute__((noreturn, format(printf, 2, 3)));
@@ -103,11 +116,13 @@ static double num(int line, const char *s, const char *what, double lo, double h
 static Stmt g_st[MAX_STMT]; static int g_nst;
 static Span g_ped[MAX_STMT]; static int g_nped;
 static char g_samples[MAX_PATH_LEN] = PIANO_SAMPLES_DEFAULT;
+static char g_manifests[MAX_PATH_LEN] = MANIFESTS_DEFAULT;
+static char g_sampleroot[MAX_PATH_LEN] = "";
 static double g_tempo, g_len = -1, g_rev_db = -10, g_cutoff = 1800; static uint64_t g_seed = GLUE_SEED;
 
 static void parse(const char *path) {
     FILE *f = fopen(path, "r"); if (!f) { perror(path); exit(1); }
-    char buf[4096]; int line = 0, seen_tempo = 0, seen_len = 0, seen_rev = 0, seen_cut = 0, seen_seed = 0, seen_samples = 0;
+    char buf[4096]; int line = 0, seen_tempo = 0, seen_len = 0, seen_rev = 0, seen_cut = 0, seen_seed = 0, seen_samples = 0, seen_man = 0, seen_sr = 0;
     while (fgets(buf, sizeof buf, f)) {
         line++;
         if (!strchr(buf, '\n') && !feof(f)) die(line, "line too long");
@@ -132,15 +147,25 @@ static void parse(const char *path) {
             if (strlen(tok[1]) >= sizeof g_samples) die(line, "samples path too long");
             snprintf(g_samples, sizeof g_samples, "%s", tok[1]);
         }
+        else if (!strcmp(k, "MANIFESTS")) {
+            ARGS(1); ONCE(seen_man);
+            if (strlen(tok[1]) >= sizeof g_manifests) die(line, "manifests path too long");
+            snprintf(g_manifests, sizeof g_manifests, "%s", tok[1]);
+        }
+        else if (!strcmp(k, "SAMPLEROOT")) {
+            ARGS(1); ONCE(seen_sr);
+            if (strlen(tok[1]) >= sizeof g_sampleroot) die(line, "sampleroot path too long");
+            snprintf(g_sampleroot, sizeof g_sampleroot, "%s", tok[1]);
+        }
         else if (!strcmp(k, "PEDAL")) {
             ARGS(2); if (g_nped == MAX_STMT) die(line, "too many pedal spans");
             g_ped[g_nped].beat = num(line, tok[1], "beat", 0, 1e6); g_ped[g_nped].dur = num(line, tok[2], "duration", 0.001, 1e5); g_nped++;
         }
-        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB") || !strcmp(k, "PIANO")) {
+        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB") || !strcmp(k, "PIANO") || !strcmp(k, "INST")) {
             if (g_nst == MAX_STMT) die(line, "too many notes");
             Stmt *s = &g_st[g_nst++]; memset(s, 0, sizeof *s); s->line = line;
-            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : !strcmp(k, "PIANO") ? PIANO : SUBV;
-            ARGS(4);
+            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : !strcmp(k, "PIANO") ? PIANO : !strcmp(k, "INST") ? INST : SUBV;
+            if (s->kind == INST) { ARGS(5); } else { ARGS(4); }
             s->beat = num(line, tok[1], "beat", 0, 1e6);
             s->dur = num(line, tok[2], "duration", 0.001, 1e5);
             { size_t ln = strlen(tok[3]); if (tok[3][0] == ',' || tok[3][ln - 1] == ',' || strstr(tok[3], ",,")) die(line, "bad note list '%s'", tok[3]); }
@@ -150,8 +175,12 @@ static void parse(const char *path) {
                 s->midi[s->n++] = num(line, m, "midi note", 0, 127);
             }
             if (s->kind == SUBV && s->n != 1) die(line, "SUB takes one note");
-            if (s->kind == PIANO) s->vel = num(line, tok[4], "velocity", 1, 127);
+            if (s->kind == PIANO || s->kind == INST) s->vel = num(line, tok[4], "velocity", 1, 127);
             else s->db = num(line, tok[4], "level", -150, 0);
+            if (s->kind == INST) {
+                if (strlen(tok[5]) >= sizeof s->inst) die(line, "manifest name too long");
+                snprintf(s->inst, sizeof s->inst, "%s", tok[5]);
+            }
         } else die(line, "unknown statement '%s'", k);
     }
     fclose(f);
@@ -287,6 +316,105 @@ static void piano_note(float *L, float *R, long n, long at, double midi, double 
     }
 }
 
+// ---- generic manifest-backed sampled instruments (sampler.h format) ----
+typedef struct { int root, layer, rr, sustained; Smp smp; char path[MAX_PATH_LEN]; } InstSmp;
+typedef struct { char name[128]; InstSmp *s; int n, nl; } InstSet;
+static InstSet g_insts[INST_MAXSETS]; static int g_ninsts;
+
+static InstSet *inst_load(const char *name, int line) {
+    for (int i = 0; i < g_ninsts; i++) if (!strcmp(g_insts[i].name, name)) return &g_insts[i];
+    if (g_ninsts == INST_MAXSETS) die(line, "too many distinct manifests (max %d)", INST_MAXSETS);
+    char mpath[MAX_PATH_LEN + 160];
+    if (name[0] == '/') snprintf(mpath, sizeof mpath, "%s", name);
+    else {
+        size_t ln = strlen(name);
+        if (ln > 4 && !strcmp(name + ln - 4, ".txt")) snprintf(mpath, sizeof mpath, "%s/%s", g_manifests, name);
+        else snprintf(mpath, sizeof mpath, "%s/%s.txt", g_manifests, name);
+    }
+    FILE *f = fopen(mpath, "r");
+    if (!f) die(line, "missing manifest %s", mpath);
+    InstSet *is = &g_insts[g_ninsts++]; memset(is, 0, sizeof *is);
+    snprintf(is->name, sizeof is->name, "%s", name);
+    is->s = calloc(INST_MAXSMP, sizeof(InstSmp)); if (!is->s) die(line, "out of memory");
+    const char *root = g_sampleroot[0] ? g_sampleroot : getenv("SAMPLES");
+    if (!root || !root[0]) root = SAMPLEROOT_DEFAULT;
+    char lbuf[1024];
+    while (fgets(lbuf, sizeof lbuf, f)) {
+        InstSmp x; memset(&x, 0, sizeof x); char rawp[MAX_PATH_LEN];
+        if (lbuf[0] == '#' || sscanf(lbuf, "%d %d %d %1023[^\r\n]", &x.root, &x.layer, &x.rr, rawp) != 4) continue;
+        if (is->n == INST_MAXSMP) die(line, "manifest %s exceeds %d samples", mpath, INST_MAXSMP);
+        const char *cut = strstr(rawp, "/soundtrack/samples/");
+        if (cut) snprintf(x.path, sizeof x.path, "%s/%s", root, cut + 20);
+        else snprintf(x.path, sizeof x.path, "%s", rawp);
+        if (x.layer + 1 > is->nl) is->nl = x.layer + 1;
+        is->s[is->n++] = x;
+    }
+    fclose(f);
+    if (!is->n) die(line, "empty manifest %s", mpath);
+    return is;
+}
+
+static void inst_ensure(InstSmp *x, int line) {
+    if (x->smp.loaded) return;
+    if (!file_exists(x->path)) die(line, "missing instrument sample %s", x->path);
+    g_wav_quiet = 1; x->smp.n = wav_read(x->path, &x->smp.l, &x->smp.r); x->smp.sr = g_wav_sr; g_wav_quiet = 0;
+    if (x->smp.n < 2) die(line, "empty instrument sample %s", x->path);
+    smp_trim(&x->smp);
+    // detect sustained vs decaying sample: compare RMS in 70-85% against 15-45%
+    long a0 = x->smp.n * 15 / 100, a1 = x->smp.n * 45 / 100, b0 = x->smp.n * 70 / 100, b1 = x->smp.n * 85 / 100;
+    double ea = 0, eb = 0;
+    for (long i = a0; i < a1; i++) ea += x->smp.l[i] * x->smp.l[i] + x->smp.r[i] * x->smp.r[i];
+    for (long i = b0; i < b1; i++) eb += x->smp.l[i] * x->smp.l[i] + x->smp.r[i] * x->smp.r[i];
+    double ra = a1 > a0 ? sqrt(ea / (a1 - a0)) : 0, rb = b1 > b0 ? sqrt(eb / (b1 - b0)) : 0;
+    x->sustained = (ra > 1e-6 && rb >= ra * 0.15) ? 1 : 0;
+    x->smp.loaded = 1;
+}
+
+static void inst_note(float *L, float *R, long n, long at, const char *manifest, double midi, double vel, double dur_s, int line, Rng *rg) {
+    InstSet *is = inst_load(manifest, line);
+    int layer = (int)floor((vel - 1) * is->nl / 127.0);
+    if (layer < 0) layer = 0; if (layer >= is->nl) layer = is->nl - 1;
+    int best = -1, cand[64], nc = 0; double bd = 1e9;
+    for (int pass = 0; pass < 2 && best < 0; pass++) {
+        for (int i = 0; i < is->n; i++) {
+            InstSmp *x = &is->s[i];
+            if (pass == 0 && x->layer != layer) continue;
+            double d = fabs(x->root - midi) + (x->root < midi ? 0.01 : 0);
+            if (d < bd - 1e-9) { bd = d; best = i; nc = 0; }
+            if (fabs(d - bd) < 1e-9 && nc < 64) cand[nc++] = i;
+        }
+    }
+    if (best < 0) return;
+    InstSmp *x = &is->s[nc > 1 ? cand[(int)(r01(rg) * nc) % nc] : best];
+    inst_ensure(x, line);
+    double ratio = pow(2, (midi - x->root) / 12.0) * x->smp.sr / SR;
+    double g = db2a(-PIANO_DB_RANGE + PIANO_DB_RANGE * vel / 127.0);
+    long la = (long)(x->smp.n * 0.5), lb = (long)(x->smp.n * 0.9), xf = (long)(0.06 * x->smp.sr);
+    if (!x->sustained || lb - la < 2 * xf) { la = 0; lb = 0; }
+    long len = lround((dur_s + INST_RELEASE_S) * SR) + 1;
+    double pos = 0;
+    for (long i = 0; i < len && at + i < n; i++) {
+        double t = (double)i / SR;
+        double a = t < INST_ATTACK_S ? t / INST_ATTACK_S : 1.0;
+        if (t > dur_s) a *= 0.5 * (1 + cos(M_PI * fmin(1.0, (t - dur_s) / INST_RELEASE_S)));
+        double l, r;
+        if (lb > 0 && pos >= lb - xf) {
+            double over = pos - (lb - xf);
+            if (over >= xf) { pos = la + (over - xf); over = -1; }
+            if (over >= 0) {
+                double w = over / xf, p2 = la + over;
+                l = cubic(x->smp.l, x->smp.n, pos) * (1 - w) + cubic(x->smp.l, x->smp.n, p2) * w;
+                r = cubic(x->smp.r, x->smp.n, pos) * (1 - w) + cubic(x->smp.r, x->smp.n, p2) * w;
+            } else { l = cubic(x->smp.l, x->smp.n, pos); r = cubic(x->smp.r, x->smp.n, pos); }
+        } else {
+            if (pos >= x->smp.n - 1) break;
+            l = cubic(x->smp.l, x->smp.n, pos); r = cubic(x->smp.r, x->smp.n, pos);
+        }
+        L[at + i] += (float)(l * a * g); R[at + i] += (float)(r * a * g);
+        pos += ratio;
+    }
+}
+
 static RevCfg hall(double rt) { return (RevCfg){rt, rt * 0.5, 10, 1.4, 200, 6000, 0.14, 1.0, 0.2, 0.25}; }
 // gain that makes a send of 0 dB come back as loud as the dry: steady pink noise through the same hall, wet RMS against dry
 // RMS (the calibration splice.c uses for a WASH; the raw hall returns about 30 dB less than it is given)
@@ -307,9 +435,11 @@ int main(int argc, char **argv) {
     double spb = 60.0 / g_tempo, end_beats = 0;
     for (int i = 0; i < g_nst; i++) {
         const Stmt *s = &g_st[i];
-        double e = s->kind == PIANO ? piano_hold_end(s->beat, s->beat + s->dur) + PIANO_RELEASE_S / spb : s->beat + s->dur;
+        double e = s->kind == PIANO ? piano_hold_end(s->beat, s->beat + s->dur) + PIANO_RELEASE_S / spb :
+                   s->kind == INST ? s->beat + s->dur + INST_RELEASE_S / spb : s->beat + s->dur;
         if (e > end_beats) end_beats = e;
         if (s->kind == PIANO) piano_probe(s->line);
+        if (s->kind == INST) inst_load(s->inst, s->line);
     }
     double len_beats = g_len > 0 ? g_len : end_beats;
     long body = lround(len_beats * spb * SR), n = body + lround(TAIL_S * SR);
@@ -321,6 +451,11 @@ int main(int argc, char **argv) {
         if (s->kind == PIANO) {
             long pat = lround(s->beat * spb * SR); double hold = (piano_hold_end(s->beat, s->beat + s->dur) - s->beat) * spb;
             if (pat < n) for (int k = 0; k < s->n; k++) piano_note(L, R, n, pat, s->midi[k], s->vel, hold, s->line);
+            continue;
+        }
+        if (s->kind == INST) {
+            long iat = lround(s->beat * spb * SR); double dur_s = s->dur * spb;
+            if (iat < n) for (int k = 0; k < s->n; k++) inst_note(L, R, n, iat, s->inst, s->midi[k], s->vel, dur_s, s->line, &rg);
             continue;
         }
         double rel = s->kind == PAD ? PAD_RELEASE_S : s->kind == KEYS ? KEYS_RELEASE_S : SUB_RELEASE_S;
