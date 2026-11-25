@@ -1,0 +1,2 @@
+N1 vs baseline (Dcheck, same tree, no CPU=): outlined __aarch64_* call sites 111 vs 192, inline LSE instructions 90 vs 16; functions still calling outlined helpers in N1: 100, all from the prebuilt static OpenSSL; cbase functions such as write_batch, flush_txn, cb_journal_game_acquire, stat_rate_add, pm_malloc call helpers in the baseline and none in N1 (objdump -d of the unstripped binaries)
+N1 make log: 143 of 143 compile lines carry -mcpu=neoverse-n1

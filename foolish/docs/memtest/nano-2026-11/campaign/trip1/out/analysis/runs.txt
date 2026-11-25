@@ -1,0 +1,104 @@
+## base1 (profiler none)
+E1 window: moves 1019743 in 25.01 s = 40779.1/s, p50 3.20 ms, p99 12.11 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 841916 = 40091.2/s, p50 3.21 ms, p99 12.02 ms
+server CPU (proc ticks, play window): 34.73 us/move, 139.2% of one vCPU; VmHWM 30200 kB; RSS max 29920 kB
+  thread 32139 cbase_D cpu0: ticks 17.26 us/move; schedstat on-CPU 17.267 us/move, run-queue wait 0.490 us/move, switches vol 0.0427 invol 0.0018 per move
+  thread 32143 req-0 cpu1: ticks 2.96 us/move; schedstat on-CPU 2.970 us/move, run-queue wait 6.678 us/move, switches vol 0.0413 invol 0.0015 per move
+  thread 32144 job-0 cpu1: ticks 4.97 us/move; schedstat on-CPU 4.974 us/move, run-queue wait 5.584 us/move, switches vol 0.0063 invol 0.0149 per move
+  thread 32145 cbase_D cpu1: ticks 0.35 us/move; schedstat on-CPU 0.355 us/move, run-queue wait 0.415 us/move, switches vol 0.0013 invol 0.0002 per move
+  thread 32146 cbase_D cpu1: ticks 9.16 us/move; schedstat on-CPU 9.177 us/move, run-queue wait 4.718 us/move, switches vol 0.0080 invol 0.0127 per move
+  cpu0 busy 72.8% (user 35.4 sys 31.9 irq 0.0 softirq 5.4 steal 0.0) idle 26.8 iowait 0.4
+  cpu1 busy 79.0% (user 43.0 sys 8.1 irq 0.0 softirq 27.9 steal 0.0) idle 13.6 iowait 7.4
+  load box (play): 37.6% of 8 vCPUs busy, busiest vCPU 38.4%, procs_running mean 9.66 max 118
+  server log: inline dispatch: 1027558 requests on the loop thread (1682 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 1002729 record(s) in 1001002 batch(es), 977797 write(s), 35046894 byte(s); 4235 flush(es) of 1002729 move(s); 148496 WAL frame(s) before the close's flush of 11728 move(s)
+
+## perfcy (profiler cy)
+E1 window: moves 889786 in 25.02 s = 35563.7/s, p50 3.96 ms, p99 13.34 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 736858 = 35088.5/s, p50 4.07 ms, p99 13.38 ms
+server CPU (proc ticks, play window): 37.58 us/move, 131.9% of one vCPU; VmHWM 30764 kB; RSS max 30684 kB
+  thread 32990 cbase_D cpu0: ticks 20.80 us/move; schedstat on-CPU 20.806 us/move, run-queue wait 0.542 us/move, switches vol 0.0402 invol 0.0036 per move
+  thread 32994 req-0 cpu1: ticks 2.61 us/move; schedstat on-CPU 2.606 us/move, run-queue wait 6.129 us/move, switches vol 0.0424 invol 0.0011 per move
+  thread 32995 job-0 cpu1: ticks 4.69 us/move; schedstat on-CPU 4.681 us/move, run-queue wait 4.598 us/move, switches vol 0.0074 invol 0.0114 per move
+  thread 32996 cbase_D cpu1: ticks 0.33 us/move; schedstat on-CPU 0.328 us/move, run-queue wait 0.324 us/move, switches vol 0.0012 invol 0.0003 per move
+  thread 32997 cbase_D cpu1: ticks 9.15 us/move; schedstat on-CPU 9.150 us/move, run-queue wait 3.866 us/move, switches vol 0.0094 invol 0.0104 per move
+  cpu0 busy 77.0% (user 33.1 sys 29.7 irq 0.0 softirq 14.2 steal 0.0) idle 22.7 iowait 0.2
+  cpu1 busy 69.0% (user 39.4 sys 6.9 irq 0.0 softirq 22.7 steal 0.0) idle 21.9 iowait 9.0
+  load box (play): 31.2% of 8 vCPUs busy, busiest vCPU 32.3%, procs_running mean 13.53 max 107
+  server log: inline dispatch: 896444 requests on the loop thread (1274 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 875871 record(s) in 874355 batch(es), 854334 write(s), 30692071 byte(s); 4112 flush(es) of 875871 move(s); 130407 WAL frame(s) before the close's flush of 11494 move(s)
+
+## perfclk (profiler clk)
+E1 window: moves 933563 in 25.00 s = 37344.3/s, p50 4.29 ms, p99 12.86 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 773561 = 36836.2/s, p50 4.34 ms, p99 12.93 ms
+server CPU (proc ticks, play window): 37.35 us/move, 137.6% of one vCPU; VmHWM 29508 kB; RSS max ? kB
+  thread 34049 cbase_D cpu0: ticks 20.47 us/move; schedstat on-CPU 20.477 us/move, run-queue wait 0.461 us/move, switches vol 0.0404 invol 0.0035 per move
+  thread 34053 req-0 cpu1: ticks 2.43 us/move; schedstat on-CPU 2.438 us/move, run-queue wait 6.295 us/move, switches vol 0.0462 invol 0.0010 per move
+  thread 34054 job-0 cpu1: ticks 4.50 us/move; schedstat on-CPU 4.498 us/move, run-queue wait 4.323 us/move, switches vol 0.0074 invol 0.0074 per move
+  thread 34055 cbase_D cpu1: ticks 0.32 us/move; schedstat on-CPU 0.336 us/move, run-queue wait 0.382 us/move, switches vol 0.0013 invol 0.0003 per move
+  thread 34056 cbase_D cpu1: ticks 9.61 us/move; schedstat on-CPU 9.604 us/move, run-queue wait 3.959 us/move, switches vol 0.0092 invol 0.0117 per move
+  cpu0 busy 79.3% (user 35.7 sys 29.7 irq 0.0 softirq 13.9 steal 0.0) idle 20.6 iowait 0.1
+  cpu1 busy 72.5% (user 42.1 sys 7.0 irq 0.0 softirq 23.4 steal 0.0) idle 23.4 iowait 4.1
+  load box (play): 33.6% of 8 vCPUs busy, busiest vCPU 34.8%, procs_running mean 14.29 max 116
+  server log: inline dispatch: 940360 requests on the loop thread (1552 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 919885 record(s) in 917815 batch(es), 895629 write(s), 32299535 byte(s); 5494 flush(es) of 919885 move(s); 145430 WAL frame(s) before the close's flush of 11635 move(s)
+
+## bpf1 (profiler bpf)
+E1 window: moves 717310 in 25.00 s = 28695.3/s, p50 5.24 ms, p99 14.01 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 609586 = 29027.9/s, p50 5.23 ms, p99 13.94 ms
+server CPU (proc ticks, play window): 41.52 us/move, 120.5% of one vCPU; VmHWM 27604 kB; RSS max 27520 kB
+  thread 35060 cbase_D cpu0: ticks 26.21 us/move; schedstat on-CPU 26.213 us/move, run-queue wait 0.473 us/move, switches vol 0.0383 invol 0.0041 per move
+  thread 35064 req-0 cpu1: ticks 2.75 us/move; schedstat on-CPU 2.756 us/move, run-queue wait 5.053 us/move, switches vol 0.0460 invol 0.0013 per move
+  thread 35065 job-0 cpu1: ticks 4.48 us/move; schedstat on-CPU 4.482 us/move, run-queue wait 3.980 us/move, switches vol 0.0095 invol 0.0090 per move
+  thread 35066 cbase_D cpu1: ticks 0.34 us/move; schedstat on-CPU 0.351 us/move, run-queue wait 0.380 us/move, switches vol 0.0013 invol 0.0003 per move
+  thread 35067 cbase_D cpu1: ticks 7.71 us/move; schedstat on-CPU 7.719 us/move, run-queue wait 3.276 us/move, switches vol 0.0107 invol 0.0074 per move
+  cpu0 busy 78.8% (user 28.1 sys 37.5 irq 0.0 softirq 13.2 steal 0.0) idle 21.2 iowait 0.0
+  cpu1 busy 57.3% (user 29.8 sys 8.1 irq 0.0 softirq 19.3 steal 0.0) idle 27.0 iowait 15.7
+  load box (play): 27.4% of 8 vCPUs busy, busiest vCPU 28.0%, procs_running mean 6.79 max 65
+  server log: inline dispatch: 722625 requests on the loop thread (824 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 706731 record(s) in 705563 batch(es), 689141 write(s), 24631084 byte(s); 3760 flush(es) of 706731 move(s); 108447 WAL frame(s) before the close's flush of 11499 move(s)
+
+## base2 (profiler none)
+E1 window: moves 943020 in 25.02 s = 37692.1/s, p50 4.39 ms, p99 12.65 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 786732 = 37463.4/s, p50 4.45 ms, p99 12.72 ms
+server CPU (proc ticks, play window): 37.09 us/move, 138.9% of one vCPU; VmHWM 30096 kB; RSS max 30008 kB
+  thread 36033 cbase_D cpu0: ticks 20.34 us/move; schedstat on-CPU 20.332 us/move, run-queue wait 0.450 us/move, switches vol 0.0407 invol 0.0036 per move
+  thread 36037 req-0 cpu1: ticks 2.28 us/move; schedstat on-CPU 2.286 us/move, run-queue wait 5.918 us/move, switches vol 0.0430 invol 0.0010 per move
+  thread 36038 job-0 cpu1: ticks 4.36 us/move; schedstat on-CPU 4.354 us/move, run-queue wait 3.972 us/move, switches vol 0.0070 invol 0.0052 per move
+  thread 36039 cbase_D cpu1: ticks 0.33 us/move; schedstat on-CPU 0.332 us/move, run-queue wait 0.369 us/move, switches vol 0.0013 invol 0.0002 per move
+  thread 36040 cbase_D cpu1: ticks 9.79 us/move; schedstat on-CPU 9.789 us/move, run-queue wait 3.741 us/move, switches vol 0.0091 invol 0.0108 per move
+  cpu0 busy 80.0% (user 34.8 sys 29.0 irq 0.0 softirq 16.2 steal 0.0) idle 19.8 iowait 0.2
+  cpu1 busy 72.3% (user 44.0 sys 7.9 irq 0.0 softirq 20.3 steal 0.0) idle 25.5 iowait 2.3
+  load box (play): 34.6% of 8 vCPUs busy, busiest vCPU 36.0%, procs_running mean 10.04 max 110
+  server log: inline dispatch: 950225 requests on the loop thread (1498 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 929682 record(s) in 927911 batch(es), 905451 write(s), 32410490 byte(s); 5819 flush(es) of 929682 move(s); 147248 WAL frame(s) before the close's flush of 11311 move(s)
+
+## irq1 (profiler none)
+E1 window: moves 1158010 in 25.02 s = 46292.6/s, p50 3.02 ms, p99 9.94 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 955842 = 45516.3/s, p50 3.19 ms, p99 10.04 ms
+server CPU (proc ticks, play window): 34.24 us/move, 155.8% of one vCPU; VmHWM 31252 kB; RSS max 31088 kB
+  thread 36907 cbase_D cpu0: ticks 16.25 us/move; schedstat on-CPU 16.249 us/move, run-queue wait 0.462 us/move, switches vol 0.0349 invol 0.0010 per move
+  thread 36911 req-0 cpu1: ticks 3.09 us/move; schedstat on-CPU 3.088 us/move, run-queue wait 7.168 us/move, switches vol 0.0381 invol 0.0013 per move
+  thread 36912 job-0 cpu1: ticks 5.40 us/move; schedstat on-CPU 5.403 us/move, run-queue wait 6.616 us/move, switches vol 0.0049 invol 0.0165 per move
+  thread 36913 cbase_D cpu1: ticks 0.41 us/move; schedstat on-CPU 0.413 us/move, run-queue wait 0.513 us/move, switches vol 0.0013 invol 0.0004 per move
+  thread 36914 cbase_D cpu1: ticks 9.09 us/move; schedstat on-CPU 9.085 us/move, run-queue wait 6.194 us/move, switches vol 0.0058 invol 0.0143 per move
+  cpu0 busy 76.8% (user 40.0 sys 36.8 irq 0.0 softirq 0.0 steal 0.0) idle 23.1 iowait 0.1
+  cpu1 busy 89.2% (user 45.8 sys 9.4 irq 0.0 softirq 34.0 steal 0.0) idle 8.7 iowait 2.1
+  load box (play): 42.7% of 8 vCPUs busy, busiest vCPU 43.5%, procs_running mean 21.13 max 129
+  server log: inline dispatch: 1166660 requests on the loop thread (1966 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 1139138 record(s) in 1137129 batch(es), 1110069 write(s), 39673539 byte(s); 4514 flush(es) of 1139138 move(s); 168727 WAL frame(s) before the close's flush of 13486 move(s)
+
+## irq0 (profiler none)
+E1 window: moves 870603 in 25.02 s = 34797.0/s, p50 4.98 ms, p99 12.73 ms, err_files 0
+play window [t_go+2,t_go+23]: moves 727077 = 34622.7/s, p50 5.03 ms, p99 12.76 ms
+server CPU (proc ticks, play window): 37.19 us/move, 128.7% of one vCPU; VmHWM 30820 kB; RSS max 30560 kB
+  thread 37775 cbase_D cpu0: ticks 22.97 us/move; schedstat on-CPU 22.977 us/move, run-queue wait 0.429 us/move, switches vol 0.0403 invol 0.0069 per move
+  thread 37779 req-0 cpu1: ticks 1.65 us/move; schedstat on-CPU 1.646 us/move, run-queue wait 3.997 us/move, switches vol 0.0477 invol 0.0006 per move
+  thread 37780 job-0 cpu1: ticks 3.54 us/move; schedstat on-CPU 3.551 us/move, run-queue wait 2.973 us/move, switches vol 0.0077 invol 0.0013 per move
+  thread 37781 cbase_D cpu1: ticks 0.28 us/move; schedstat on-CPU 0.271 us/move, run-queue wait 0.227 us/move, switches vol 0.0013 invol 0.0001 per move
+  thread 37782 cbase_D cpu1: ticks 8.75 us/move; schedstat on-CPU 8.749 us/move, run-queue wait 2.601 us/move, switches vol 0.0100 invol 0.0075 per move
+  cpu0 busy 82.9% (user 33.0 sys 27.1 irq 0.0 softirq 22.7 steal 0.0) idle 17.1 iowait 0.0
+  cpu1 busy 51.6% (user 43.9 sys 7.7 irq 0.0 softirq 0.0 steal 0.0) idle 46.3 iowait 2.1
+  load box (play): 31.8% of 8 vCPUs busy, busiest vCPU 33.4%, procs_running mean 9.22 max 100
+  server log: inline dispatch: 877559 requests on the loop thread (1260 sent on to the pool), 0 over budget, valve tripped 0 times
+  server log: journal: 857791 record(s) in 856448 batch(es), 835358 write(s), 29878061 byte(s); 5888 flush(es) of 857791 move(s); 139791 WAL frame(s) before the close's flush of 11104 move(s)

@@ -1,0 +1,41 @@
+# perf perfM3: play window load epoch [1794682527.903,1794682548.903], server mono [1544.522,1565.522], moves 1038864, server pid 48241
+# source: raw/proc/perfM3/cc_perfM3.txt.gz (perf script with callchains), us = sum(period)/2.5e9/moves*1e6 (cycles at 2.5 GHz; for cpu-clock period is ns, so the unit is ns of wall time)
+samples in window 38810, first 1544.522 last 1565.522; server threads [(48241, 'cbase_M3'), (48245, 'req-0'), (48246, 'job-0'), (48247, 'cbase_M3'), (48248, 'cbase_M3')]
+
+## total per move: 30.53 us (user 13.75, kernel 16.79)
+
+## by CPU (us per move)
+cpu0 user 7.45 kernel 10.60 total 18.05
+cpu1 user 6.30 kernel 6.19 total 12.48
+
+## by thread (us per move): user, kernel, total, and per CPU
+loop(main)                   user    7.33 kernel   10.14 total   17.47  cpu0=17.47
+job-0:48246                  user    2.84 kernel    1.48 total    4.32  cpu1=4.32
+cbase_M3:48248               user    2.16 kernel    1.52 total    3.68  cpu1=3.68
+req-0:48245                  user    1.10 kernel    0.89 total    1.99  cpu1=1.99
+idle(swapper)                user    0.00 kernel    1.93 total    1.93  cpu0=0.29 cpu1=1.64
+other:bash                   user    0.25 kernel    0.27 total    0.52  cpu0=0.19 cpu1=0.33
+cbase_M3:48247               user    0.03 kernel    0.30 total    0.33  cpu1=0.33
+other:sleep                  user    0.03 kernel    0.14 total    0.18  cpu0=0.06 cpu1=0.12
+other:kworker/0:1-eve        user    0.00 kernel    0.03 total    0.03  cpu0=0.03
+other:ksoftirqd/1            user    0.00 kernel    0.02 total    0.02  cpu1=0.02
+other:kworker/1:0-eve        user    0.00 kernel    0.01 total    0.01  cpu1=0.01
+other:kswapd0                user    0.00 kernel    0.01 total    0.01  cpu1=0.01
+
+## context per thread (us per move): user, syscall, softirq, hardirq, kernel-other, idle-task*
+loop(main)                   user=7.33 syscall=5.54 softirq=4.26 kernel-other=0.33 hardirq=0.01
+job-0:48246                  user=2.84 softirq=1.17 syscall=0.24 hardirq=0.04 kernel-other=0.02
+cbase_M3:48248               user=2.16 softirq=0.92 syscall=0.44 kernel-other=0.14 hardirq=0.01
+req-0:48245                  user=1.10 softirq=0.55 syscall=0.28 kernel-other=0.05 hardirq=0.00
+idle(swapper)                idle-task+softirq=1.60 idle-task=0.33
+other:bash                   user=0.25 syscall=0.12 softirq=0.11 kernel-other=0.04 hardirq=0.00
+cbase_M3:48247               syscall=0.20 softirq=0.10 user=0.03 kernel-other=0.01
+other:sleep                  syscall=0.08 softirq=0.04 user=0.03 kernel-other=0.02
+other:kworker/0:1-eve        kernel-other=0.02 softirq=0.01
+other:ksoftirqd/1            softirq=0.02 kernel-other=0.00
+other:kworker/1:0-eve        kernel-other=0.01 softirq=0.00
+other:kswapd0                kernel-other=0.01 softirq=0.00
+
+## context per CPU (us per move)
+cpu0 user=7.45 syscall=5.63 softirq=4.29 kernel-other=0.39 idle-task+softirq=0.16 idle-task=0.13 hardirq=0.01
+cpu1 user=6.30 softirq=2.90 idle-task+softirq=1.44 syscall=1.28 kernel-other=

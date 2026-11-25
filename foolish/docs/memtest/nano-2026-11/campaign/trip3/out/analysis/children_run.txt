@@ -1,0 +1,28 @@
+cb_loop_run inclusive 17.470 us/move; callees: ws_frames 12.066, flush_dirty 2.704, conn_io 1.612, cb_poller_wait.part.0 0.537, conn_try_parse 0.325, drain_posts 0.146, (self) 0.033, finish 0.032
+ws_frames inclusive 12.069 us/move; callees: pump 8.509, flush_now 3.256, on_message 0.074, (self) 0.073, written 0.058, cb_ws_unmask 0.032, el0t_64_irq 0.030
+pump inclusive 8.509 us/move; callees: job_run_frame 7.878, job_settle 0.133, memcpy 0.108, cb_router_match 0.087, (self) 0.069, cb_now_ms 0.054, cb_server_inline_done 0.053, cb_server_inline_begin 0.045, el0t_64_irq 0.019, cb_server_inline_ok 0.014
+job_run_frame inclusive 7.879 us/move; callees: h_action 7.688, (self) 0.062, cb_strlcpy 0.033, memset 0.021, el0t_64_irq 0.015, cb_res_free 0.013, cb_res_init 0.012, sf_parse 0.010
+h_action inclusive 7.688 us/move; callees: cb_table_run 7.101, wrap400 0.176, cb_game_id_ok 0.159, cb_res_send 0.159, (self) 0.030, table_request_decode 0.019, el0t_64_irq 0.011
+cb_table_run inclusive 7.103 us/move; callees: cb_section_commit 5.059, cb_journal_game_acquire 1.101, table_act 0.508, lock_entry 0.084, cb_journal_game_release 0.054, section_seats 0.050, __pthread_mutex_unlock 0.050, (self) 0.047, cb_section_free 0.033, lock_entry_put 0.026, cb_section_new 0.015, run_act 0.014, strcmp 0.010, el0t_64_irq 0.010
+cb_section_commit inclusive 5.061 us/move; callees: cb_fanout_publish 1.623, j_game_commit 0.992, local_user_heard 0.803, table_commit_products_flags 0.388, section_cast 0.224, local_room_heard 0.170, table_resident_into 0.166, section_row 0.159, board_check_public 0.130, (self) 0.091, arena_note 0.041, cb_now_ms 0.037, cb_strncpy0 0.033, el0t_64_irq 0.028
+cb_fanout_publish inclusive 1.623 us/move; callees: rt_publish_cast 1.573, (self) 0.019, rt_publish_view 0.014
+rt_publish_view inclusive 0.014 us/move; callees: publish.part.0 0.013
+rt_publish_cast inclusive 1.573 us/move; callees: publish.part.0 1.507, (self) 0.032, frame_gid 0.020
+pub_deliver inclusive 0.989 us/move; callees: cb_ws_send 0.382, user_conns.constprop.0 0.381, (self) 0.125, room_find 0.036, el0t_64_irq 0.035, cb_server_wake 0.024
+j_game_commit inclusive 0.993 us/move; callees: loop_write 0.738, __private_cond_signal 0.091, __pthread_mutex_unlock 0.044, __pthread_mutex_lock 0.032, (self) 0.031, cb_strlcpy 0.022
+cb_journal_game_acquire inclusive 1.102 us/move; callees: take_game 0.589, ov_slot 0.337, __pthread_mutex_unlock 0.046, ov_touch 0.039, __pthread_mutex_timedlock 0.029, __pthread_mutex_lock 0.025, lru_in 0.012
+flush_now inclusive 5.771 us/move; callees: sendto 5.720, __aarch64_ldadd8_relax 0.025, (self) 0.012
+flush_dirty inclusive 2.704 us/move; callees: flush_now 2.514, written 0.149, (self) 0.031
+sendto inclusive 5.720 us/move; callees: sccp 5.678, (self) 0.029, el0t_64_irq 0.014
+conn_io inclusive 1.613 us/move; callees: recvfrom 1.474, (self) 0.089, el0t_64_irq 0.033, cb_buf_append 0.010
+recvfrom inclusive 1.474 us/move; callees: sccp 1.457, (self) 0.011
+cb_server_inline_begin inclusive 0.045 us/move; callees: cb_mono_us 0.041
+cb_server_inline_done inclusive 0.053 us/move; callees: cb_mono_us 0.044
+cb_thread_cpu_us inclusive 0.005 us/move; callees: 
+clock_gettime inclusive 0.000 us/move; callees: 
+__clock_gettime inclusive 0.155 us/move; callees: [unknown] 0.140, (self) 0.013
+cb_poller_wait.part.0 inclusive 0.537 us/move; callees: epoll_pwait 0.532
+table_commit_products_flags inclusive 0.398 us/move; callees: (self) 0.086, roster_trailer_write_validated 0.080, evwire_walk 0.079, log_record_put 0.032, bot_drive_eligible_mask 0.026, beat_clock.constprop.0 0.024, el0t_64_irq 0.022, game_shown_good_mask 0.015, state_blob_put_full_at 0.010
+table_act inclusive 0.510 us/move; callees: awire_apply 0.290, roster_seat_of 0.054, (self) 0.041, game_state_seed 0.029, awire_encode 0.027, awire_decode 0.019, game_done 0.017, scope_open 0.014, el0t_64_irq 0.010
+conn_try_parse inclusive 0.325 us/move; callees: cb_handle 0.125, cb_http_parse 0.097, cb_pool_submit 0.044, cb_loop_set 0.037
+drain_posts inclusive 0.146 us/move; callees: finish 0.118

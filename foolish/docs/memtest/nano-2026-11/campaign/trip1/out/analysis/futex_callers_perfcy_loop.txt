@@ -1,0 +1,13 @@
+perfcy loop futex on-CPU total 0.175 us/move
+0.065  wake: __private_cond_signal <- j_game_commit <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unknown]
+0.032  wait: sccp <- __timedwait_cp <- __timedwait <- __pthread_mutex_timedlock <- cb_journal_game_acquire <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- lib
+0.021  wake: __private_cond_signal <- cb_pool_submit <- conn_try_parse <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unknown]
+0.014  wake: __private_cond_signal <- write_batch <- loop_write <- j_game_commit <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_sta
+0.007  wait: sccp <- __timedwait_cp <- __timedwait <- __pthread_mutex_timedlock <- cb_journal_game_release <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- lib
+0.006  wait: sccp <- __timedwait_cp <- __timedwait <- __pthread_mutex_timedlock <- write_batch <- loop_write <- j_game_commit <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames 
+0.004  wake: __pthread_mutex_unlock <- cb_journal_game_acquire <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unknown]
+0.003  wake: __private_cond_signal <- cb_pool_submit <- local_job_start <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_start_main_s
+0.003  wake: __private_cond_signal <- loop_drain <- drain_posts <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unknown]
+0.002  wake: __pthread_mutex_unlock <- j_game_commit <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unknown]
+0.002  wait: sccp <- __timedwait_cp <- __timedwait <- __pthread_mutex_timedlock <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_main <- libc_start_main_stage2 <- [unk
+0.002  wait: sccp <- __timedwait_cp <- __timedwait <- __pthread_mutex_timedlock <- j_game_commit <- cb_section_commit <- cb_table_run <- h_action <- job_run_frame <- pump <- ws_frames <- cb_loop_run <- cb_process_

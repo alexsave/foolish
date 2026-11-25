@@ -1,0 +1,28 @@
+cb_loop_run inclusive 18.626 us/move; callees: ws_frames 13.023, flush_dirty 2.872, conn_io 1.605, cb_poller_wait.part.0 0.557, conn_try_parse 0.321, drain_posts 0.157, (self) 0.041, finish 0.019, el0t_64_irq 0.013
+ws_frames inclusive 13.024 us/move; callees: pump 9.596, flush_now 3.087, (self) 0.089, on_message 0.082, written 0.049, el0t_64_irq 0.038, cb_ws_unmask 0.035, cb_ws_frame_parse 0.012, cb_buf_consume 0.010
+pump inclusive 9.596 us/move; callees: job_run_frame 8.020, cb_server_inline_done 0.533, cb_server_inline_begin 0.478, memcpy 0.134, job_settle 0.120, cb_router_match 0.089, (self) 0.067, cb_now_ms 0.057, el0t_64_irq 0.017, cb_server_inline_ok 0.014, h_action 0.011, room_del 0.011
+job_run_frame inclusive 8.023 us/move; callees: h_action 7.882, (self) 0.050, cb_strlcpy 0.032, memset 0.019
+h_action inclusive 7.893 us/move; callees: cb_table_run 7.391, cb_game_id_ok 0.150, wrap400 0.133, cb_res_send 0.116, (self) 0.037, table_request_decode 0.020
+cb_table_run inclusive 7.393 us/move; callees: cb_section_commit 5.428, cb_journal_game_acquire 1.009, table_act 0.474, lock_entry 0.083, strcmp 0.072, cb_journal_game_release 0.049, __pthread_mutex_unlock 0.047, cb_section_free 0.045, (self) 0.035, section_seats 0.032, cb_journal_of 0.016, cb_section_new 0.015, lock_entry_put 0.014, run_act 0.014
+cb_section_commit inclusive 5.431 us/move; callees: cb_fanout_publish 2.627, j_game_commit 0.965, table_commit_products_flags 0.592, section_cast 0.231, table_resident_into 0.165, section_row 0.165, local_room_heard 0.154, board_check_public 0.121, (self) 0.095, cb_now_ms 0.052, arena_note 0.042, el0t_64_irq 0.035, cb_strncpy0 0.027, local_job_start 0.024
+cb_fanout_publish inclusive 2.627 us/move; callees: rt_publish_view 1.400, rt_publish_cast 1.081, cb_strlcpy 0.082, (self) 0.037
+rt_publish_view inclusive 1.400 us/move; callees: publish.part.0 1.308, frame_gid 0.035, (self) 0.024, memset 0.023
+rt_publish_cast inclusive 1.081 us/move; callees: publish.part.0 0.949, memset 0.050, (self) 0.035, frame_gid 0.030
+pub_deliver inclusive 1.552 us/move; callees: (self) 0.497, cb_ws_send 0.382, strcmp 0.342, el0t_64_irq 0.155, __aarch64_ldadd8_relax 0.051, cb_strlcpy 0.034, room_find 0.031, cb_server_wake 0.024, strlen 0.021
+j_game_commit inclusive 0.965 us/move; callees: loop_write 0.739, __private_cond_signal 0.076, __pthread_mutex_lock 0.039, __pthread_mutex_unlock 0.031, (self) 0.027, cb_strlcpy 0.026
+cb_journal_game_acquire inclusive 1.009 us/move; callees: take_game 0.562, ov_slot 0.316, __pthread_mutex_timedlock 0.051, __pthread_mutex_unlock 0.039, __pthread_mutex_lock 0.025, (self) 0.011
+flush_now inclusive 5.762 us/move; callees: sendto 5.695, (self) 0.020, cb_buf_consume 0.017, __aarch64_ldadd8_relax 0.016
+flush_dirty inclusive 2.872 us/move; callees: flush_now 2.674, written 0.155, (self) 0.027, el0t_64_irq 0.015
+sendto inclusive 5.696 us/move; callees: sccp 5.666, (self) 0.026
+conn_io inclusive 1.605 us/move; callees: recvfrom 1.465, (self) 0.099, el0t_64_irq 0.019, cb_buf_append 0.011
+recvfrom inclusive 1.465 us/move; callees: sccp 1.454
+cb_server_inline_begin inclusive 0.481 us/move; callees: cb_thread_cpu_us 0.415, cb_mono_us 0.047, (self) 0.014
+cb_server_inline_done inclusive 0.540 us/move; callees: cb_thread_cpu_us 0.470, cb_mono_us 0.047, (self) 0.012
+cb_thread_cpu_us inclusive 0.885 us/move; callees: __clock_gettime 0.860, (self) 0.014
+clock_gettime inclusive 0.000 us/move; callees: 
+__clock_gettime inclusive 1.041 us/move; callees: [unknown] 1.016, (self) 0.021
+cb_poller_wait.part.0 inclusive 0.557 us/move; callees: epoll_pwait 0.549
+table_commit_products_flags inclusive 0.604 us/move; callees: envelope_put 0.254, roster_trailer_write_validated 0.076, evwire_walk 0.063, (self) 0.054, beat_clock.constprop.0 0.046, log_record_put 0.031, game_shown_good_mask 0.019, el0t_64_irq 0.016, bot_drive_eligible_mask 0.015, state_blob_put_full_at 0.011
+table_act inclusive 0.474 us/move; callees: awire_apply 0.264, roster_seat_of 0.053, (self) 0.033, awire_decode 0.029, game_state_seed 0.022, awire_encode 0.022, game_done 0.022, scope_open 0.017
+conn_try_parse inclusive 0.321 us/move; callees: cb_handle 0.124, cb_http_parse 0.094, cb_loop_set 0.038, cb_pool_submit 0.036
+drain_posts inclusive 0.157 us/move; callees: finish 0.107, pq_deliver 0.013, job_done 0.012, read 0.011

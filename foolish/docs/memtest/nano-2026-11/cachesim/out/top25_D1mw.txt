@@ -1,0 +1,27 @@
+top 25 functions by play-only D1mw; moves=57994; per-move column = total/moves
+           total   per_move  share%  function
+       1,362,300      23.49   38.90  __GI_memset
+       1,075,608      18.55   30.71  __GI_memcpy
+         136,214       2.35    3.89  ???
+          40,538       0.70    1.16  table_commit_products_flags
+          39,013       0.67    1.11  queue_frame
+          36,791       0.63    1.05  cb_loop_run
+          34,595       0.60    0.99  moves_for_flush
+          34,576       0.60    0.99  ov_apply
+          34,264       0.59    0.98  cb_table_run
+          32,604       0.56    0.93  table_resident_into
+          30,354       0.52    0.87  game_rng_set
+          28,864       0.50    0.82  cb_journal_batch_encode
+          28,020       0.48    0.80  cb_buf_reset
+          23,370       0.40    0.67  __vfprintf_internal
+          20,679       0.36    0.59  state_put_rules
+          20,403       0.35    0.58  _int_malloc
+          19,271       0.33    0.55  game_rep_attach
+          19,241       0.33    0.55  sf_parse
+          14,284       0.25    0.41  cb_journal_game_acquire
+          13,516       0.23    0.39  conn_io
+          11,517       0.20    0.33  cb_section_commit
+          10,641       0.18    0.30  strcspn
+          10,095       0.17    0.29  evwire_walk
+           9,789       0.17    0.28  coder_code.part.0
+           9,476       0.16    0.27  cb_res_init

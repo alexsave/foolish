@@ -1,0 +1,27 @@
+top 25 functions by play-only Ir; moves=57994; per-move column = total/moves
+           total   per_move  share%  function
+     632,052,992   10898.59   22.85  ???
+     184,606,746    3183.20    6.68  sorted_known.constprop.0
+     169,085,596    2915.57    6.11  __GI_memcpy
+      92,177,363    1589.43    3.33  __GI_memset
+      88,790,780    1531.03    3.21  run_replay_v6.part.0.constprop.0
+      75,034,315    1293.83    2.71  __strlen_asimd
+      59,237,449    1021.44    2.14  pub_deliver
+      53,701,819     925.99    1.94  state_put_rules
+      49,294,980     850.00    1.78  replay_extras_encode_parts
+      41,757,933     720.04    1.51  __pthread_mutex_unlock_usercnt
+      40,333,635     695.48    1.46  pthread_mutex_lock@@GLIBC_2.17
+      34,698,240     598.31    1.25  strcmp
+      32,950,104     568.16    1.19  cb_strlcpy
+      32,468,354     559.86    1.17  replay_extras_decode
+      28,129,441     485.04    1.02  cb_section_commit
+      26,599,356     458.66    0.96  cb_buf_append
+      25,155,465     433.76    0.91  unpack_v2
+      24,353,459     419.93    0.88  move_list_next
+      22,067,123     380.51    0.80  local_deliver
+      21,133,489     364.41    0.76  cb_http_parse
+      19,971,520     344.37    0.72  coder_code.part.0
+      19,368,777     333.98    0.70  nw_frame_encode
+      18,108,476     312.25    0.65  board_check_fold
+      17,632,792     304.05    0.64  strcspn
+      17,376,066     299.62    0.63  cb_buf_reserve.part.0

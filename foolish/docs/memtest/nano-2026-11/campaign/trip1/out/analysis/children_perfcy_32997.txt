@@ -1,0 +1,9 @@
+flusher inclusive 8.401 us/move; callees: flush_pass 8.012, (self) 0.297, __pthread_cond_timedwait 0.042, el0t_64_irq 0.036, __pthread_mutex_unlock 0.013
+flush_txn inclusive 7.996 us/move; callees: cb_rows_sql_flush 3.083, __qsort_r 2.410, (self) 1.387, trim 0.395, el0t_64_irq 0.349, __libc_malloc_impl 0.057, __libc_free 0.047, __pthread_mutex_unlock 0.042, ov_flushed 0.033, moves_for_flush 0.031, el0t_64_sync 0.029, snapshot_free 0.028, sift 0.028, trinkle 0.015
+cb_rows_sql_flush inclusive 3.083 us/move; callees: cb_sql_write 3.083
+cb_sql_write inclusive 3.083 us/move; callees: flush_step 2.670, sqlite3_step 0.388, __pthread_mutex_unlock 0.011
+cb_sql_run inclusive 2.367 us/move; callees: sqlite3_step 2.322, sqlite3_reset 0.043
+flush_step inclusive 2.670 us/move; callees: cb_sql_run 1.753, rate_rows 0.585, list_write.part.0 0.222, seats_to 0.048, read_seats 0.040
+__qsort_r inclusive 2.410 us/move; callees: sift 1.701, trinkle 0.656, (self) 0.046
+rate_rows inclusive 0.585 us/move; callees: cb_sql_run 0.571
+sqlite3_step inclusive 2.744 us/move; callees: sqlite3VdbeExec 2.683, __pthread_mutex_unlock 0.024, __pthread_mutex_timedlock 0.016

@@ -1,0 +1,4 @@
+launch_start_utc=2026-11-14T18:29:04Z
+run_instances_srv=i-REDACTED10 utc=2026-11-14T18:29:38Z
+run_instances_load=i-REDACTED11 utc=2026-11-14T18:29:40Z
+terminated_by_utc=2026-11-14T19:00:15Z epoch=1794682815

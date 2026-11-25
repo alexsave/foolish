@@ -1,0 +1,31 @@
+== targets from state.env: SRV=i-REDACTED07 LOAD=i-REDACTED08 SG=sg-REDACTED09 ROLE=cbase-mem-test-role-9ef4ad90 BUCKET=cbase-mem-test-9ef4ad90
+terminate i-REDACTED07 (purpose=cbase-mem-test)
+terminate i-REDACTED08 (purpose=cbase-mem-test)
+i-REDACTED08	shutting-down
+i-REDACTED07	shutting-down
+i-REDACTED08	terminated
+i-REDACTED07	terminated
+empty and delete bucket cbase-mem-test-9ef4ad90 (purpose=cbase-mem-test)
+bucket cbase-mem-test-9ef4ad90 deleted
+delete SG sg-REDACTED09 (purpose=cbase-mem-test)
+{
+    "Return": true,
+    "GroupId": "sg-REDACTED09"
+}
+sg sg-REDACTED09 deleted
+delete role and profile cbase-mem-test-role-9ef4ad90 (purpose=cbase-mem-test)
+role cbase-mem-test-role-9ef4ad90 deleted
+== leftovers (purpose=cbase-mem-test)
+       0
+       0
+       0
+running
+== trip2 leftover proof 2026-11-14T16:22:59Z
+instances purpose=cbase-mem-test pending/running/stopping/stopped:        0
+trip instances state: i-REDACTED08 terminated i-REDACTED07 terminated 
+volumes purpose=cbase-mem-test:        0
+security groups purpose=cbase-mem-test:        0
+IAM roles cbase-mem-test-*:        0
+instance profiles cbase-mem-test-*:        0
+S3 buckets cbase-mem-test-*:        0
+production i-REDACTED01: running

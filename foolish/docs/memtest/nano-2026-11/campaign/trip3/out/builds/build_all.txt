@@ -1,0 +1,17 @@
+9ca3b791ebcfc586b2696bff031f8b7ac1edd9c4de8b5840f1e93677033bebbf  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M1
+110879ce25e3d74ddca71401bd6268970eb05c4778ccae896b14ecf3b8e58909  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/unstripped/cbase_M1
+-rwxr-xr-x@ 1 alex  staff  8431976 Nov 14 13:25 /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M1
+done M1 2026-11-14T18:25:54Z
+53e1cd472fa1d9945c8fd876634dea7cd5203ebf186240891123792ff9ed422b  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M2
+78a5a0a369d5adef24064cd529615c786a35a9b0dda58fd8b011587553b7895b  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/unstripped/cbase_M2
+-rwxr-xr-x@ 1 alex  staff  8431976 Nov 14 13:26 /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M2
+done M2 2026-11-14T18:26:40Z
+90af1e0cd88e721217699c34a937eb66116258b39404a05ae862b38f23cc98ff  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M3
+ea08a25218299207e2eecc4bda13b5db5956a0864149c8f9aa021d04ffc901d3  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/unstripped/cbase_M3
+-rwxr-xr-x@ 1 alex  staff  8431976 Nov 14 13:27 /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M3
+done M3 2026-11-14T18:27:26Z
+e3844e1e1f1b4ad46c0384a0caafbb59c4e907667dcab42f40083bb28df1ec79  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M4
+f3f7fe866fe6cd93f8631630ba5ac510a2e6cebabe2a602ec74cf634be3550ed  /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/unstripped/cbase_M4
+-rwxr-xr-x@ 1 alex  staff  8431976 Nov 14 13:28 /Users/alex/Dev/foolish-bench-results/campaign/trip3/bin/cbase_M4
+done M4 2026-11-14T18:28:14Z
+BUILDS DONE 2026-11-14T18:28:16Z

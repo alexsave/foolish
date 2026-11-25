@@ -1,0 +1,32 @@
+[14:27:12] proc perfclk
+Success	dso ([kernel.kallsyms]) share=0.6243 unknown_within=0.0000
+dso (/opt/mt/cbase_D) share=0.3573 unknown_within=0.0000
+dso ([ena]) share=0.0088 unknown_within=0.0000
+dso (/usr/bin/bash) share=0.0041 unknown_within=0.7002
+dso (/usr/lib64/libc.so.6) share=0.0027 unknown_within=0.0000
+dso ([vdso]) share=0.0016 unknown_within=1.0000
+total 37124
+-rw-r--r--. 1 root root      744 Nov 14 14:27 buildids_perfclk.txt
+-rw-r--r--. 1 root root  5724555 Nov 14 14:27 cc_perfclk.txt.gz
+-rw-r--r--. 1 root root  1843664 Nov 14 14:27 flat_perfclk.txt.gz
+-rw-r--r--. 1 root root     3178 Nov 14 14:27 header_perfclk.txt
+-rw-r--r--. 1 root root  5583103 Nov 14 14:21 kallsyms_perfclk.txt
+-rw-r--r--. 1 root root      858 Nov 14 14:21 modules_perfclk.txt
+-rw-r--r--. 1 root root 24673208 Nov 14 14:21 perf_perfclk.data
+-rw-r--r--. 1 root root   119146 Nov 14 14:27 rep_children_perfclk.txt.gz
+-rw-r--r--. 1 root root    37808 Nov 14 14:27 rep_self_perfclk.txt.gz
+-rw-r--r--. 1 root root      328 Nov 14 14:27 resolve_perfclk.txt
+-rw-r--r--. 1 root root        0 Nov 14 14:27 script_cc_perfclk.err
+-rw-r--r--. 1 root root        0 Nov 14 14:27 script_flat_perfclk.err
+pushed proc perfclk
+	
+[14:27:45] push
+Success	pushed
+	
+Success	26
+159M	/var/tmp/mtpush
+pushed
+	
+[14:28:35] sync
+247M	/Users/alex/Dev/foolish-bench-results/campaign/trip1/out/raw
+     194

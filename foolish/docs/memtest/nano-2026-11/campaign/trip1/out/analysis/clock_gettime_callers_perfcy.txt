@@ -1,0 +1,9 @@
+# loop thread samples under __clock_gettime (perfcy play window): 1.041 us/move; callers:
+0.449  __clock_gettime <- cb_thread_cpu_us <- cb_server_inline_done <- pump
+0.403  __clock_gettime <- cb_thread_cpu_us <- cb_server_inline_begin <- pump
+0.050  __clock_gettime <- cb_now_ms <- pump <- ws_frames
+0.041  __clock_gettime <- cb_now_ms <- cb_section_commit <- cb_table_run
+0.040  __clock_gettime <- cb_mono_us <- cb_server_inline_begin <- pump
+0.036  __clock_gettime <- cb_mono_us <- cb_server_inline_done <- pump
+0.006  __clock_gettime <- cb_thread_cpu_us <- cb_server_inline_done <- conn_try_parse
+0.004  __clock_gettime <- cb_mono_ms <- cb_loop_run <- cb_process_main

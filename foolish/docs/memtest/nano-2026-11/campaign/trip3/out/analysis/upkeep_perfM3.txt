@@ -1,0 +1,39 @@
+# upkeep perfM3: play window server mono [1544.522,1565.522], moves 1038864, pid 48241; base interval [-0x3, 0x0] -> base 0x0
+# symbolizer outer frame differs from perf symbol on 3.53% of cbase_M3 cycles (base check)
+list upkeep, all threads: 0.0509 us/move (1 run, 132284461 cycles)
+loop                     thread  17.473 us/move  upkeep 0.0447 us/move  share 0.256%
+job-0:48246              thread   4.322 us/move  upkeep 0.0000 us/move  share 0.000%
+cbase_M3:48248           thread   3.675 us/move  upkeep 0.0000 us/move  share 0.000%
+req-0:48245              thread   1.991 us/move  upkeep 0.0062 us/move  share 0.312%
+cbase_M3:48247           thread   0.332 us/move  upkeep 0.0000 us/move  share 0.000%
+-- loop by function
+   0.0214  lru_out (in ov_touch)
+   0.0120  ov_touch (in ov_touch)
+   0.0095  lru_in (in lru_in)
+   0.0009  rating_touch (in rating_touch)
+   0.0009  rating_lru_in (in rating_lru_in)
+-- loop by source line
+   0.0129  journal.c:464:17 lru_out <- ov_touch
+   0.0112  journal.c:482:8 ov_touch <- ov_touch
+   0.0077  journal.c:462:47 lru_out <- ov_touch
+   0.0043  journal.c:470:14 lru_in <- lru_in
+   0.0026  journal.c:470:34 lru_in <- lru_in
+   0.0009  journal.c:471:17 lru_in <- lru_in
+   0.0009  journal.c:472:35 lru_in <- lru_in
+   0.0009  journal.c:540:8 rating_touch <- rating_touch
+   0.0009  journal.c:472:17 lru_in <- lru_in
+   0.0009  journal.c:529:14 rating_lru_in <- rating_lru_in
+   0.0009  journal.c:462:44 lru_out <- ov_touch
+   0.0008  journal.c:481:19 ov_touch <- ov_touch
+-- req-0:48245 by function
+   0.0028  ov_touch (in ov_touch)
+   0.0018  lru_in (in lru_in)
+   0.0009  lru_out (in ov_touch)
+   0.0008  rating_lru_out (in rating_touch)
+-- req-0:48245 by source line
+   0.0021  journal.c:481:19 ov_touch <- ov_touch
+   0.0018  journal.c:470:14 lru_in <- lru_in
+   0.0009  journal.c:462:47 lru_out <- ov_touch
+   0.0008  journal.c:522:47 rating_lru_out <- rating_touch
+   0.0007  journal.c:482:8 ov_touch <- ov_touch
+resolution: one sample = 2502503 cycles = 0.00096 us/move over 1038864 moves

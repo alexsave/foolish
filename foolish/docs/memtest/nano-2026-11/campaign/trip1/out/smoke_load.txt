@@ -1,0 +1,30 @@
+Success	moves=522811 window_s=15.01 moves_per_s=34838.0 move_p50_ms=0.23 move_p99_ms=0.70 err_files=0
+play moves=433207 window_s=21.00 moves_per_s=20628.9 move_p50_ms=0.24 move_p99_ms=0.75 epoch0=1794665772.023559 epoch1=1794665793.023559 mono0=251.620195 mono1=272.620195
+1794665770.007189050
+1794665787.745408028
+epoch 1794665770.023559 mono 249.620195
+epoch 1794665787.761638 mono 267.358275
+full loadcpu all busy_pct_of_all_vcpus=20.5
+full loadcpu cpu0 busy_pct=19.5 user=9.7 nice=0.0 system=6.9 irq=0.0 softirq=2.9 steal=0.0 idle=80.5 iowait=0.0
+full loadcpu cpu1 busy_pct=19.1 user=9.7 nice=0.0 system=6.9 irq=0.0 softirq=2.5 steal=0.0 idle=80.9 iowait=0.0
+full loadcpu cpu2 busy_pct=20.0 user=8.9 nice=0.0 system=6.0 irq=0.0 softirq=5.2 steal=0.0 idle=80.0 iowait=0.0
+full loadcpu cpu3 busy_pct=19.6 user=8.9 nice=0.0 system=6.8 irq=0.0 softirq=4.0 steal=0.0 idle=80.4 iowait=0.0
+full loadcpu cpu4 busy_pct=23.6 user=8.1 nice=0.0 system=6.6 irq=0.0 softirq=8.8 steal=0.0 idle=76.4 iowait=0.0
+full loadcpu cpu5 busy_pct=20.4 user=9.9 nice=0.0 system=7.0 irq=0.0 softirq=3.6 steal=0.0 idle=79.6 iowait=0.0
+full loadcpu cpu6 busy_pct=21.0 user=9.0 nice=0.0 system=6.6 irq=0.0 softirq=5.3 steal=0.0 idle=79.0 iowait=0.0
+full loadcpu cpu7 busy_pct=20.6 user=8.6 nice=0.0 system=6.6 irq=0.0 softirq=5.4 steal=0.0 idle=79.4 iowait=0.0
+full loadcpu procs_running_mean=2.55 max=11 samples=88
+play loadcpu all busy_pct_of_all_vcpus=18.9
+play loadcpu cpu0 busy_pct=18.2 user=9.1 nice=0.0 system=6.6 irq=0.0 softirq=2.5 steal=0.0 idle=81.8 iowait=0.0
+play loadcpu cpu1 busy_pct=17.7 user=8.7 nice=0.0 system=6.6 irq=0.0 softirq=2.4 steal=0.0 idle=82.3 iowait=0.0
+play loadcpu cpu2 busy_pct=18.5 user=7.9 nice=0.0 system=5.8 irq=0.0 softirq=4.8 steal=0.0 idle=81.5 iowait=0.0
+play loadcpu cpu3 busy_pct=17.6 user=8.1 nice=0.0 system=5.8 irq=0.0 softirq=3.7 steal=0.0 idle=82.4 iowait=0.0
+play loadcpu cpu4 busy_pct=21.5 user=7.8 nice=0.0 system=6.1 irq=0.0 softirq=7.6 steal=0.0 idle=78.5 iowait=0.0
+play loadcpu cpu5 busy_pct=18.4 user=8.6 nice=0.0 system=6.5 irq=0.0 softirq=3.3 steal=0.0 idle=81.6 iowait=0.0
+play loadcpu cpu6 busy_pct=19.5 user=8.2 nice=0.0 system=6.4 irq=0.0 softirq=4.9 steal=0.0 idle=80.5 iowait=0.0
+play loadcpu cpu7 busy_pct=19.2 user=8.1 nice=0.0 system=6.4 irq=0.0 softirq=4.7 steal=0.0 idle=80.8 iowait=0.0
+play loadcpu procs_running_mean=2.49 max=11 samples=80
+      1 Bsmokex11: deadline waiting for game 272
+      1 Asmokex5: deadline waiting for game 271
+      1 Asmokex4: deadline waiting for game 271
+	

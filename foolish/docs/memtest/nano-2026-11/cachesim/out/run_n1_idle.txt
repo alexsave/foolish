@@ -1,0 +1,5 @@
+1
+server ip 172.18.0.2
+load done: 21:19:49
+server exit: 0 after 2s
+-rw-------  1 alex  staff  187918 Nov 11 16:19 /Users/alex/Dev/foolish-bench-results/cachesim/out/cg_n1_idle.out

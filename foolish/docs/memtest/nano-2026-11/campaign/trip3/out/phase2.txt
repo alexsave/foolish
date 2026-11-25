@@ -1,0 +1,142 @@
+[18:34:44 +306s] run r1D arm=D build=D irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:35:55 +377s] run r1D moves=918882 play_moves=764981 play=[1794681324.574245,1794681345.574245]
+[18:35:55 +377s] run r1M1 arm=M1 build=M1 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:37:05 +447s] run r1M1 moves=1203253 play_moves=1009385 play=[1794681392.375266,1794681413.375266]
+[18:37:05 +447s] run r1M2 arm=M2 build=M2 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:38:15 +517s] run r1M2 moves=1277904 play_moves=1069900 play=[1794681462.229099,1794681483.229099]
+[18:38:15 +517s] run r1M3 arm=M3 build=M3 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:39:25 +587s] run r1M3 moves=1257232 play_moves=1055297 play=[1794681532.226820,1794681553.226820]
+[18:39:25 +587s] run r1M4 arm=M4 build=M4 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:40:35 +657s] run r1M4 moves=1277983 play_moves=1072826 play=[1794681602.216691,1794681623.216691]
+[18:40:35 +657s] run r2D arm=D build=D irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:41:43 +725s] run r2D moves=928739 play_moves=777560 play=[1794681672.649300,1794681693.649300]
+[18:41:43 +725s] run r2M1 arm=M1 build=M1 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:42:53 +795s] run r2M1 moves=1180805 play_moves=987953 play=[1794681740.827852,1794681761.827852]
+[18:42:53 +795s] run r2M2 arm=M2 build=M2 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:44:04 +866s] run r2M2 moves=1265570 play_moves=1060798 play=[1794681810.795299,1794681831.795299]
+[18:44:04 +866s] run r2M3 arm=M3 build=M3 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:45:16 +938s] run r2M3 moves=1249545 play_moves=1048115 play=[1794681882.101950,1794681903.101950]
+[18:45:16 +938s] run r2M4 arm=M4 build=M4 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:46:26 +1008s] run r2M4 moves=1314028 play_moves=1100261 play=[1794681953.171501,1794681974.171501]
+[18:46:26 +1008s] run r3D arm=D build=D irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:47:36 +1078s] run r3D moves=954792 play_moves=790975 play=[1794682023.895610,1794682044.895610]
+[18:47:36 +1078s] run r3M1 arm=M1 build=M1 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:48:48 +1150s] run r3M1 moves=1269002 play_moves=1063556 play=[1794682094.311271,1794682115.311271]
+[18:48:48 +1150s] run r3M2 arm=M2 build=M2 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:50:00 +1222s] run r3M2 moves=1255543 play_moves=1047710 play=[1794682165.811993,1794682186.811993]
+[18:50:00 +1222s] run r3M3 arm=M3 build=M3 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:51:11 +1293s] run r3M3 moves=1304069 play_moves=1097130 play=[1794682238.140933,1794682259.140933]
+[18:51:11 +1293s] run r3M4 arm=M4 build=M4 irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:52:21 +1363s] run r3M4 moves=1265880 play_moves=1055582 play=[1794682308.951641,1794682329.951641]
+[18:52:21 +1363s] run bpfM1 arm=bpfM1 build=M1 irq=split prof=bpf knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:53:33 +1435s] run bpfM1 moves=779730 play_moves=630910 play=[1794682380.824291,1794682401.824291]
+[18:53:33 +1435s] run bpfM2 arm=bpfM2 build=M2 irq=split prof=bpf knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:54:45 +1507s] run bpfM2 moves=983996 play_moves=816499 play=[1794682452.583216,1794682473.583216]
+[18:54:45 +1507s] run perfM3 arm=perfM3 build=M3 irq=split prof=cy knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:56:02 +1584s] run perfM3 moves=1238588 play_moves=1038864 play=[1794682527.902864,1794682548.902864]
+Success	== post perfM3
+[ perf record: Woken up 73 times to write data ]
+[ perf record: Captured and wrote 18.221 MB /var/tmp/mtperf/perf_perfM3.data (81527 samples) ]
+-rw-------. 1 root root 19123192 Nov 14 18:56 /var/tmp/mtperf/perf_perfM3.data
+pushed perf perfM3
+irq mode=show irqbalance=inactive procs=0 ens5-Tx-Rx-0(irq 56) aff=1 eff=1 ens5-Tx-Rx-1(irq 57) aff=0 eff=0 ena-mgmnt(irq 55) aff=1 eff=1
+IRQ_OK
+irqdelta ena-mgmnt cpu0=0 cpu1=78
+irqdelta ens5-Tx-Rx-0 cpu0=0 cpu1=432678
+irqdelta ens5-Tx-Rx-1 cpu0=418029 cpu1=0
+irqpct queue_on_cpu0_pct=49.1 queue_total=850707
+VmHWM:	   30124 kB
+== play window
+box busy_pct=83.16 (idle+iowait excluded; 2 vCPUs)
+cpu label=perfM3 window_s=21.000 proc_cpu_s=32.099 moves=1038864 cpu_us_per_move=30.90 cpu_busy_of_one_vcpu_pct=152.9
+thread tid=48241 comm=cbase_M3 last_cpu=0 cpu_s=20.013 cpu_us_per_move=19.26
+thread tid=48245 comm=req-0 last_cpu=1 cpu_s=2.577 cpu_us_per_move=2.48
+thread tid=48246 comm=job-0 last_cpu=1 cpu_s=4.805 cpu_us_per_move=4.63
+thread tid=48247 comm=cbase_M3 last_cpu=1 cpu_s=0.400 cpu_us_per_move=0.39
+thread tid=48248 comm=cbase_M3 last_cpu=1 cpu_s=4.297 cpu_us_per_move=4.14
+report2 label=perfM3 window_s=21.000 moves=1038864
+sched tid=48241 comm=cbase_M3 oncpu_s=20.015 oncpu_us_per_move=19.266 runq_wait_s=0.332 runq_wait_us_per_move=0.319 slices_per_move=0.0283 vol_cs_per_move=0.0248 invol_cs_per_move=0.0034
+sched tid=48245 comm=req-0 oncpu_s=2.572 oncpu_us_per_move=2.476 runq_wait_s=5.972 runq_wait_us_per_move=5.748 slices_per_move=0.0460 vol_cs_per_move=0.0428 invol_cs_per_move=0.0032
+sched tid=48246 comm=job-0 oncpu_s=4.808 oncpu_us_per_move=4.628 runq_wait_s=4.026 runq_wait_us_per_move=3.875 slices_per_move=0.0138 vol_cs_per_move=0.0064 invol_cs_per_move=0.0075
+sched tid=48247 comm=cbase_M3 oncpu_s=0.399 oncpu_us_per_move=0.384 runq_wait_s=0.429 runq_wait_us_per_move=0.413 slices_per_move=0.0018 vol_cs_per_move=0.0015 invol_cs_per_move=0.0003
+sched tid=48248 comm=cbase_M3 oncpu_s=4.302 oncpu_us_per_move=4.141 runq_wait_s=3.365 runq_wait_us_per_move=3.239 slices_per_move=0.0194 vol_cs_per_move=0.0121 invol_cs_per_move=0.0072
+sched total oncpu_us_per_move=30.894 runq_wait_us_per_move=13.595
+srvcpu cpu0 busy_pct=97.7 user=42.6 nice=0.0 system=35.7 irq=0.0 softirq=19.4 steal=0.0 idle=2.3 iowait=0.0
+srvcpu cpu1 busy_pct=69.6 user=33.3 nice=0.0 system=10.1 irq=0.0 softirq=26.2 steal=0.0 idle=27.8 iowait=2.5
+srvcpu procs_running_mean=3.31 max=6 samples=102
+VmHWM:	   30124 kB
+VmRSS:	   21532 kB
+rssmax 1794682553.679558  30124 17472
+2026-11-14T18:56:07.357000+00:00 INFO  net: inline dispatch: 1248655 requests on the loop thread (3241 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T18:56:07.437000+00:00 INFO  journal: 1220959 record(s) in 1218079 batch(es), 1188476 write(s), 42724053 byte(s); 7949 flush(es) of 1220959 move(s); 196395 WAL frame(s) before the close's flush of 12010 move(s)
+warn_lines 3
+               total        used        free      shared  buff/cache   available
+Mem:             412         178          92           0         141         223
+== end post perfM3
+	
+PHASE2_RUNS_DONE
+[18:56:09 +1591s] proc perfM3 (load box) and server push in parallel
+Success	e46155ba4134013186d7f028522d1e4efa86b5e9 /opt/mt/cbase_M3
+dso (/opt/mt/cbase_M3) share=0.6698 unknown_within=0.0000
+dso ([kernel.kallsyms]) share=0.2890 unknown_within=0.0000
+dso ([ena]) share=0.0230 unknown_within=0.0000
+dso (/usr/bin/bash) share=0.0081 unknown_within=0.6438
+dso (/usr/lib64/libc.so.6) share=0.0053 unknown_within=0.0000
+dso ([vdso]) share=0.0023 unknown_within=1.0000
+total 32704
+-rw-r--r--. 1 root root     1069 Nov 14 18:56 buildids_perfM3.txt
+-rw-r--r--. 1 root root  6677047 Nov 14 18:56 cc_perfM3.txt.gz
+-rw-r--r--. 1 root root  1827158 Nov 14 18:56 flat_perfM3.txt.gz
+-rw-r--r--. 1 root root     3342 Nov 14 18:56 header_perfM3.txt
+-rw-r--r--. 1 root root  5583227 Nov 14 18:56 kallsyms_perfM3.txt
+-rw-r--r--. 1 root root      858 Nov 14 18:56 modules_perfM3.txt
+-rw-r--r--. 1 root root 19123192 Nov 14 18:56 perf_perfM3.data
+-rw-r--r--. 1 root root   186102 Nov 14 18:56 rep_children_perfM3.txt.gz
+-rw-r--r--. 1 root root    58137 Nov 14 18:56 rep_self_perfM3.txt.gz
+-rw-r--r--. 1 root root      329 Nov 14 18:56 resolve_perfM3.txt
+-rw-r--r--. 1 root root        0 Nov 14 18:56 script_cc_perfM3.err
+-rw-r--r--. 1 root root        0 Nov 14 18:56 script_flat_perfM3.err
+pushed proc perfM3
+	
+[18:56:44 +1626s] proc done
+[18:56:45 +1627s] push
+Success	pushed
+	
+Success	62
+514M	/var/tmp/mtpush
+pushed
+	
+[18:59:11 +1773s] sync
+580M	/Users/alex/Dev/foolish-bench-results/campaign/trip3/out/raw
+     482
+== targets from state.env: SRV=i-REDACTED10 LOAD=i-REDACTED11 SG=sg-REDACTED12 ROLE=cbase-mem-test-role-1fd5f193 BUCKET=cbase-mem-test-1fd5f193
+terminate i-REDACTED10 (purpose=cbase-mem-test)
+terminate i-REDACTED11 (purpose=cbase-mem-test)
+i-REDACTED10	shutting-down
+i-REDACTED11	shutting-down
+i-REDACTED10	terminated
+i-REDACTED11	terminated
+empty and delete bucket cbase-mem-test-1fd5f193 (purpose=cbase-mem-test)
+bucket cbase-mem-test-1fd5f193 deleted
+delete SG sg-REDACTED12 (purpose=cbase-mem-test)
+{
+    "Return": true,
+    "GroupId": "sg-REDACTED12"
+}
+sg sg-REDACTED12 deleted
+delete role and profile cbase-mem-test-role-1fd5f193 (purpose=cbase-mem-test)
+role cbase-mem-test-role-1fd5f193 deleted
+== leftovers (purpose=cbase-mem-test)
+       0
+       0
+       0
+running
+== trip3 leftover proof 2026-11-14T19:00:15Z
+instances purpose=cbase-mem-test pending/running/stopping/stopped:        0
+trip instances state: i-REDACTED10 terminated i-REDACTED11 terminated 
+volumes purpose=cbase-mem-test:        0
+security groups purpose=cbase-mem-test:        0
+IAM roles cbase-mem-test-*:        0
+instance profiles cbase-mem-test-*:        0
+S3 buckets cbase-mem-test-*:        0
+production i-REDACTED01: running

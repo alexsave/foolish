@@ -1,0 +1,22 @@
+== targets from state.env: SRV=i-REDACTED13 LOAD=i-REDACTED14 SG=sg-REDACTED15 ROLE=cbase-mem-test-role-7ba8726f BUCKET=cbase-mem-test-7ba8726f
+terminate i-REDACTED13 (purpose=cbase-mem-test)
+terminate i-REDACTED14 (purpose=cbase-mem-test)
+i-REDACTED14	shutting-down
+i-REDACTED13	shutting-down
+i-REDACTED13	terminated
+i-REDACTED14	terminated
+empty and delete bucket cbase-mem-test-7ba8726f (purpose=cbase-mem-test)
+bucket cbase-mem-test-7ba8726f deleted
+delete SG sg-REDACTED15 (purpose=cbase-mem-test)
+{
+    "Return": true,
+    "GroupId": "sg-REDACTED15"
+}
+sg sg-REDACTED15 deleted
+delete role and profile cbase-mem-test-role-7ba8726f (purpose=cbase-mem-test)
+role cbase-mem-test-role-7ba8726f deleted
+== leftovers (purpose=cbase-mem-test)
+       0
+       0
+       0
+running

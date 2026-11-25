@@ -1,0 +1,152 @@
+[15:51:18 +156s] run r1A arm=A build=D irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:52:29 +227s] run r1A moves=951232 play_moves=790698 play=[1794671517.936165,1794671538.936165]
+[15:52:29 +227s] run r1B arm=B build=P1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:53:39 +297s] run r1B moves=1264621 play_moves=1059012 play=[1794671586.758063,1794671607.758063]
+[15:53:40 +298s] run r1C arm=C build=P3 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:54:50 +368s] run r1C moves=993474 play_moves=824156 play=[1794671657.100580,1794671678.100580]
+[15:54:50 +368s] run r1E arm=E build=ALL irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:56:01 +439s] run r1E moves=1265851 play_moves=1062364 play=[1794671728.417432,1794671749.417432]
+[15:56:01 +439s] run r1F arm=F build=D irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:57:13 +511s] run r1F moves=1248289 play_moves=1040914 play=[1794671799.337110,1794671820.337110]
+[15:57:13 +511s] run r1G arm=G build=ALL irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:58:24 +582s] run r1G moves=1495079 play_moves=1253165 play=[1794671870.691696,1794671891.691696]
+[15:58:24 +582s] run r1N arm=N build=N1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[15:59:34 +652s] run r1N moves=975230 play_moves=808952 play=[1794671943.651887,1794671964.651887]
+[15:59:34 +652s] run r2A arm=A build=D irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:00:45 +723s] run r2A moves=912555 play_moves=756731 play=[1794672013.271426,1794672034.271426]
+[16:00:45 +723s] run r2B arm=B build=P1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:01:55 +793s] run r2B moves=1275197 play_moves=1071069 play=[1794672082.804989,1794672103.804989]
+[16:01:55 +793s] run r2C arm=C build=P3 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:03:06 +864s] run r2C moves=976481 play_moves=810470 play=[1794672153.785822,1794672174.785822]
+[16:03:06 +864s] run r2E arm=E build=ALL irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:04:16 +934s] run r2E moves=1240156 play_moves=1037789 play=[1794672224.383138,1794672245.383138]
+[16:04:16 +934s] run r2F arm=F build=D irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:05:26 +1004s] run r2F moves=1143355 play_moves=945608 play=[1794672293.279581,1794672314.279581]
+[16:05:26 +1004s] run r2G arm=G build=ALL irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:06:38 +1076s] run r2G moves=1532838 play_moves=1283162 play=[1794672364.519925,1794672385.519925]
+[16:06:38 +1076s] run r2N arm=N build=N1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:07:51 +1149s] run r2N moves=981839 play_moves=815536 play=[1794672437.314058,1794672458.314058]
+[16:07:51 +1149s] run r3A arm=A build=D irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:09:00 +1218s] run r3A moves=950357 play_moves=788966 play=[1794672508.785929,1794672529.785929]
+[16:09:00 +1218s] run r3B arm=B build=P1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:10:12 +1290s] run r3B moves=1236860 play_moves=1037583 play=[1794672578.775240,1794672599.775240]
+[16:10:12 +1290s] run r3C arm=C build=P3 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:11:22 +1360s] run r3C moves=937835 play_moves=783613 play=[1794672650.521579,1794672671.521579]
+[16:11:22 +1360s] run r3E arm=E build=ALL irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:12:33 +1431s] run r3E moves=1215589 play_moves=1018498 play=[1794672720.489620,1794672741.489620]
+[16:12:33 +1431s] run r3F arm=F build=D irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:13:45 +1503s] run r3F moves=1202453 play_moves=993647 play=[1794672791.584140,1794672812.584140]
+[16:13:45 +1503s] run r3G arm=G build=ALL irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:14:57 +1575s] run r3G moves=1494593 play_moves=1254882 play=[1794672863.601486,1794672884.601486]
+[16:14:57 +1575s] run r3N arm=N build=N1 irq=split knob=auto IP=172.31.4.36 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[16:16:09 +1647s] run r3N moves=975573 play_moves=805654 play=[1794672934.752463,1794672955.752463]
+Success	== post r3N
+irq mode=show irqbalance=inactive procs=0 ens5-Tx-Rx-0(irq 56) aff=1 eff=1 ens5-Tx-Rx-1(irq 57) aff=0 eff=0 ena-mgmnt(irq 55) aff=1 eff=1
+IRQ_OK
+irqdelta ena-mgmnt cpu0=0 cpu1=70
+irqdelta ens5-Tx-Rx-0 cpu0=0 cpu1=374287
+irqdelta ens5-Tx-Rx-1 cpu0=367135 cpu1=0
+irqpct queue_on_cpu0_pct=49.5 queue_total=741422
+VmHWM:	   30812 kB
+== play window
+box busy_pct=75.90 (idle+iowait excluded; 2 vCPUs)
+cpu label=r3N window_s=21.000 proc_cpu_s=29.385 moves=805654 cpu_us_per_move=36.47 cpu_busy_of_one_vcpu_pct=139.9
+thread tid=21864 comm=cbase_N1 last_cpu=0 cpu_s=15.739 cpu_us_per_move=19.54
+thread tid=21866 comm=req-0 last_cpu=1 cpu_s=1.803 cpu_us_per_move=2.24
+thread tid=21867 comm=job-0 last_cpu=1 cpu_s=3.502 cpu_us_per_move=4.35
+thread tid=21870 comm=cbase_N1 last_cpu=1 cpu_s=0.263 cpu_us_per_move=0.33
+thread tid=21871 comm=cbase_N1 last_cpu=1 cpu_s=8.088 cpu_us_per_move=10.04
+report2 label=r3N window_s=21.000 moves=805654
+sched tid=21864 comm=cbase_N1 oncpu_s=15.732 oncpu_us_per_move=19.527 runq_wait_s=0.339 runq_wait_us_per_move=0.421 slices_per_move=0.0456 vol_cs_per_move=0.0422 invol_cs_per_move=0.0034
+sched tid=21866 comm=req-0 oncpu_s=1.813 oncpu_us_per_move=2.250 runq_wait_s=4.994 runq_wait_us_per_move=6.199 slices_per_move=0.0463 vol_cs_per_move=0.0454 invol_cs_per_move=0.0009
+sched tid=21867 comm=job-0 oncpu_s=3.500 oncpu_us_per_move=4.345 runq_wait_s=3.234 runq_wait_us_per_move=4.014 slices_per_move=0.0113 vol_cs_per_move=0.0072 invol_cs_per_move=0.0041
+sched tid=21870 comm=cbase_N1 oncpu_s=0.259 oncpu_us_per_move=0.322 runq_wait_s=0.274 runq_wait_us_per_move=0.341 slices_per_move=0.0016 vol_cs_per_move=0.0014 invol_cs_per_move=0.0002
+sched tid=21871 comm=cbase_N1 oncpu_s=8.081 oncpu_us_per_move=10.030 runq_wait_s=3.060 runq_wait_us_per_move=3.798 slices_per_move=0.0217 vol_cs_per_move=0.0094 invol_cs_per_move=0.0124
+sched total oncpu_us_per_move=36.474 runq_wait_us_per_move=14.773
+srvcpu cpu0 busy_pct=78.8 user=36.6 nice=0.0 system=27.8 irq=0.0 softirq=14.3 steal=0.0 idle=21.2 iowait=0.0
+srvcpu cpu1 busy_pct=73.1 user=46.3 nice=0.0 system=7.0 irq=0.0 softirq=19.8 steal=0.0 idle=25.5 iowait=1.4
+srvcpu procs_running_mean=3.45 max=6 samples=102
+VmHWM:	   30812 kB
+VmRSS:	   29932 kB
+rssmax 1794672950.292265 30620 30684 17272
+2026-11-14T16:16:10.370000+00:00 INFO  net: inline dispatch: 982592 requests on the loop thread (1603 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T16:16:10.401000+00:00 INFO  journal: 961465 record(s) in 959180 batch(es), 935701 write(s), 33333494 byte(s); 6259 flush(es) of 961465 move(s); 154995 WAL frame(s) before the close's flush of 12148 move(s)
+warn_lines 2
+               total        used        free      shared  buff/cache   available
+Mem:             412         151          85           0         175         250
+== end post r3N
+	
+[16:16:13 +1651s] run hum_split arm=hum_split build=D irq=split knob=auto IP=172.31.4.36 pairs=192 think=2000-4000 dur_ms=45000 window=[t_go+5,t_go+43]
+[16:17:40 +1738s] run hum_split moves=4179 play_moves=3755 play=[1794673015.606025,1794673053.606025]
+[16:17:40 +1738s] run hum_cpu1 arm=hum_cpu1 build=D irq=cpu1 knob=auto IP=172.31.4.36 pairs=192 think=2000-4000 dur_ms=45000 window=[t_go+5,t_go+43]
+[16:19:06 +1824s] run hum_cpu1 moves=4168 play_moves=3743 play=[1794673102.007029,1794673140.007029]
+Success	== post hum_cpu1
+irq mode=show irqbalance=inactive procs=0 ens5-Tx-Rx-0(irq 56) aff=1 eff=1 ens5-Tx-Rx-1(irq 57) aff=1 eff=1 ena-mgmnt(irq 55) aff=1 eff=1
+IRQ_OK
+irqdelta ena-mgmnt cpu0=0 cpu1=84
+irqdelta ens5-Tx-Rx-0 cpu0=0 cpu1=15691
+irqdelta ens5-Tx-Rx-1 cpu0=0 cpu1=13765
+irqpct queue_on_cpu0_pct=0.0 queue_total=29456
+VmHWM:	   11152 kB
+== play window
+box busy_pct=1.97 (idle+iowait excluded; 2 vCPUs)
+cpu label=hum_cpu1 window_s=38.000 proc_cpu_s=0.210 moves=3743 cpu_us_per_move=56.10 cpu_busy_of_one_vcpu_pct=0.6
+thread tid=23895 comm=cbase_D last_cpu=0 cpu_s=0.200 cpu_us_per_move=53.43
+report2 label=hum_cpu1 window_s=38.000 moves=3743
+sched tid=23895 comm=cbase_D oncpu_s=0.204 oncpu_us_per_move=54.547 runq_wait_s=0.051 runq_wait_us_per_move=13.534 slices_per_move=0.9948 vol_cs_per_move=0.9948 invol_cs_per_move=0.0000
+sched total oncpu_us_per_move=54.547 runq_wait_us_per_move=13.534
+srvcpu cpu0 busy_pct=1.8 user=1.0 nice=0.0 system=0.7 irq=0.0 softirq=0.0 steal=0.0 idle=98.2 iowait=0.0
+srvcpu cpu1 busy_pct=2.2 user=0.8 nice=0.0 system=0.5 irq=0.0 softirq=0.8 steal=0.0 idle=97.8 iowait=0.1
+srvcpu procs_running_mean=1.05 max=3 samples=186
+VmHWM:	   11152 kB
+VmRSS:	   10744 kB
+rssmax 1794673144.453813 11380 11380 5904
+2026-11-14T16:19:07.502000+00:00 INFO  net: inline dispatch: 4599 requests on the loop thread (0 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T16:19:07.513000+00:00 INFO  journal: 4791 record(s) in 4791 batch(es), 4791 write(s), 268861 byte(s); 3 flush(es) of 4791 move(s); 4619 WAL frame(s) before the close's flush of 4791 move(s)
+warn_lines 0
+               total        used        free      shared  buff/cache   available
+Mem:             412         138          94           0         179         263
+== end post hum_cpu1
+	
+PHASE2_RUNS_DONE
+[16:19:11 +1829s] push
+Success	pushed
+	
+Success	74
+572M	/var/tmp/mtpush
+pushed
+	
+[16:21:51 +1989s] sync
+606M	/Users/alex/Dev/foolish-bench-results/campaign/trip2/out/raw
+     555
+== targets from state.env: SRV=i-REDACTED07 LOAD=i-REDACTED08 SG=sg-REDACTED09 ROLE=cbase-mem-test-role-9ef4ad90 BUCKET=cbase-mem-test-9ef4ad90
+terminate i-REDACTED07 (purpose=cbase-mem-test)
+terminate i-REDACTED08 (purpose=cbase-mem-test)
+i-REDACTED08	shutting-down
+i-REDACTED07	shutting-down
+i-REDACTED08	terminated
+i-REDACTED07	terminated
+empty and delete bucket cbase-mem-test-9ef4ad90 (purpose=cbase-mem-test)
+bucket cbase-mem-test-9ef4ad90 deleted
+delete SG sg-REDACTED09 (purpose=cbase-mem-test)
+{
+    "Return": true,
+    "GroupId": "sg-REDACTED09"
+}
+sg sg-REDACTED09 deleted
+delete role and profile cbase-mem-test-role-9ef4ad90 (purpose=cbase-mem-test)
+role cbase-mem-test-role-9ef4ad90 deleted
+== leftovers (purpose=cbase-mem-test)
+       0
+       0
+       0
+running
+== trip2 leftover proof 2026-11-14T16:22:59Z
+instances purpose=cbase-mem-test pending/running/stopping/stopped:        0
+trip instances state: i-REDACTED08 terminated i-REDACTED07 terminated 
+volumes purpose=cbase-mem-test:        0
+security groups purpose=cbase-mem-test:        0
+IAM roles cbase-mem-test-*:        0
+instance profiles cbase-mem-test-*:        0
+S3 buckets cbase-mem-test-*:        0
+production i-REDACTED01: running

@@ -1,0 +1,9 @@
+job_run inclusive 4.322 us/move; callees: cb_core_job 4.316
+finalize_pending inclusive 4.304 us/move; callees: finalize_game 4.254, j_game_get 0.040
+finalize_game inclusive 4.254 us/move; callees: table_replay_code_list 1.406, cb_table_snap_summary 1.160, cb_sql_write 0.706, table_replay_extras_list 0.680, j_game_list 0.106, cb_log 0.099, cb_uuid_v4 0.053, table_load 0.026
+run_replay_v6.constprop.0 inclusive 1.809 us/move; callees: sorted_known.constprop.0 0.664, (self) 0.303, atom_attack.constprop.0.isra.0 0.279, apply_pickup.constprop.0 0.136, coder_code 0.127, el0t_64_irq 0.107, can_cover 0.088, refill.constprop.0 0.049, atom_pass.constprop.0.isra.0 0.038
+replay_extras_encode_parts inclusive 0.632 us/move; callees: (self) 0.440, el0t_64_irq 0.136, list_gap 0.056
+replay_extras_decode inclusive 0.568 us/move; callees: (self) 0.414, el0t_64_irq 0.153
+coder_code inclusive 0.150 us/move; callees: (self) 0.116, el0t_64_irq 0.034
+coder_finish.isra.0 inclusive 0.052 us/move; callees: (self) 0.037, el0t_64_irq 0.015
+bn_divmod inclusive 0.000 us/move; callees: 

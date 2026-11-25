@@ -1,0 +1,225 @@
+[21:30:53] check
+Success	6.18.56-126.188.amzn2023.aarch64
+2
+always madvise [never]
+100
+total 14468
+-rw-r--r--. 1 root root       0 Nov 11 21:29 READY
+-rw-r--r--. 1 root root       0 Nov 11 21:29 UD_DONE
+-rw-r--r--. 1 root root      24 Nov 11 21:28 bucket
+-rwxr-xr-x. 1 root root 8431976 Nov 11 21:28 cbase_D
+-rwxr-xr-x. 1 root root    3558 Nov 11 21:28 cpu.sh
+-rwxr-xr-x. 1 root root    6045 Nov 11 21:28 load.sh
+-rw-r--r--. 1 root root   23288 Nov 11 21:28 rematch.c
+-rw-r--r--. 1 root root 6124487 Nov 11 21:28 src.tgz
+-rwxr-xr-x. 1 root root    3962 Nov 11 21:28 srv.sh
+-rwxr-xr-x. 1 root root  203464 Nov 11 21:29 tlsres
+-rw-r--r--. 1 root root    3161 Nov 11 21:28 tlsres.c
+4eae8437fe5ba915
+READY
+UD_DONE
+	
+Success	12
+UD_DONE
+0
+8
+	
+[21:31:03] run auto1 knob=auto IP=172.31.6.232 pairs=192
+Success	knob auto env []
+start auto1 build D pid 2410 1 listening
+2026-11-11T21:31:04.686000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+
+Cpus_allowed_list:	0
+	
+Success	moves=1013869 window_s=25.01 moves_per_s=40531.8 move_p50_ms=4.14 move_p99_ms=12.82 err_files=0
+1794432699.116381020
+1794432726.719444651
+      1 Bauto1x62: deadline waiting for game 42
+      1 Bauto1x20: deadline waiting for game 40
+      1 Bauto1x13: deadline waiting for game 44
+ready=384 done=384 err_files_with_failed=0 t_go=1794432699.116381020 t_done=1794432726.719444651
+	
+[21:32:10] run auto1 moves=1013869 t_go=1794432699.116381020 t_done=1794432726.719444651
+Success	VmHWM:	   31980 kB
+box busy_pct=72.11 (idle+iowait excluded; 2 vCPUs)
+cpu label=auto1 window_s=27.603 proc_cpu_s=36.992 moves=1013869 cpu_us_per_move=36.49 cpu_busy_of_one_vcpu_pct=134.0
+thread tid=2410 comm=cbase_D last_cpu=0 cpu_s=18.174 cpu_us_per_move=17.93
+thread tid=2415 comm=req-0 last_cpu=1 cpu_s=2.764 cpu_us_per_move=2.73
+thread tid=2416 comm=job-0 last_cpu=1 cpu_s=5.040 cpu_us_per_move=4.97
+thread tid=2417 comm=cbase_D last_cpu=1 cpu_s=0.360 cpu_us_per_move=0.36
+thread tid=2418 comm=cbase_D last_cpu=1 cpu_s=10.640 cpu_us_per_move=10.49
+VmHWM:	   31980 kB
+VmRSS:	   24512 kB
+1794432714.891753 31872 31872 17180
+	
+Success	box busy_pct=79.15 (idle+iowait excluded; 2 vCPUs)
+cpu label=auto1 window_s=25.010 proc_cpu_s=36.903 moves=1013869 cpu_us_per_move=36.40 cpu_busy_of_one_vcpu_pct=147.6
+thread tid=2410 comm=cbase_D last_cpu=0 cpu_s=18.129 cpu_us_per_move=17.88
+thread tid=2415 comm=req-0 last_cpu=1 cpu_s=2.755 cpu_us_per_move=2.72
+thread tid=2416 comm=job-0 last_cpu=1 cpu_s=5.031 cpu_us_per_move=4.96
+thread tid=2417 comm=cbase_D last_cpu=1 cpu_s=0.355 cpu_us_per_move=0.35
+thread tid=2418 comm=cbase_D last_cpu=1 cpu_s=10.613 cpu_us_per_move=10.47
+	grep: /var/tmp/mt/auto1/*.err: No such file or directory
+
+Success	   8010 BautoNxN: game N over at vN in N ms (fool seat N, my seat N)
+   8010 AautoNxN: game N over at vN in N ms (fool seat N, my seat N)
+    192 BautoNxN: refused_at_once=N; pump after N.N s idle:
+    192 AautoNxN: refused_at_once=N; pump after N.N s idle:
+    191 AautoNxN: deadline in game N at vN
+    188 BautoNxN: deadline in game N at vN
+      4 BautoNxN: deadline waiting for game N
+      1 AautoNxN: deadline waiting for game N
+384
+	
+[21:32:43] run off1 knob=off IP=172.31.6.232 pairs=192
+Success	knob off env [CBASE_LOOP_CPU=off CBASE_BG_CPU=off]
+start off1 build D pid 3228 1 listening
+2026-11-11T21:32:44.185000+00:00 INFO  config: CBASE_LOOP_CPU=off (not pinned)
+2026-11-11T21:32:44.185000+00:00 INFO  config: CBASE_BG_CPU=off (not pinned)
+CBASE_LOOP_CPU=off CBASE_BG_CPU=off
+Cpus_allowed_list:	0-1
+	
+Success	moves=821888 window_s=25.02 moves_per_s=32849.3 move_p50_ms=5.25 move_p99_ms=15.90 err_files=0
+1794432798.923391303
+1794432826.480215857
+      1 Boff1x105: deadline waiting for game 32
+ready=384 done=384 err_files_with_failed=0 t_go=1794432798.923391303 t_done=1794432826.480215857
+	
+[21:33:49] run off1 moves=821888 t_go=1794432798.923391303 cpu_window_end=1794432823.943391 (window_s=25.02)
+Success	VmHWM:	   32112 kB
+box busy_pct=66.86 (idle+iowait excluded; 2 vCPUs)
+cpu label=off1 window_s=25.020 proc_cpu_s=30.157 moves=821888 cpu_us_per_move=36.69 cpu_busy_of_one_vcpu_pct=120.5
+thread tid=3228 comm=cbase_D last_cpu=0 cpu_s=16.748 cpu_us_per_move=20.38
+thread tid=3231 comm=req-0 last_cpu=0 cpu_s=1.864 cpu_us_per_move=2.27
+thread tid=3232 comm=job-0 last_cpu=1 cpu_s=3.290 cpu_us_per_move=4.00
+thread tid=3242 comm=cbase_D last_cpu=1 cpu_s=0.240 cpu_us_per_move=0.29
+thread tid=3243 comm=cbase_D last_cpu=1 cpu_s=7.995 cpu_us_per_move=9.73
+VmHWM:	   32112 kB
+VmRSS:	   26160 kB
+1794432820.505928 31956 31984 17264
+	
+[21:34:01] run auto2 knob=auto IP=172.31.6.232 pairs=192
+Success	knob auto env []
+start auto2 build D pid 4089 1 listening
+2026-11-11T21:34:01.723000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+
+Cpus_allowed_list:	0
+	
+Success	moves=943467 window_s=25.02 moves_per_s=37714.7 move_p50_ms=4.45 move_p99_ms=12.36 err_files=0
+1794432875.643290881
+1794432903.216276879
+      1 Bauto2x95: deadline waiting for game 40
+      1 Bauto2x172: deadline waiting for game 38
+      1 Bauto2x136: deadline waiting for game 40
+ready=384 done=384 err_files_with_failed=0 t_go=1794432875.643290881 t_done=1794432903.216276879
+	
+[21:35:07] run auto2 moves=943467 t_go=1794432875.643290881 cpu_window_end=1794432900.663291 (window_s=25.02)
+Success	VmHWM:	   31852 kB
+box busy_pct=75.12 (idle+iowait excluded; 2 vCPUs)
+cpu label=auto2 window_s=25.020 proc_cpu_s=34.513 moves=943467 cpu_us_per_move=36.58 cpu_busy_of_one_vcpu_pct=137.9
+thread tid=4089 comm=cbase_D last_cpu=0 cpu_s=19.094 cpu_us_per_move=20.24
+thread tid=4094 comm=req-0 last_cpu=1 cpu_s=2.076 cpu_us_per_move=2.20
+thread tid=4095 comm=job-0 last_cpu=1 cpu_s=3.969 cpu_us_per_move=4.21
+thread tid=4097 comm=cbase_D last_cpu=1 cpu_s=0.300 cpu_us_per_move=0.32
+thread tid=4098 comm=cbase_D last_cpu=1 cpu_s=9.056 cpu_us_per_move=9.60
+VmHWM:	   31852 kB
+VmRSS:	   30240 kB
+1794432893.985388 31836 31836 17144
+	
+[21:35:10] run off2 knob=off IP=172.31.6.232 pairs=192
+Success	knob off env [CBASE_LOOP_CPU=off CBASE_BG_CPU=off]
+start off2 build D pid 4892 1 listening
+2026-11-11T21:35:11.573000+00:00 INFO  config: CBASE_LOOP_CPU=off (not pinned)
+2026-11-11T21:35:11.573000+00:00 INFO  config: CBASE_BG_CPU=off (not pinned)
+CBASE_LOOP_CPU=off CBASE_BG_CPU=off
+Cpus_allowed_list:	0-1
+	
+Success	moves=833078 window_s=25.02 moves_per_s=33292.5 move_p50_ms=5.12 move_p99_ms=15.20 err_files=0
+1794432946.158033663
+1794432973.721823215
+      1 Boff2x143: deadline waiting for game 34
+      1 Aoff2x41: deadline waiting for game 33
+      1 Aoff2x148: deadline waiting for game 35
+ready=384 done=384 err_files_with_failed=0 t_go=1794432946.158033663 t_done=1794432973.721823215
+	
+[21:36:17] run off2 moves=833078 t_go=1794432946.158033663 cpu_window_end=1794432971.178034 (window_s=25.02)
+Success	VmHWM:	   32056 kB
+box busy_pct=67.53 (idle+iowait excluded; 2 vCPUs)
+cpu label=off2 window_s=25.020 proc_cpu_s=30.219 moves=833078 cpu_us_per_move=36.27 cpu_busy_of_one_vcpu_pct=120.8
+thread tid=4892 comm=cbase_D last_cpu=0 cpu_s=16.769 cpu_us_per_move=20.13
+thread tid=4894 comm=req-0 last_cpu=0 cpu_s=1.885 cpu_us_per_move=2.26
+thread tid=4895 comm=job-0 last_cpu=1 cpu_s=3.315 cpu_us_per_move=3.98
+thread tid=4898 comm=cbase_D last_cpu=1 cpu_s=0.240 cpu_us_per_move=0.29
+thread tid=4899 comm=cbase_D last_cpu=0 cpu_s=7.996 cpu_us_per_move=9.60
+VmHWM:	   32056 kB
+VmRSS:	   26472 kB
+1794432967.251269 31828 31828 17264
+	
+[21:36:20] run auto3 knob=auto IP=172.31.6.232 pairs=192
+Success	knob auto env []
+start auto3 build D pid 5691 1 listening
+2026-11-11T21:36:21.477000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+
+Cpus_allowed_list:	0
+	
+Success	moves=948893 window_s=25.02 moves_per_s=37930.2 move_p50_ms=4.25 move_p99_ms=13.43 err_files=0
+1794433016.488327403
+1794433044.089461969
+      1 Bauto3x6: deadline waiting for game 38
+      1 Bauto3x145: deadline waiting for game 40
+      1 Aauto3x57: deadline waiting for game 41
+ready=384 done=384 err_files_with_failed=0 t_go=1794433016.488327403 t_done=1794433044.089461969
+	
+[21:37:27] run auto3 moves=948893 t_go=1794433016.488327403 cpu_window_end=1794433041.508327 (window_s=25.02)
+Success	VmHWM:	   32132 kB
+box busy_pct=76.55 (idle+iowait excluded; 2 vCPUs)
+cpu label=auto3 window_s=25.020 proc_cpu_s=35.474 moves=948893 cpu_us_per_move=37.38 cpu_busy_of_one_vcpu_pct=141.8
+thread tid=5691 comm=cbase_D last_cpu=0 cpu_s=18.358 cpu_us_per_move=19.35
+thread tid=5694 comm=req-0 last_cpu=1 cpu_s=2.403 cpu_us_per_move=2.53
+thread tid=5695 comm=job-0 last_cpu=1 cpu_s=4.330 cpu_us_per_move=4.56
+thread tid=5697 comm=cbase_D last_cpu=1 cpu_s=0.320 cpu_us_per_move=0.34
+thread tid=5698 comm=cbase_D last_cpu=1 cpu_s=10.047 cpu_us_per_move=10.59
+VmHWM:	   32132 kB
+VmRSS:	   30516 kB
+1794433034.112057 31956 32004 17264
+	
+[21:37:30] run off3 knob=off IP=172.31.6.232 pairs=192
+Success	knob off env [CBASE_LOOP_CPU=off CBASE_BG_CPU=off]
+start off3 build D pid 6494 1 listening
+2026-11-11T21:37:31.533000+00:00 INFO  config: CBASE_LOOP_CPU=off (not pinned)
+2026-11-11T21:37:31.533000+00:00 INFO  config: CBASE_BG_CPU=off (not pinned)
+CBASE_LOOP_CPU=off CBASE_BG_CPU=off
+Cpus_allowed_list:	0-1
+	
+Success	moves=829419 window_s=25.02 moves_per_s=33156.0 move_p50_ms=5.15 move_p99_ms=15.02 err_files=0
+1794433086.215683660
+1794433113.776864235
+      1 Boff3x68: deadline waiting for game 34
+      1 Boff3x168: deadline waiting for game 34
+ready=384 done=384 err_files_with_failed=0 t_go=1794433086.215683660 t_done=1794433113.776864235
+	
+[21:38:37] run off3 moves=829419 t_go=1794433086.215683660 cpu_window_end=1794433111.235684 (window_s=25.02)
+Success	VmHWM:	   32060 kB
+box busy_pct=67.19 (idle+iowait excluded; 2 vCPUs)
+cpu label=off3 window_s=25.020 proc_cpu_s=30.229 moves=829419 cpu_us_per_move=36.45 cpu_busy_of_one_vcpu_pct=120.8
+thread tid=6494 comm=cbase_D last_cpu=0 cpu_s=16.776 cpu_us_per_move=20.23
+thread tid=6496 comm=req-0 last_cpu=1 cpu_s=1.888 cpu_us_per_move=2.28
+thread tid=6498 comm=job-0 last_cpu=1 cpu_s=3.347 cpu_us_per_move=4.04
+thread tid=6500 comm=cbase_D last_cpu=1 cpu_s=0.250 cpu_us_per_move=0.30
+thread tid=6501 comm=cbase_D last_cpu=0 cpu_s=7.937 cpu_us_per_move=9.57
+VmHWM:	   32060 kB
+VmRSS:	   26196 kB
+1794433107.639324 31856 31932 17164
+	
+[21:38:50] push
+Success	pushed
+	
+Success	pushed
+	
+Success	auto1 5 waiting_lines 379 deadline_in_lines 384 refused_lines
+off1 1 waiting_lines 383 deadline_in_lines 384 refused_lines
+auto2 7 waiting_lines 377 deadline_in_lines 384 refused_lines
+off2 4 waiting_lines 380 deadline_in_lines 384 refused_lines
+auto3 4 waiting_lines 380 deadline_in_lines 384 refused_lines
+off3 2 waiting_lines 382 deadline_in_lines 384 refused_lines
+	

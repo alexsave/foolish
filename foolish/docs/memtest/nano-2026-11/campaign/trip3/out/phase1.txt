@@ -1,0 +1,242 @@
+srv i-REDACTED10
+load i-REDACTED11
+SUF=1fd5f193
+B=cbase-mem-test-1fd5f193
+ROLE=cbase-mem-test-role-1fd5f193
+SG=sg-REDACTED12
+AMI=ami-04bde3808fe5f70cf
+SRV=i-REDACTED10
+LOAD=i-REDACTED11
+18:29:41 srv[ aws: [ERROR]: An error occurred (InvalidInstanceId) when calling the SendCommand operation: Instances not in a valid state for account ] load[ aws: [ERROR]: An error occurred (InvalidInstanceId) when calling the SendCommand operation: Instances not in a valid state for account ]
+18:30:03 srv[Failed  failed to run commands: exit status 1 ] load[Failed  failed to run commands: exit status 1 ]
+18:30:21 srv[Failed  failed to run commands: exit status 1 ] load[Failed  failed to run commands: exit status 1 ]
+18:30:41 srv[Success RDY UDD   ] load[Success UDD   ]
+[18:30:41 +63s] check
+Success	6.18.62-127.179.amzn2023.aarch64
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         214           6           0         191         187
+Swap:            411           0         411
+chronyd active
+System time     : 0.000000013 seconds fast of NTP time
+Leap status     : Normal
+total 72792
+-rw-r--r--. 1 root root        0 Nov 14 18:30 READY
+-rw-r--r--. 1 root root        0 Nov 14 18:30 UD_DONE
+-rw-r--r--. 1 root root       24 Nov 14 18:29 bucket
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_D
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M1
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M2
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M3
+-rwxr-xr-x. 1 root root 25959104 Nov 14 18:29 cbase_M3.unstripped
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M4
+-rwxr-xr-x. 1 root root     6848 Nov 14 18:29 cpu.sh
+-rwxr-xr-x. 1 root root     3158 Nov 14 18:29 irq.sh
+-rwxr-xr-x. 1 root root     8516 Nov 14 18:29 load.sh
+-rwxr-xr-x. 1 root root     9217 Nov 14 18:29 prof.sh
+-rw-r--r--. 1 root root    23288 Nov 14 18:29 rematch.c
+-rw-r--r--. 1 root root  6124487 Nov 14 18:29 src.tgz
+-rwxr-xr-x. 1 root root     3962 Nov 14 18:29 srv.sh
+-rwxr-xr-x. 1 root root   203464 Nov 14 18:30 tlsres
+-rw-r--r--. 1 root root     3161 Nov 14 18:29 tlsres.c
+-rw-r--r--. 1 root root     3011 Nov 14 18:29 trip.bt
+4eae8437fe5ba915 /opt/mt/cbase_D
+9ca3b791ebcfc586 /opt/mt/cbase_M1
+53e1cd472fa1d994 /opt/mt/cbase_M2
+90af1e0cd88e7212 /opt/mt/cbase_M3
+ea08a25218299207 /opt/mt/cbase_M3.unstripped
+e3844e1e1f1b4ad4 /opt/mt/cbase_M4
+READY
+UD_DONE
+irqbalance active
+ 55:         26         46 ITS-PCI-MSIX-0000:00:05.0   0 Edge      ena-mgmnt@pci:0000:00:05.0
+ 56:       2396      10379 ITS-PCI-MSIX-0000:00:05.0   1 Edge      ens5-Tx-Rx-0
+ 57:       3789       1680 ITS-PCI-MSIX-0000:00:05.0   2 Edge      ens5-Tx-Rx-1
+package perf is not installed package bpftrace is not installed strace-6.12-1.amzn2023.0.1.aarch64 
+NAME       TYPE      SIZE USED PRIO
+/dev/zram0 partition 412M 152K  100
+dmesg_oom_lines 0
+	
+Success	15
+UD_DONE
+0
+BUILT
+8
+6.18.62-127.179.amzn2023.aarch64
+chronyd active
+perf version 6.1.190-237.442.amzn2023.aarch64
+	
+[18:30:48 +70s] install
+Success	               total        used        free      shared  buff/cache   available
+Mem:             412         244          22           0         145         157
+NAME       TYPE      SIZE USED PRIO
+/dev/zram0 partition 412M 4.5M  100
+/swapfile  file      768M   0B   -2
+dnf_rc=0
+  zlib-devel-1.2.11-33.amzn2023.0.6.aarch64                                     
+
+Complete!
+perf version 6.1.190-237.442.amzn2023.aarch64
+bpftrace v0.17.0
+strace -- version 6.12
+chronyd active
+System time     : 0.000007160 seconds slow of NTP time
+Leap status     : Normal
+dmesg_oom_lines 0
+NAME       TYPE      SIZE  USED PRIO
+/dev/zram0 partition 412M 42.1M  100
+               total        used        free      shared  buff/cache   available
+Mem:             412         149          48           0         214         253
+Swap:            411          42         369
+	
+[18:32:20 +162s] check
+Success	6.18.62-127.179.amzn2023.aarch64
+2
+               total        used        free      shared  buff/cache   available
+Mem:             412         150          19           0         242         251
+Swap:            411          38         373
+chronyd active
+System time     : 0.000006046 seconds slow of NTP time
+Leap status     : Normal
+total 72792
+-rw-r--r--. 1 root root        0 Nov 14 18:30 READY
+-rw-r--r--. 1 root root        0 Nov 14 18:30 UD_DONE
+-rw-r--r--. 1 root root       24 Nov 14 18:29 bucket
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_D
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M1
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M2
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M3
+-rwxr-xr-x. 1 root root 25959104 Nov 14 18:29 cbase_M3.unstripped
+-rwxr-xr-x. 1 root root  8431976 Nov 14 18:29 cbase_M4
+-rwxr-xr-x. 1 root root     6848 Nov 14 18:29 cpu.sh
+-rwxr-xr-x. 1 root root     3158 Nov 14 18:29 irq.sh
+-rwxr-xr-x. 1 root root     8516 Nov 14 18:29 load.sh
+-rwxr-xr-x. 1 root root     9217 Nov 14 18:29 prof.sh
+-rw-r--r--. 1 root root    23288 Nov 14 18:29 rematch.c
+-rw-r--r--. 1 root root  6124487 Nov 14 18:29 src.tgz
+-rwxr-xr-x. 1 root root     3962 Nov 14 18:29 srv.sh
+-rwxr-xr-x. 1 root root   203464 Nov 14 18:30 tlsres
+-rw-r--r--. 1 root root     3161 Nov 14 18:29 tlsres.c
+-rw-r--r--. 1 root root     3011 Nov 14 18:29 trip.bt
+4eae8437fe5ba915 /opt/mt/cbase_D
+9ca3b791ebcfc586 /opt/mt/cbase_M1
+53e1cd472fa1d994 /opt/mt/cbase_M2
+90af1e0cd88e7212 /opt/mt/cbase_M3
+ea08a25218299207 /opt/mt/cbase_M3.unstripped
+e3844e1e1f1b4ad4 /opt/mt/cbase_M4
+READY
+UD_DONE
+irqbalance active
+ 55:         84         86 ITS-PCI-MSIX-0000:00:05.0   0 Edge      ena-mgmnt@pci:0000:00:05.0
+ 56:       2480      17253 ITS-PCI-MSIX-0000:00:05.0   1 Edge      ens5-Tx-Rx-0
+ 57:       4776       9978 ITS-PCI-MSIX-0000:00:05.0   2 Edge      ens5-Tx-Rx-1
+perf-6.1.190-237.442.amzn2023.aarch64 bpftrace-0.17.0-1.amzn2023.0.2.aarch64 strace-6.12-1.amzn2023.0.1.aarch64 
+NAME       TYPE      SIZE  USED PRIO
+/dev/zram0 partition 412M 38.2M  100
+dmesg_oom_lines 0
+	
+Success	15
+UD_DONE
+0
+BUILT
+8
+6.18.62-127.179.amzn2023.aarch64
+chronyd active
+perf version 6.1.190-237.442.amzn2023.aarch64
+	
+[18:32:27 +169s] symcheck
+Success	HOME=[/root]
+e46155ba4134013186d7f028522d1e4efa86b5e9 /opt/mt/cbase_M3.unstripped
+ BuildID[sha1]=e46155ba4134013186d7f028522d1e4efa86b5e9
+ stripped
+/opt/mt/cbase_M3.unstripped: ELF 64-bit LSB pie executable
+ BuildID[sha1]=e46155ba4134013186d7f028522d1e4efa86b5e9
+ not stripped
+knob auto env []
+start symchk build M3 pid 20540 1 listening
+2026-11-14T18:32:28.513000+00:00 INFO  serve: pinned: the loop to CPU 0, every other thread to CPU 1 (auto)
+	
+Success	               do_softirq_own_stack
+                          irq_exit_rcu
+                                     el1h_64_irq_handler
+                                     el1h_64_irq
+     2.06%  job-0            cbase_M3                                 [.] sorted_known.constprop.0
+== cbase_M3 samples: resolved vs [unknown] (by period)
+cbase_M3 samples=3982 unknown_share=0.000
+== top resolved cbase_M3 symbols in the smoke
+369455069 sorted_known.constprop.0
+341118190 sqlite3VdbeExec
+337889278 memcpy
+203678808 user_conns.constprop.0
+203589863 run_replay_v6.constprop.0
+195994494 strcmp
+150936655 strlen
+140683313 __pthread_mutex_unlock
+               total        used        free      shared  buff/cache   available
+Mem:             412         165          48           0         198         236
+Swap:           1179          27        1152
+bpftrace attached (arrow syntax) after 1 s pid 31240
+Attaching 9 probes...
+BT_BEGIN 193341469298
+               total        used        free      shared  buff/cache   available
+Mem:             412         217          67           0         127         184
+bpf lines 1321
+3
+               total        used        free      shared  buff/cache   available
+Mem:             412         174          84           0         153         216
+Swap:           1179          26        1153
+3
+@sc[20613, 79]: 1
+@sc[20613, 172]: 1
+@sc[20589, 82]: 1
+NAME       TYPE      SIZE  USED PRIO
+/dev/zram0 partition 412M 26.4M  100
+               total        used        free      shared  buff/cache   available
+Mem:             412         174          82           0         155         216
+Swap:            411          26         385
+	mkswap: /swapfile: warning: wiping old swap signature.
+Success	moves=890930 window_s=30.01 moves_per_s=29688.1 move_p50_ms=0.27 move_p99_ms=0.69 err_files=0
+play moves=642931 window_s=21.00 moves_per_s=30615.8 move_p50_ms=0.27 move_p99_ms=0.60 epoch0=1794681157.078990 epoch1=1794681178.078990 mono0=172.670366 mono1=193.670366 move_p95_ms=0.38 move_max_ms=162.14
+Success	VmHWM:	   28912 kB
+chronyd active
+dmesg_oom_lines 0
+	
+[18:33:18 +220s] run wD arm=D build=D irq=split prof=none knob=auto IP=172.31.2.87 pairs=192 think=0-1 dur_ms=25000 window=[t_go+2,t_go+23]
+[18:34:29 +291s] run wD moves=936686 play_moves=776358 play=[1794681237.275469,1794681258.275469]
+Success	== post wD
+irq mode=show irqbalance=inactive procs=0 ens5-Tx-Rx-0(irq 56) aff=1 eff=1 ens5-Tx-Rx-1(irq 57) aff=0 eff=0 ena-mgmnt(irq 55) aff=1 eff=1
+IRQ_OK
+irqdelta ena-mgmnt cpu0=0 cpu1=68
+irqdelta ens5-Tx-Rx-0 cpu0=0 cpu1=376130
+irqdelta ens5-Tx-Rx-1 cpu0=362032 cpu1=0
+irqpct queue_on_cpu0_pct=49.0 queue_total=738162
+VmHWM:	   30536 kB
+== play window
+box busy_pct=76.40 (idle+iowait excluded; 2 vCPUs)
+cpu label=wD window_s=21.000 proc_cpu_s=29.379 moves=776358 cpu_us_per_move=37.84 cpu_busy_of_one_vcpu_pct=139.9
+thread tid=31517 comm=cbase_D last_cpu=0 cpu_s=15.880 cpu_us_per_move=20.46
+thread tid=31521 comm=req-0 last_cpu=1 cpu_s=1.863 cpu_us_per_move=2.40
+thread tid=31522 comm=job-0 last_cpu=1 cpu_s=3.468 cpu_us_per_move=4.47
+thread tid=31523 comm=cbase_D last_cpu=1 cpu_s=0.278 cpu_us_per_move=0.36
+thread tid=31524 comm=cbase_D last_cpu=1 cpu_s=7.918 cpu_us_per_move=10.20
+report2 label=wD window_s=21.000 moves=776358
+sched tid=31517 comm=cbase_D oncpu_s=15.866 oncpu_us_per_move=20.437 runq_wait_s=0.335 runq_wait_us_per_move=0.431 slices_per_move=0.0465 vol_cs_per_move=0.0431 invol_cs_per_move=0.0034
+sched tid=31521 comm=req-0 oncpu_s=1.868 oncpu_us_per_move=2.407 runq_wait_s=4.860 runq_wait_us_per_move=6.260 slices_per_move=0.0461 vol_cs_per_move=0.0451 invol_cs_per_move=0.0010
+sched tid=31522 comm=job-0 oncpu_s=3.461 oncpu_us_per_move=4.459 runq_wait_s=3.180 runq_wait_us_per_move=4.096 slices_per_move=0.0118 vol_cs_per_move=0.0076 invol_cs_per_move=0.0042
+sched tid=31523 comm=cbase_D oncpu_s=0.272 oncpu_us_per_move=0.351 runq_wait_s=0.308 runq_wait_us_per_move=0.397 slices_per_move=0.0016 vol_cs_per_move=0.0014 invol_cs_per_move=0.0002
+sched tid=31524 comm=cbase_D oncpu_s=7.920 oncpu_us_per_move=10.201 runq_wait_s=3.078 runq_wait_us_per_move=3.965 slices_per_move=0.0219 vol_cs_per_move=0.0096 invol_cs_per_move=0.0123
+sched total oncpu_us_per_move=37.854 runq_wait_us_per_move=15.148
+srvcpu cpu0 busy_pct=79.2 user=35.1 nice=0.0 system=30.5 irq=0.0 softirq=13.6 steal=0.0 idle=20.8 iowait=0.0
+srvcpu cpu1 busy_pct=73.8 user=45.7 nice=0.0 system=7.3 irq=0.0 softirq=20.8 steal=0.0 idle=25.0 iowait=1.1
+srvcpu procs_running_mean=3.33 max=7 samples=102
+VmHWM:	   30536 kB
+VmRSS:	   28308 kB
+rssmax 1794681253.674470 30320 30320 17164
+2026-11-14T18:34:29.969000+00:00 INFO  net: inline dispatch: 943976 requests on the loop thread (1904 sent on to the pool), 0 over budget, valve tripped 0 times
+2026-11-14T18:34:30.007000+00:00 INFO  journal: 923519 record(s) in 921451 batch(es), 898834 write(s), 31947939 byte(s); 6086 flush(es) of 923519 move(s); 148502 WAL frame(s) before the close's flush of 11465 move(s)
+warn_lines 2
+               total        used        free      shared  buff/cache   available
+Mem:             412         159          76           0         176         231
+== end post wD
+	
+PHASE1_DONE

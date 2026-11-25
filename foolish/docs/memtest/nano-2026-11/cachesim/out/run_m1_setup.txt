@@ -1,0 +1,9 @@
+1
+server ip 172.18.0.2
+moves=1340 window_s=0.88 moves_per_s=1523.6 move_p50_ms=0.73 move_p99_ms=12.67 err_files=0
+1794432066.556130875
+1794432070.148688710
+      1 Bm1_setupx0: deadline waiting for game 6
+load done: 21:21:10
+server exit: 0 after 2s
+-rw-------  1 alex  staff  339454 Nov 11 16:21 /Users/alex/Dev/foolish-bench-results/cachesim/out/cg_m1_setup.out
