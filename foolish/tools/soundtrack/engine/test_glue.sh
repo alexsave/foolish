@@ -206,6 +206,15 @@ def inst_noman():
     R = run(['TEMPO 60', 'INST 0 1 60 90 nonexistent_manifest_xyz'], 'inm')
     return R.rc != 0 and 'nonexistent_manifest_xyz' in R.err and 'line 2' in R.err, f'rc {R.rc}, ' + R.err.strip()
 check('INST with missing manifest is fatal and names the path and the line', inst_noman)
+def brass_voice():
+    R = run(['TEMPO 60', 'LEN 3', DRY, 'BRASS 0 2 57,60,64 -10'], 'br'); m = R.y.mean(axis=1)
+    f, P = spec(seg(m, 0.2, 1.8)); k = (f > 180) & (f < 260); peak = f[k][np.argmax(P[k])]
+    # filter envelope opens brighter at 0.12 s than at 1.2 s
+    _, Pa = spec(seg(m, 0.08, 0.20)); _, Pb = spec(seg(m, 1.0, 1.2))
+    fa = np.fft.rfftfreq(len(seg(m, 0.08, 0.20)), 1 / SR); fb = np.fft.rfftfreq(len(seg(m, 1.0, 1.2)), 1 / SR)
+    hi_a = Pa[fa > 1000].sum() / (Pa.sum() + 1e-12); hi_b = Pb[fb > 1000].sum() / (Pb.sum() + 1e-12)
+    return R.rc == 0 and abs(peak - 220) < 3.0 and hi_a > hi_b * 1.2, f'peak {peak:.1f} Hz, hi-ratio attack {hi_a:.3f} vs sustain {hi_b:.3f}'
+check('BRASS plays at pitch with an opening brass filter envelope', brass_voice)
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
 T="$T" ONLY="${ONLY:-}" "$PY" -I "$T/t.py"

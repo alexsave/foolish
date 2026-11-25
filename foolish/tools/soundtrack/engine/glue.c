@@ -15,6 +15,9 @@
 //                              exponential decay with a 2.2 s time constant while held, release 0.25 s, a 4.5 Hz tremolo
 //                              of +-1.5 dB, opposite in left and right
 //   SUB  beat dur midi db      a sine with a touch of tanh saturation, attack 15 ms, release 80 ms, mono
+//   BRASS beat dur midi[,midi...] db  a warm analog brass-synth chord or lead: 5 detuned saws spread in stereo through a
+//                              24 dB/oct low-pass with a brass filter envelope (opens from 350 Hz to 2400 Hz over 110 ms,
+//                              settles to 1100 Hz), attack 35 ms, release 0.45 s
 //   PIANO beat dur midi[,midi...] vel   a sampled grand piano note or chord (Salamander Grand Piano V3, 48 kHz 24 bit stereo,
 //                              files <Note><octave>v<layer>.wav with Note one of A C D# F#, a sample every minor third A0..C8,
 //                              layers 1 (softest) to 16, found by probing A4v1, A4v2, ... in the SAMPLES directory). Per note:
@@ -85,7 +88,12 @@
 #define PIANO_MAXLAYERS 16
 #define PIANO_RELEASE_S 0.30
 #define INST_ATTACK_S 0.008
+#define INST_SUS_ATTACK_S 0.025
 #define INST_RELEASE_S 0.25
+#define BRASS_VOICES 5
+#define BRASS_DETUNE_CENTS 9.0
+#define BRASS_ATTACK_S 0.035
+#define BRASS_RELEASE_S 0.45
 #define INST_MAXSETS 32
 #define INST_MAXSMP 2048
 #define PIANO_DB_RANGE 30.0
@@ -93,7 +101,7 @@
 #define PIANO_TRIM_THRESH 0.003
 #define MAX_PATH_LEN 1024
 
-typedef enum { PAD, KEYS, SUBV, PIANO, INST } Kind;
+typedef enum { PAD, KEYS, SUBV, PIANO, INST, BRASS } Kind;
 typedef struct { Kind kind; int line; double beat, dur, db, vel; int n; double midi[MAX_NOTES]; char inst[128]; } Stmt;
 typedef struct { double beat, dur; } Span;
 
@@ -161,10 +169,10 @@ static void parse(const char *path) {
             ARGS(2); if (g_nped == MAX_STMT) die(line, "too many pedal spans");
             g_ped[g_nped].beat = num(line, tok[1], "beat", 0, 1e6); g_ped[g_nped].dur = num(line, tok[2], "duration", 0.001, 1e5); g_nped++;
         }
-        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB") || !strcmp(k, "PIANO") || !strcmp(k, "INST")) {
+        else if (!strcmp(k, "PAD") || !strcmp(k, "KEYS") || !strcmp(k, "SUB") || !strcmp(k, "PIANO") || !strcmp(k, "INST") || !strcmp(k, "BRASS")) {
             if (g_nst == MAX_STMT) die(line, "too many notes");
             Stmt *s = &g_st[g_nst++]; memset(s, 0, sizeof *s); s->line = line;
-            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : !strcmp(k, "PIANO") ? PIANO : !strcmp(k, "INST") ? INST : SUBV;
+            s->kind = !strcmp(k, "PAD") ? PAD : !strcmp(k, "KEYS") ? KEYS : !strcmp(k, "PIANO") ? PIANO : !strcmp(k, "INST") ? INST : !strcmp(k, "BRASS") ? BRASS : SUBV;
             if (s->kind == INST) { ARGS(5); } else { ARGS(4); }
             s->beat = num(line, tok[1], "beat", 0, 1e6);
             s->dur = num(line, tok[2], "duration", 0.001, 1e5);
@@ -250,6 +258,39 @@ static void sub_note(Buf *o, double midi, double dur_s) {
         double t = (double)i / SR, y = tanh(SUB_DRIVE * sin(th0 * i)) / norm;
         double env = t < dur_s ? fmin(1.0, t / SUB_ATTACK_S) : lvl_end * fmax(0.0, 1 - (t - dur_s) / SUB_RELEASE_S);
         o->l[i] += (float)(y * env); o->r[i] += (float)(y * env);
+    }
+}
+
+static void brass_note(Buf *o, double midi, double dur_s, Rng *rg) {
+    double f0 = mtof(midi), ph[BRASS_VOICES], dt[BRASS_VOICES], gl[BRASS_VOICES], gr[BRASS_VOICES];
+    for (int v = 0; v < BRASS_VOICES; v++) {
+        double cents = -BRASS_DETUNE_CENTS + 2 * BRASS_DETUNE_CENTS * v / (BRASS_VOICES - 1);
+        dt[v] = f0 * pow(2, cents / 1200) / SR; ph[v] = r01(rg);
+        double pan = (v - (BRASS_VOICES - 1) / 2.0) / ((BRASS_VOICES - 1) / 2.0) * 0.55, th = (pan + 1) * M_PI / 4;
+        gl[v] = cos(th); gr[v] = sin(th);
+    }
+    Bq fl[2], fr[2]; static const double Q[2] = {0.5411961, 1.3065630};
+    for (int i = 0; i < 2; i++) { fl[i] = bq_lp(400.0, Q[i]); fr[i] = fl[i]; }
+    double lvl_end = fmin(1.0, dur_s / BRASS_ATTACK_S);
+    for (long i = 0; i < o->n; i++) {
+        double t = (double)i / SR;
+        if (i % FILT_BLOCK == 0) {
+            double fc;
+            if (t < 0.11) fc = 350.0 + (2400.0 - 350.0) * (t / 0.11);
+            else if (t < dur_s) fc = 1100.0 + (2400.0 - 1100.0) * exp(-(t - 0.11) / 0.35);
+            else fc = 1100.0 * exp(-(t - dur_s) / 0.25) + 280.0;
+            fc = fmin(fmax(fc, 220.0), 12000.0);
+            for (int j = 0; j < 2; j++) { Bq c = bq_lp(fc, Q[j]); set_coef(&fl[j], c); set_coef(&fr[j], c); }
+        }
+        double l = 0, r = 0;
+        for (int v = 0; v < BRASS_VOICES; v++) {
+            double s = 2 * ph[v] - 1 - polyblep(ph[v], dt[v]);
+            l += s * gl[v]; r += s * gr[v];
+            ph[v] += dt[v]; if (ph[v] >= 1) ph[v] -= 1;
+        }
+        for (int j = 0; j < 2; j++) { l = bq(&fl[j], l); r = bq(&fr[j], r); }
+        double env = t < dur_s ? fmin(1.0, t / BRASS_ATTACK_S) : lvl_end * fmax(0.0, 1 - (t - dur_s) / BRASS_RELEASE_S);
+        o->l[i] += (float)(l * env / BRASS_VOICES); o->r[i] += (float)(r * env / BRASS_VOICES);
     }
 }
 
@@ -370,6 +411,15 @@ static void inst_ensure(InstSmp *x, int line) {
     x->smp.loaded = 1;
 }
 
+static double inst_corr(const Smp *x, long a, long c, long W) {
+    double sab = 0, saa = 0, sbb = 0;
+    for (long k = 0; k < W; k++) {
+        double u = x->l[a + k] + x->r[a + k], v = x->l[c + k] + x->r[c + k];
+        sab += u * v; saa += u * u; sbb += v * v;
+    }
+    return saa > 1e-12 && sbb > 1e-12 ? sab / sqrt(saa * sbb) : 0;
+}
+
 static void inst_note(float *L, float *R, long n, long at, const char *manifest, double midi, double vel, double dur_s, int line, Rng *rg) {
     InstSet *is = inst_load(manifest, line);
     int layer = (int)floor((vel - 1) * is->nl / 127.0);
@@ -389,29 +439,49 @@ static void inst_note(float *L, float *R, long n, long at, const char *manifest,
     inst_ensure(x, line);
     double ratio = pow(2, (midi - x->root) / 12.0) * x->smp.sr / SR;
     double g = db2a(-PIANO_DB_RANGE + PIANO_DB_RANGE * vel / 127.0);
-    long la = (long)(x->smp.n * 0.5), lb = (long)(x->smp.n * 0.9), xf = (long)(0.06 * x->smp.sr);
-    if (!x->sustained || lb - la < 2 * xf) { la = 0; lb = 0; }
+    long N = x->smp.n; double sr = x->smp.sr;
+    // Phase-aligned constant-power long loop (matching sampler.h mode 2) to avoid loop bumps/clicks on bowed/sustained samples
+    double A = 0.25 * N, B = N - 0.08 * sr, Z = B - A;
+    int do_loop = x->sustained && (Z >= 0.20 * sr);
+    double X = fmin(fmax(0.35 * Z, 0.08 * sr), 0.22 * sr);
+    double period = sr / (440.0 * pow(2, (x->root - 69) / 12.0));
+    long W = (long)fmax(2.0 * period, 0.015 * sr);
+    double att_s = x->sustained ? INST_SUS_ATTACK_S : INST_ATTACK_S;
     long len = lround((dur_s + INST_RELEASE_S) * SR) + 1;
-    double pos = 0;
+    double pos = 0, pos2 = 0, w = 0, rc = 0; int xf = 0;
     for (long i = 0; i < len && at + i < n; i++) {
         double t = (double)i / SR;
-        double a = t < INST_ATTACK_S ? t / INST_ATTACK_S : 1.0;
+        double a = t < att_s ? t / att_s : 1.0;
         if (t > dur_s) a *= 0.5 * (1 + cos(M_PI * fmin(1.0, (t - dur_s) / INST_RELEASE_S)));
+        if (do_loop && !xf && pos >= B - X) {
+            double hi = fmin(A + 0.5 * Z, B - 2 * X - period);
+            if (hi < A) hi = A;
+            double s = A + r01(rg) * (hi - A);
+            long cp = (long)pos, bestc = (long)s; double br = -2.0;
+            for (long c = (long)(s - period); c <= (long)(s + period); c++) {
+                if (c < 1 || c + W >= N || cp + W >= N) continue;
+                double r = inst_corr(&x->smp, cp, c, W);
+                if (r > br) { br = r; bestc = c; }
+            }
+            pos2 = bestc + (pos - cp);
+            rc = fmin(fmax(br, 0.0), 1.0);
+            w = 0; xf = 1;
+        }
         double l, r;
-        if (lb > 0 && pos >= lb - xf) {
-            double over = pos - (lb - xf);
-            if (over >= xf) { pos = la + (over - xf); over = -1; }
-            if (over >= 0) {
-                double w = over / xf, p2 = la + over;
-                l = cubic(x->smp.l, x->smp.n, pos) * (1 - w) + cubic(x->smp.l, x->smp.n, p2) * w;
-                r = cubic(x->smp.r, x->smp.n, pos) * (1 - w) + cubic(x->smp.r, x->smp.n, p2) * w;
-            } else { l = cubic(x->smp.l, x->smp.n, pos); r = cubic(x->smp.r, x->smp.n, pos); }
+        if (xf) {
+            double ca = cos(w * M_PI / 2), cb = sin(w * M_PI / 2), nrm = sqrt(ca * ca + cb * cb + 2 * ca * cb * rc);
+            l = (cubic(x->smp.l, N, pos) * ca + cubic(x->smp.l, N, pos2) * cb) / nrm;
+            r = (cubic(x->smp.r, N, pos) * ca + cubic(x->smp.r, N, pos2) * cb) / nrm;
         } else {
-            if (pos >= x->smp.n - 1) break;
-            l = cubic(x->smp.l, x->smp.n, pos); r = cubic(x->smp.r, x->smp.n, pos);
+            if (pos >= N - 1) break;
+            l = cubic(x->smp.l, N, pos); r = cubic(x->smp.r, N, pos);
         }
         L[at + i] += (float)(l * a * g); R[at + i] += (float)(r * a * g);
         pos += ratio;
+        if (xf) {
+            pos2 += ratio; w += ratio / X;
+            if (w >= 1.0) { pos = pos2; xf = 0; }
+        }
     }
 }
 
@@ -458,13 +528,14 @@ int main(int argc, char **argv) {
             if (iat < n) for (int k = 0; k < s->n; k++) inst_note(L, R, n, iat, s->inst, s->midi[k], s->vel, dur_s, s->line, &rg);
             continue;
         }
-        double rel = s->kind == PAD ? PAD_RELEASE_S : s->kind == KEYS ? KEYS_RELEASE_S : SUB_RELEASE_S;
+        double rel = s->kind == PAD ? PAD_RELEASE_S : s->kind == KEYS ? KEYS_RELEASE_S : s->kind == BRASS ? BRASS_RELEASE_S : SUB_RELEASE_S;
         double dur_s = s->dur * spb; long at = lround(s->beat * spb * SR), len = lround((dur_s + rel) * SR) + 1;
         if (at >= n) continue;
         Buf b = buf_new(at, len);
         for (int k = 0; k < s->n; k++) {
             if (s->kind == PAD) pad_note(&b, s->midi[k], dur_s, &rg);
             else if (s->kind == KEYS) keys_note(&b, s->midi[k], dur_s);
+            else if (s->kind == BRASS) brass_note(&b, s->midi[k], dur_s, &rg);
             else sub_note(&b, s->midi[k], dur_s);
         }
         double pk = 0; for (long j = 0; j < b.n; j++) { pk = fmax(pk, fabs(b.l[j])); pk = fmax(pk, fabs(b.r[j])); }
