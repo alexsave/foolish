@@ -213,7 +213,7 @@ def brass_voice():
     _, Pa = spec(seg(m, 0.08, 0.20)); _, Pb = spec(seg(m, 1.0, 1.2))
     fa = np.fft.rfftfreq(len(seg(m, 0.08, 0.20)), 1 / SR); fb = np.fft.rfftfreq(len(seg(m, 1.0, 1.2)), 1 / SR)
     hi_a = Pa[fa > 1000].sum() / (Pa.sum() + 1e-12); hi_b = Pb[fb > 1000].sum() / (Pb.sum() + 1e-12)
-    return R.rc == 0 and abs(peak - 220) < 3.0 and hi_a > hi_b * 1.2, f'peak {peak:.1f} Hz, hi-ratio attack {hi_a:.3f} vs sustain {hi_b:.3f}'
+    return R.rc == 0 and abs(peak - 220) < 3.0 and hi_a > hi_b * 2.5, f'peak {peak:.1f} Hz, hi-ratio attack {hi_a:.3f} vs sustain {hi_b:.3f}'
 check('BRASS plays at pitch with an opening brass filter envelope', brass_voice)
 print('%d failed' % len(fails) if fails else 'all checks passed'); sys.exit(1 if fails else 0)
 PY
